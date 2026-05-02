@@ -45,6 +45,7 @@ function createHostedWebSecretsApiMock() {
       sharedInbox: true,
       sharedSessions: true,
       sharedSkills: true,
+      sharedNotes: true,
       taskSchedules: true,
       sessionStreaming: true,
       sessionControls: true,
@@ -81,6 +82,10 @@ function createHostedWebSecretsApiMock() {
         archive: { availability: "available" },
         delete: { availability: "available" },
         assign: { availability: "available" },
+      },
+      notes: {
+        read: { availability: "available" },
+        write: { availability: "available" },
       },
       tasks: {
         read: { availability: "available" },
@@ -389,6 +394,43 @@ test("project settings keeps the floating tab dock visible on mobile", async ({ 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/?page=settings&settingsTab=projects");
 
+  const mobileSubnav = page.locator('[data-role="project-mobile-subnav-shell"]');
+  const floatingSubnav = page.locator('[data-role="project-mobile-subnav-floating-shell"]');
+  const mobileSubnavSelect = page.locator('[data-role="project-mobile-subnav-select-control"]');
+  await expect(mobileSubnav).toBeVisible();
+  await expect(mobileSubnavSelect).toBeVisible();
+  await expect(page.locator('.settings-mobile-subnav-panel')).toBeHidden();
+  await expect(page.locator('[data-role="project-mobile-subnav-menu-trigger"]')).toBeVisible();
+  await expect(floatingSubnav).toHaveAttribute('data-scroll-state', 'hidden');
+
+  await page.locator('[data-role="project-detail-tab-secrets"]').click();
+  await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toBeVisible();
+
+  await page.evaluate(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    if (content) {
+      content.scrollTop = 500;
+      content.dispatchEvent(new Event('scroll'));
+    }
+  });
+  await expect(floatingSubnav).toHaveAttribute('data-scroll-state', 'hidden');
+  await page.evaluate(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    if (content) {
+      content.scrollTop = 420;
+      content.dispatchEvent(new Event('scroll'));
+    }
+  });
+  await expect(floatingSubnav).toHaveAttribute('data-scroll-state', 'visible');
+  await page.waitForFunction(() => {
+    const topbar = document.querySelector('[data-role="mobile-topbar"]') as HTMLElement | null;
+    const floating = document.querySelector('[data-role="project-mobile-subnav-floating-shell"]') as HTMLElement | null;
+    if (!topbar || !floating) {
+      return false;
+    }
+    return floating.getBoundingClientRect().top >= topbar.getBoundingClientRect().bottom + 8;
+  });
+
   const dock = page.locator('[data-role="project-detail-tab-dock"]');
   await expect(dock).toBeVisible();
   await expect(page.locator('[data-role="project-detail-tab-general"]')).toBeVisible();
@@ -396,9 +438,6 @@ test("project settings keeps the floating tab dock visible on mobile", async ({ 
   await expect(page.locator('[data-role="project-detail-tab-automation"]')).toBeVisible();
   await expect(page.locator('[data-role="project-detail-tab-source-control"]')).toBeVisible();
   await expect(page.locator('[data-role="project-detail-tab-secrets"]')).toBeVisible();
-
-  await page.locator('[data-role="project-detail-tab-secrets"]').click();
-  await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toBeVisible();
 
   const dockLayout = await page.evaluate(() => {
     const dockElement = document.querySelector('[data-role="project-detail-tab-dock"]') as HTMLElement | null;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsMobileSubnavHeader } from "../components/SettingsMobileSubnavHeader";
 import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import {
   createChannel,
@@ -231,6 +232,16 @@ export function ChannelsPanel() {
     }
   }
 
+  function beginCreateChannel() {
+    setCreating(true);
+    setChannelDetail(null);
+    setSelectedChannelId(null);
+    setDraft(createDraft(projects[0]?.id ?? null));
+    setBotValidation(null);
+    setChatCandidates([]);
+    setActivity([]);
+  }
+
   async function handleDeleteChannel() {
     if (!selectedChannel?.id) {
       return;
@@ -255,11 +266,53 @@ export function ChannelsPanel() {
     }
   }
 
+  const channelMobileActions = [
+    {
+      id: "new-channel",
+      label: "Add channel",
+      onClick: beginCreateChannel,
+      variant: "secondary" as const,
+    },
+    ...(selectedChannel?.id && !creating
+      ? [{
+          id: "delete-channel",
+          label: "Delete channel",
+          onClick: () => void handleDeleteChannel(),
+          disabled: saving,
+          variant: "danger" as const,
+        }]
+      : []),
+    {
+      id: "save-channel",
+      label: saving ? "Saving…" : creating ? "Create channel" : "Save channel",
+      onClick: () => void handleSaveChannel(),
+      disabled: saving,
+      variant: "primary" as const,
+    },
+  ];
+
   return (
-    <ResizableSidebarLayout
+    <>
+      <SettingsMobileSubnavHeader
+        dataRolePrefix="channel"
+        selectLabel="Channel"
+        ariaLabel="Channel selection"
+        value={creating ? null : selectedChannelId}
+        emptyOptionLabel={creating ? "New channel" : "Select channel"}
+        options={channels.map((channel) => ({ id: channel.id, label: channel.name }))}
+        onChange={(channelId) => {
+          if (channelId) {
+            setSelectedChannelId(channelId);
+            setCreating(false);
+          }
+        }}
+        actions={channelMobileActions}
+        actionMenuLabel="Channel actions"
+      />
+      <ResizableSidebarLayout
       className="task-shell"
       storageKey="orchestra.layout.channels.secondary-nav-width"
-      navigationClassName="task-nav-panel"
+      navigationClassName="task-nav-panel settings-mobile-subnav-panel"
       detailClassName="panel task-detail-panel"
       navigation={(
       <>
@@ -269,18 +322,10 @@ export function ChannelsPanel() {
             <h3>Channels</h3>
           </div>
           <button
-            className="primary-button"
+            className="primary-button settings-mobile-subnav-redundant-actions"
             data-role="new-channel"
             type="button"
-            onClick={() => {
-              setCreating(true);
-              setChannelDetail(null);
-              setSelectedChannelId(null);
-              setDraft(createDraft(projects[0]?.id ?? null));
-              setBotValidation(null);
-              setChatCandidates([]);
-              setActivity([]);
-            }}
+            onClick={beginCreateChannel}
           >
             Add channel
           </button>
@@ -289,7 +334,7 @@ export function ChannelsPanel() {
         {loading ? <p className="muted-copy">Loading channels…</p> : null}
         {error ? <p className="error-copy">{error}</p> : null}
 
-        <nav className="task-list" aria-label="Channels" data-role="channel-list">
+        <nav className="task-list settings-mobile-subnav-list" aria-label="Channels" data-role="channel-list">
           {channels.map((channel) => (
             <a
               key={channel.id}
@@ -298,6 +343,7 @@ export function ChannelsPanel() {
               onClick={(event) => {
                 event.preventDefault();
                 setSelectedChannelId(channel.id);
+                setCreating(false);
               }}
             >
               <span className="task-list-link__eyebrow">{channel.kind}</span>
@@ -321,7 +367,7 @@ export function ChannelsPanel() {
                 <h3>{creating ? "New channel" : channelDetail?.name ?? "Select a channel"}</h3>
                 <p className="supporting-copy">Connect Telegram to the supervisor session for chat, commands, and notifications.</p>
               </div>
-              <div className="row-actions">
+              <div className="row-actions settings-mobile-subnav-redundant-actions">
                 {selectedChannel?.id && !creating ? (
                   <button className="secondary-button" data-role="delete-channel" type="button" disabled={saving} onClick={() => void handleDeleteChannel()}>
                     Delete channel
@@ -512,5 +558,6 @@ export function ChannelsPanel() {
       </>
       )}
     />
+    </>
   );
 }

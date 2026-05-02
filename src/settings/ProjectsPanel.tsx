@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsMobileSubnavHeader } from "../components/SettingsMobileSubnavHeader";
 import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import {
   attachRepositoryRemote,
@@ -555,6 +556,30 @@ export function ProjectsPanel() {
     }
   }
 
+  function beginCreateProject() {
+    setSelectedProjectId(null);
+    setProjectDetail(null);
+    setProjectSecretsState(null);
+    setProjectDraft(createBlankProjectDraft());
+    setRepositoryDraft(createBlankRepositoryDraft());
+    setAttachRemoteRepositoryId(null);
+    setRemoteDraft(createBlankRemoteDraft());
+    setTaskAutomationSettings(null);
+    setSourceControlSettings(null);
+    setProjectSourceControlSettings(null);
+    setAutomationLoadedProjectSlug(null);
+    setSourceControlLoadedProjectSlug(null);
+    setSecretsLoadedProjectSlug(null);
+    setGitUserNameTemplate("");
+    setGitEmailTemplate("");
+    setAutoDispatchOnBlockerCompletion(false);
+    setProjectTaskPrefixEdited(false);
+    setActiveDetailTab("general");
+    resetSecretEditor();
+    setDeleteProjectConfirmationArmed(false);
+    setIsCreatingProject(true);
+  }
+
   async function handleDeleteProject() {
     if (!selectedProject?.id) {
       return;
@@ -949,11 +974,62 @@ export function ProjectsPanel() {
     }
   }
 
+  const projectMobileActions = [
+    {
+      id: "new-project",
+      label: "New project",
+      onClick: beginCreateProject,
+      variant: "secondary" as const,
+    },
+    ...(selectedProject
+      ? [{
+          id: "delete-project",
+          label: deleteProjectConfirmationArmed ? "Confirm delete project" : "Delete project",
+          onClick: () => void handleDeleteProject(),
+          disabled: saving,
+          variant: deleteProjectConfirmationArmed ? "danger" as const : "secondary" as const,
+        }]
+      : []),
+    ...(selectedProject && deleteProjectConfirmationArmed
+      ? [{
+          id: "cancel-delete-project",
+          label: "Cancel delete",
+          onClick: () => setDeleteProjectConfirmationArmed(false),
+          disabled: saving,
+          variant: "secondary" as const,
+        }]
+      : []),
+    {
+      id: "save-project",
+      label: saving ? (selectedProject ? "Saving…" : "Creating…") : selectedProject ? "Save project" : "Create project",
+      onClick: () => void handleSaveProject(),
+      disabled: saveProjectDisabled,
+      variant: "primary" as const,
+    },
+  ];
+
   return (
-    <ResizableSidebarLayout
+    <>
+      <SettingsMobileSubnavHeader
+        dataRolePrefix="project"
+        selectLabel="Project"
+        ariaLabel="Project selection"
+        value={isCreatingProject ? null : selectedProject?.id ?? null}
+        emptyOptionLabel={isCreatingProject ? "New project" : "Select project"}
+        options={projects.map((project) => ({ id: project.id, label: project.name }))}
+        onChange={(projectId) => {
+          if (projectId) {
+            setSelectedProjectId(projectId);
+            setIsCreatingProject(false);
+          }
+        }}
+        actions={projectMobileActions}
+        actionMenuLabel="Project actions"
+      />
+      <ResizableSidebarLayout
       className="task-shell"
       storageKey="orchestra.layout.projects.secondary-nav-width"
-      navigationClassName="task-nav-panel"
+      navigationClassName="task-nav-panel settings-mobile-subnav-panel"
       detailClassName="panel task-detail-panel"
       navigation={(
         <>
@@ -962,28 +1038,7 @@ export function ProjectsPanel() {
               <p className="eyebrow">Project catalog</p>
               <h3>Projects</h3>
             </div>
-            <button className="primary-button" type="button" onClick={() => {
-              setSelectedProjectId(null);
-              setProjectDetail(null);
-              setProjectSecretsState(null);
-              setProjectDraft(createBlankProjectDraft());
-              setRepositoryDraft(createBlankRepositoryDraft());
-              setAttachRemoteRepositoryId(null);
-              setRemoteDraft(createBlankRemoteDraft());
-              setTaskAutomationSettings(null);
-              setSourceControlSettings(null);
-              setProjectSourceControlSettings(null);
-              setAutomationLoadedProjectSlug(null);
-              setSourceControlLoadedProjectSlug(null);
-              setSecretsLoadedProjectSlug(null);
-              setGitUserNameTemplate("");
-              setGitEmailTemplate("");
-              setAutoDispatchOnBlockerCompletion(false);
-              setProjectTaskPrefixEdited(false);
-              setActiveDetailTab("general");
-              resetSecretEditor();
-              setIsCreatingProject(true);
-            }}>
+            <button className="primary-button settings-mobile-subnav-redundant-actions" type="button" onClick={beginCreateProject}>
               New project
             </button>
           </div>
@@ -991,7 +1046,7 @@ export function ProjectsPanel() {
           {loading ? <p className="muted-copy">Loading projects…</p> : null}
           {error ? <p className="error-copy">{error}</p> : null}
 
-          <nav className="task-list" aria-label="Projects">
+          <nav className="task-list settings-mobile-subnav-list" aria-label="Projects">
             {projects.map((project) => (
               <a
                 key={project.id}
@@ -1000,6 +1055,7 @@ export function ProjectsPanel() {
                 onClick={(event) => {
                   event.preventDefault();
                   setSelectedProjectId(project.id);
+                  setIsCreatingProject(false);
                 }}
               >
                 <span className="task-list-link__eyebrow">{project.slug} · {project.taskPrefix}</span>
@@ -1024,7 +1080,7 @@ export function ProjectsPanel() {
                 <h3>{selectedProject ? selectedProject.name : "New project"}</h3>
                 <p className="muted-copy">Task prefix: {selectedProject?.taskPrefix ?? (normalizeTaskPrefix(projectDraft.taskPrefix) || "—")}</p>
               </div>
-              <div className="row-actions">
+              <div className="row-actions settings-mobile-subnav-redundant-actions">
                 {selectedProject ? (
                   <>
                     <button
@@ -1064,5 +1120,6 @@ export function ProjectsPanel() {
         />
       )}
     />
+    </>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { MarkdownContent } from "../components/MarkdownContent";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsMobileSubnavHeader } from "../components/SettingsMobileSubnavHeader";
 import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import { listAgents } from "../lib/agents";
 import { listProjects } from "../lib/projects";
@@ -886,28 +887,93 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
     );
   }
 
+  const skillMobileActions = [
+    {
+      id: "refresh-external-skills",
+      label: refreshingExternal ? "Refreshing…" : "Refresh external",
+      onClick: () => void handleRefreshExternalSkills(),
+      disabled: refreshingExternal || saving || savingBindings || !skillActionState.canRefreshExternalSkills,
+      variant: "secondary" as const,
+    },
+    {
+      id: "new-skill",
+      label: "New local skill",
+      onClick: beginCreateLocalSkill,
+      disabled: saving || savingBindings || !skillActionState.canCreateLocalSkill,
+      variant: "secondary" as const,
+    },
+    ...(currentDetail?.sourceKind === "local"
+      ? [{
+          id: currentDetail.archived ? "unarchive-skill" : "archive-skill",
+          label: currentDetail.archived ? "Unarchive" : "Archive",
+          onClick: () => void handleArchiveToggle(!currentDetail.archived),
+          disabled: saving || savingBindings || !skillActionState.canArchiveSkill,
+          variant: "secondary" as const,
+        }, {
+          id: "delete-skill",
+          label: deleteConfirmationRequired ? "Confirm delete" : "Delete",
+          onClick: () => void handleDeleteSkill(),
+          disabled: saving || savingBindings || selectedLocalSkillHasBindings || !skillActionState.canDeleteSkill,
+          variant: "danger" as const,
+        }, ...(deleteConfirmationRequired
+          ? [{
+              id: "cancel-delete-skill",
+              label: "Cancel delete",
+              onClick: () => setDeleteConfirmationRequired(false),
+              disabled: saving || savingBindings,
+              variant: "secondary" as const,
+            }]
+          : [])]
+      : []),
+    ...((isCreatingLocalSkill || currentDetail?.sourceKind === "local")
+      ? [{
+          id: "save-skill",
+          label: saving ? (isCreatingLocalSkill ? "Creating…" : "Saving…") : isCreatingLocalSkill ? "Create skill" : "Save changes",
+          onClick: () => void handleSaveSkill(),
+          disabled: saving || loadingDetail || savingBindings || !skillActionState.canSaveLocalSkill,
+          variant: "primary" as const,
+        }]
+      : []),
+  ];
+
   return (
-    <ResizableSidebarLayout
-      className="skills-shell"
-      storageKey="orchestra.layout.skills.secondary-nav-width"
-      navigationClassName="skills-nav-panel"
-      detailClassName="panel skills-detail-panel"
-      navigation={(
-        <>
-          <div className="panel__header panel__header--stacked">
-            <div>
-              <p className="eyebrow">Managed skills catalog</p>
-              <h3>Skills</h3>
+    <>
+      <SettingsMobileSubnavHeader
+        dataRolePrefix="skill"
+        selectLabel="Skill"
+        ariaLabel="Skill selection"
+        value={isCreatingLocalSkill ? null : selectedSkillId}
+        emptyOptionLabel={isCreatingLocalSkill ? "Create skill" : currentDetail?.name ?? "Select skill"}
+        options={filteredSkills.map((skill) => ({ id: skill.id, label: skill.name }))}
+        onChange={(skillId) => {
+          if (skillId) {
+            void handleSelectSkill(skillId);
+          }
+        }}
+        actions={skillMobileActions}
+        actionMenuLabel="Skill actions"
+      />
+      <ResizableSidebarLayout
+        className="skills-shell"
+        storageKey="orchestra.layout.skills.secondary-nav-width"
+        navigationClassName="skills-nav-panel settings-mobile-subnav-panel"
+        detailClassName="panel skills-detail-panel"
+        navigation={(
+          <>
+            <div className="panel__header panel__header--stacked">
+              <div>
+                <p className="eyebrow">Managed skills catalog</p>
+                <h3>Skills</h3>
+              </div>
+              <div className="action-cluster action-cluster--wrap settings-mobile-subnav-redundant-actions">
+                <button className="secondary-button" data-role="refresh-external-skills" type="button" onClick={() => void handleRefreshExternalSkills()} disabled={refreshingExternal || saving || savingBindings || !skillActionState.canRefreshExternalSkills} title={!skillActionState.canRefreshExternalSkills ? "Refreshing external skills requires skills.update." : undefined}>
+                  {refreshingExternal ? "Refreshing…" : "Refresh external"}
+                </button>
+                <button className="primary-button" data-role="new-skill" type="button" onClick={beginCreateLocalSkill} disabled={saving || savingBindings || !skillActionState.canCreateLocalSkill} title={!skillActionState.canCreateLocalSkill ? skillActionState.localEditorReason ?? undefined : undefined}>
+                  New local skill
+                </button>
+              </div>
             </div>
-            <div className="action-cluster action-cluster--wrap">
-              <button className="secondary-button" data-role="refresh-external-skills" type="button" onClick={() => void handleRefreshExternalSkills()} disabled={refreshingExternal || saving || savingBindings || !skillActionState.canRefreshExternalSkills} title={!skillActionState.canRefreshExternalSkills ? "Refreshing external skills requires skills.update." : undefined}>
-                {refreshingExternal ? "Refreshing…" : "Refresh external"}
-              </button>
-              <button className="primary-button" data-role="new-skill" type="button" onClick={beginCreateLocalSkill} disabled={saving || savingBindings || !skillActionState.canCreateLocalSkill} title={!skillActionState.canCreateLocalSkill ? skillActionState.localEditorReason ?? undefined : undefined}>
-                New local skill
-              </button>
-            </div>
-          </div>
           {!canCreateSkills || !canUpdateSkills ? (
             <p className="muted-copy">
               {!canCreateSkills && !canUpdateSkills
@@ -993,7 +1059,7 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
           {loadingList ? <p className="muted-copy">Loading skills…</p> : null}
           {actionError ? <p className="error-copy">{actionError}</p> : null}
 
-          <nav className="skills-list" aria-label="Skills" data-role="skills-list">
+          <nav className="skills-list settings-mobile-subnav-list" aria-label="Skills" data-role="skills-list">
             {filteredSkills.length === 0 ? (
               <div className="skills-list-empty muted-copy">
                 No skills match the current filters.
@@ -1041,7 +1107,7 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
                   <p className="eyebrow">Local skill</p>
                   <h3>Create skill</h3>
                 </div>
-                <div className="action-cluster action-cluster--wrap">
+                <div className="action-cluster action-cluster--wrap settings-mobile-subnav-redundant-actions">
                   <span className="status-badge status-badge--accent">Local draft</span>
                   <button className="primary-button" data-role="save-skill" type="button" onClick={() => void handleSaveSkill()} disabled={saving || !skillActionState.canSaveLocalSkill} title={!skillActionState.canSaveLocalSkill ? skillActionState.localEditorReason ?? undefined : undefined}>
                     {saving ? "Creating…" : "Create skill"}
@@ -1116,7 +1182,7 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
                     <p className="eyebrow">Local skill</p>
                     <h3>{currentDetail.name}</h3>
                   </div>
-                  <div className="action-cluster action-cluster--wrap">
+                  <div className="action-cluster action-cluster--wrap settings-mobile-subnav-redundant-actions">
                     <span className="status-badge status-badge--accent">Local</span>
                     {currentDetail.archived ? <span className="status-badge status-badge--neutral">Archived</span> : <span className={getSkillStatusBadgeClass(currentDetail.status)}>{getSkillStatusLabel(currentDetail.status)}</span>}
                     <button className="secondary-button" data-role={currentDetail.archived ? "unarchive-skill" : "archive-skill"} type="button" onClick={() => void handleArchiveToggle(!currentDetail.archived)} disabled={saving || savingBindings || !skillActionState.canArchiveSkill} title={!skillActionState.canArchiveSkill ? "Archiving skills requires skills.archive." : undefined}>
@@ -1318,5 +1384,6 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
         )
       )}
     />
+    </>
   );
 }

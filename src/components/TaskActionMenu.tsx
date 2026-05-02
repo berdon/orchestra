@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 
@@ -16,9 +16,23 @@ interface TaskActionMenuProps {
   actions: TaskActionMenuAction[];
   menuLabel?: string;
   pendingActionId?: string | null;
+  className?: string;
+  mobileTriggerVariant?: "label" | "icon";
+  mobileTriggerIcon?: ReactNode;
+  mobileTriggerAriaLabel?: string;
+  mobileTriggerDataRole?: string;
 }
 
-export function TaskActionMenu({ actions, menuLabel = "Actions", pendingActionId = null }: TaskActionMenuProps) {
+export function TaskActionMenu({
+  actions,
+  menuLabel = "Actions",
+  pendingActionId = null,
+  className,
+  mobileTriggerVariant = "label",
+  mobileTriggerIcon = "☰",
+  mobileTriggerAriaLabel,
+  mobileTriggerDataRole,
+}: TaskActionMenuProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const getTooltipProps = useExplanatoryTooltipProps();
@@ -35,7 +49,7 @@ export function TaskActionMenu({ actions, menuLabel = "Actions", pendingActionId
   }, []);
 
   return (
-    <div className="task-action-menu" ref={rootRef}>
+    <div className={["task-action-menu", className].filter(Boolean).join(" ")} ref={rootRef}>
       <div className="task-action-menu__desktop" data-role="task-action-menu-desktop">
         {actions.map((action) => (
           <button
@@ -61,12 +75,16 @@ export function TaskActionMenu({ actions, menuLabel = "Actions", pendingActionId
       </div>
       <div className="task-action-menu__mobile" data-role="task-action-menu-mobile">
         <button
-          className="secondary-button task-action-menu__trigger"
+          className={mobileTriggerVariant === "icon" ? "secondary-button task-action-menu__trigger task-action-menu__trigger--icon" : "secondary-button task-action-menu__trigger"}
+          data-role={mobileTriggerDataRole}
           type="button"
           onClick={() => setOpen((current) => !current)}
           aria-expanded={open}
+          aria-haspopup="menu"
+          aria-label={mobileTriggerVariant === "icon" ? (mobileTriggerAriaLabel ?? menuLabel) : undefined}
+          title={mobileTriggerVariant === "icon" ? (mobileTriggerAriaLabel ?? menuLabel) : undefined}
         >
-          {menuLabel}
+          {mobileTriggerVariant === "icon" ? <span aria-hidden="true">{mobileTriggerIcon}</span> : menuLabel}
         </button>
         {open ? (
           <div className="task-action-menu__dropdown" role="menu">

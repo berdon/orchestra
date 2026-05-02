@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsMobileSubnavHeader } from "../components/SettingsMobileSubnavHeader";
 import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import { listAgents } from "../lib/agents";
 import { listRoles } from "../lib/roles";
@@ -548,10 +549,74 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
         </div>
       </section>
 
+      <SettingsMobileSubnavHeader
+        dataRolePrefix="workflow"
+        selectLabel="Workflow"
+        ariaLabel="Workflow selection"
+        value={isCreatingWorkflow ? null : selectedWorkflowId}
+        emptyOptionLabel={isCreatingWorkflow ? "New workflow" : "Select workflow"}
+        options={workflows.map((workflow) => ({ id: workflow.id, label: workflow.name }))}
+        onChange={(workflowId) => {
+          if (workflowId) {
+            setSelectedWorkflowId(workflowId);
+            setIsCreatingWorkflow(false);
+          }
+        }}
+        actions={[
+          {
+            id: "toggle-archived-workflows",
+            label: includeArchivedWorkflows ? "Hide archived workflows" : "Show archived workflows",
+            onClick: () => setIncludeArchivedWorkflows((current) => !current),
+            variant: "secondary",
+          },
+          {
+            id: "refresh-workflows",
+            label: "Refresh workflows",
+            onClick: () => void loadWorkflows(),
+            variant: "secondary",
+          },
+          {
+            id: "new-workflow",
+            label: "New workflow",
+            onClick: beginCreateWorkflow,
+            variant: "secondary",
+          },
+          ...(selectedWorkflowSummary
+            ? [{
+                id: "duplicate-workflow",
+                label: "Duplicate",
+                onClick: () => void handleDuplicateWorkflow(),
+                disabled: savingWorkflow || deletingWorkflow,
+                variant: "secondary" as const,
+              }, {
+                id: "archive-workflow",
+                label: "Archive",
+                onClick: () => void handleArchiveWorkflow(),
+                disabled: savingWorkflow || deletingWorkflow || loadedWorkflowArchived,
+                variant: "secondary" as const,
+              }, {
+                id: "delete-workflow",
+                label: "Delete",
+                onClick: () => void handleRequestDeleteWorkflow(),
+                disabled: savingWorkflow || deletingWorkflow || loadingDeleteImpact,
+                variant: "danger" as const,
+              }]
+            : []),
+          {
+            id: "save-workflow",
+            label: savingWorkflow ? "Saving…" : loadedWorkflowId && !isCreatingWorkflow ? "Save changes" : "Create workflow",
+            onClick: () => void handleSaveWorkflow(),
+            disabled: savingWorkflow || deletingWorkflow || loadingWorkflowDetail,
+            variant: "primary",
+          },
+        ]}
+        actionMenuLabel="Workflow actions"
+      />
+
       <ResizableSidebarLayout
         className="workflow-shell"
         storageKey="orchestra.layout.workflows.secondary-nav-width"
-        navigationClassName="workflow-nav-panel"
+        navigationClassName="workflow-nav-panel settings-mobile-subnav-panel"
         detailClassName="panel workflow-detail-panel"
         navigation={(
         <>
@@ -560,7 +625,7 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
               <p className="eyebrow">Workflow library</p>
               <h3>Workflows</h3>
             </div>
-            <div className="action-cluster">
+            <div className="action-cluster settings-mobile-subnav-redundant-actions">
               <label className="checkbox-row">
                 <input
                   type="checkbox"
@@ -575,14 +640,14 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
             </div>
           </div>
 
-          <button className="primary-button" type="button" onClick={beginCreateWorkflow}>
+          <button className="primary-button settings-mobile-subnav-redundant-actions" type="button" onClick={beginCreateWorkflow}>
             New workflow
           </button>
 
           {loadingWorkflows ? <p className="muted-copy">Loading workflows…</p> : null}
           {workflowActionError ? <p className="error-copy">{workflowActionError}</p> : null}
 
-          <nav className="workflow-nav" aria-label="Workflows">
+          <nav className="workflow-nav settings-mobile-subnav-list" aria-label="Workflows">
             {workflows.map((workflow) => (
               <a
                 key={workflow.id}
@@ -619,7 +684,7 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
               </div>
             </div>
 
-            <div className="action-cluster">
+            <div className="action-cluster settings-mobile-subnav-redundant-actions">
               <button className="secondary-button" type="button" disabled={savingWorkflow || deletingWorkflow || !selectedWorkflowSummary} onClick={() => void handleDuplicateWorkflow()}>
                 Duplicate
               </button>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AccessEditor } from "../components/access/AccessEditor";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsMobileSubnavHeader } from "../components/SettingsMobileSubnavHeader";
 import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import { buildEffectivePermissions, getPolicyLabel } from "../lib/access";
 import { getPolicy, listPolicies } from "../lib/policies";
@@ -358,11 +359,59 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
     }
   }
 
+  const roleMobileActions = [
+    {
+      id: "toggle-archived-roles",
+      label: includeArchivedRoles ? "Hide archived roles" : "Show archived roles",
+      onClick: () => setIncludeArchivedRoles((current) => !current),
+      variant: "secondary" as const,
+    },
+    {
+      id: "new-role",
+      label: "New role",
+      onClick: beginCreateRole,
+      variant: "secondary" as const,
+    },
+    ...(!isCreatingRole && loadedRoleId
+      ? [{
+          id: "archive-role",
+          label: "Archive role",
+          onClick: () => void handleArchiveRole(),
+          disabled: savingRole || loadedRoleArchived,
+          variant: "danger" as const,
+        }]
+      : []),
+    {
+      id: "save-role",
+      label: savingRole ? "Saving…" : isCreatingRole ? "Create role" : "Save changes",
+      onClick: () => void handleSaveRole(),
+      disabled: savingRole || loadingRoleDetail,
+      variant: "primary" as const,
+    },
+  ];
+
   return (
-    <ResizableSidebarLayout
+    <>
+      <SettingsMobileSubnavHeader
+        dataRolePrefix="role"
+        selectLabel="Role"
+        ariaLabel="Role selection"
+        value={isCreatingRole ? null : selectedRoleSummary?.id ?? null}
+        emptyOptionLabel={isCreatingRole ? "Create role" : "Select role"}
+        options={roles.map((role) => ({ id: role.id, label: role.name }))}
+        onChange={(roleId) => {
+          if (roleId) {
+            setSelectedRoleId(roleId);
+            setIsCreatingRole(false);
+          }
+        }}
+        actions={roleMobileActions}
+        actionMenuLabel="Role actions"
+      />
+      <ResizableSidebarLayout
       className="role-shell"
       storageKey="orchestra.layout.roles.secondary-nav-width"
-      navigationClassName="role-nav-panel"
+      navigationClassName="role-nav-panel settings-mobile-subnav-panel"
       detailClassName="panel role-detail-panel"
       navigation={(
       <>
@@ -371,7 +420,7 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
             <p className="eyebrow">Role library</p>
             <h3>Roles</h3>
           </div>
-          <div className="action-cluster">
+          <div className="action-cluster settings-mobile-subnav-redundant-actions">
             <label className="checkbox-row">
               <input
                 type="checkbox"
@@ -389,7 +438,7 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
         {loadingRoles ? <p className="muted-copy">Loading roles…</p> : null}
         {roleActionError ? <p className="error-copy">{roleActionError}</p> : null}
 
-        <nav className="role-list" aria-label="Roles">
+        <nav className="role-list settings-mobile-subnav-list" aria-label="Roles">
           {roles.map((role) => (
             <a
               key={role.id}
@@ -398,6 +447,7 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
               onClick={(event) => {
                 event.preventDefault();
                 setSelectedRoleId(role.id);
+                setIsCreatingRole(false);
               }}
             >
               {role.name}
@@ -421,7 +471,7 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
                   <p className="eyebrow">Role definition</p>
                   <h3>{isCreatingRole ? "Create role" : roleDraft.name.trim() || "Untitled role"}</h3>
                 </div>
-                <div className="action-cluster">
+                <div className="action-cluster settings-mobile-subnav-redundant-actions">
                   {loadedRoleArchived ? <span className="status-badge status-badge--neutral">Archived</span> : null}
                   {attachedPolicyNames.map((name) => (
                     <span className="status-badge status-badge--accent" key={name}>
@@ -696,5 +746,6 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
       </>
       )}
     />
+    </>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AccessEditor } from "../components/access/AccessEditor";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsMobileSubnavHeader } from "../components/SettingsMobileSubnavHeader";
 import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import type { InheritedAccessSummary } from "../components/access/AccessSummary";
 import { buildEffectivePermissions, getPolicyLabel } from "../lib/access";
@@ -489,11 +490,59 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
     }
   }
 
+  const agentMobileActions = [
+    {
+      id: "toggle-archived-agents",
+      label: includeArchivedAgents ? "Hide archived agents" : "Show archived agents",
+      onClick: () => setIncludeArchivedAgents((current) => !current),
+      variant: "secondary" as const,
+    },
+    {
+      id: "new-agent",
+      label: "New agent",
+      onClick: beginCreateAgent,
+      variant: "secondary" as const,
+    },
+    ...(!isCreatingAgent && loadedAgentId && !loadedAgentProtected
+      ? [{
+          id: "archive-agent",
+          label: "Archive agent",
+          onClick: () => void handleArchiveAgent(),
+          disabled: savingAgent || loadedAgentArchived,
+          variant: "danger" as const,
+        }]
+      : []),
+    {
+      id: "save-agent",
+      label: savingAgent ? "Saving…" : isCreatingAgent ? "Create agent" : "Save changes",
+      onClick: () => void handleSaveAgent(),
+      disabled: savingAgent || loadingAgentDetail,
+      variant: "primary" as const,
+    },
+  ];
+
   return (
-    <ResizableSidebarLayout
+    <>
+      <SettingsMobileSubnavHeader
+        dataRolePrefix="agent"
+        selectLabel="Agent"
+        ariaLabel="Agent selection"
+        value={isCreatingAgent ? null : selectedAgentSummary?.id ?? null}
+        emptyOptionLabel={isCreatingAgent ? "Create agent" : "Select agent"}
+        options={agents.map((agent) => ({ id: agent.id, label: agent.name }))}
+        onChange={(agentId) => {
+          if (agentId) {
+            setSelectedAgentId(agentId);
+            setIsCreatingAgent(false);
+          }
+        }}
+        actions={agentMobileActions}
+        actionMenuLabel="Agent actions"
+      />
+      <ResizableSidebarLayout
       className="role-shell"
       storageKey="orchestra.layout.agents.secondary-nav-width"
-      navigationClassName="role-nav-panel"
+      navigationClassName="role-nav-panel settings-mobile-subnav-panel"
       detailClassName="panel role-detail-panel"
       navigation={(
       <>
@@ -502,7 +551,7 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
             <p className="eyebrow">Agent library</p>
             <h3>Agents</h3>
           </div>
-          <div className="action-cluster">
+          <div className="action-cluster settings-mobile-subnav-redundant-actions">
             <label className="checkbox-row">
               <input
                 type="checkbox"
@@ -520,7 +569,7 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
         {loadingAgents ? <p className="muted-copy">Loading agents…</p> : null}
         {agentActionError ? <p className="error-copy">{agentActionError}</p> : null}
 
-        <nav className="role-list" aria-label="Agents">
+        <nav className="role-list settings-mobile-subnav-list" aria-label="Agents">
           {agents.map((agent) => (
             <a
               key={agent.id}
@@ -529,6 +578,7 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
               onClick={(event) => {
                 event.preventDefault();
                 setSelectedAgentId(agent.id);
+                setIsCreatingAgent(false);
               }}
             >
               <span data-role={`agent-list-name-${agent.slug}`} style={agent.scope === "global" ? { fontWeight: 700, fontStyle: "italic" } : undefined}>
@@ -554,7 +604,7 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
                   <p className="eyebrow">Agent definition</p>
                   <h3>{isCreatingAgent ? "Create agent" : agentDraft.name.trim() || "Untitled agent"}</h3>
                 </div>
-                <div className="action-cluster">
+                <div className="action-cluster settings-mobile-subnav-redundant-actions">
                   {agentMemoryInfo ? <span className="status-badge status-badge--accent">{agentMemoryInfo.slug}</span> : null}
                   {loadedAgentProtected ? <span className="status-badge status-badge--warning" data-role="agent-protected-badge">Protected</span> : null}
                   <span className="status-badge status-badge--neutral" data-role="agent-scope-badge">{loadedAgentProtected && !isCreatingAgent ? "Global" : agentDraft.scope === "project" ? "Project specific" : "Global"}</span>
@@ -931,5 +981,6 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
       </>
       )}
     />
+    </>
   );
 }

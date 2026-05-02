@@ -4025,7 +4025,9 @@ strong {
 
 @media (prefers-reduced-motion: reduce) {
   .task-detail-floating-header,
-  .task-detail-floating-header--hidden {
+  .task-detail-floating-header--hidden,
+  .settings-mobile-subnav-floating-shell,
+  .settings-mobile-subnav-floating-shell--hidden {
     transition: none;
   }
 }
@@ -4064,6 +4066,85 @@ strong {
 .task-detail-primary-header-sentinel {
   width: 100%;
   height: 1px;
+}
+
+.settings-mobile-subnav-shell {
+  display: none;
+  position: relative;
+}
+
+.settings-mobile-subnav {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-toolbar-background) 96%, transparent);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+}
+
+.settings-mobile-subnav__picker {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-mobile-subnav__label {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.settings-mobile-subnav__control {
+  min-width: 0;
+}
+
+.settings-mobile-subnav__actions {
+  display: flex;
+  align-items: stretch;
+}
+
+.settings-mobile-subnav__actions .task-action-menu,
+.settings-mobile-subnav__actions .task-action-menu__mobile {
+  display: block;
+}
+
+.settings-mobile-subnav__actions .task-action-menu__trigger--icon {
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: 12px;
+  font-size: 1.1rem;
+}
+
+.settings-mobile-subnav__sentinel {
+  width: 100%;
+  height: 1px;
+}
+
+.settings-mobile-subnav-floating-shell {
+  position: fixed;
+  z-index: 18;
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+  transition:
+    transform 180ms ease,
+    opacity 160ms ease,
+    visibility 0s linear 0s;
+}
+
+.settings-mobile-subnav-floating-shell--hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(calc(-100% - 12px));
+  visibility: hidden;
+  transition:
+    transform 180ms ease,
+    opacity 160ms ease,
+    visibility 0s linear 180ms;
 }
 
 .task-detail-tab-dock {
@@ -6364,6 +6445,20 @@ strong {
   .task-action-menu__mobile {
     display: block;
   }
+}
+
+.app-shell[data-mobile-navigation="true"] .settings-mobile-subnav-shell {
+  display: grid;
+  gap: 10px;
+}
+
+.app-shell[data-mobile-navigation="true"] .settings-mobile-subnav-panel {
+  display: none;
+}
+
+.app-shell[data-mobile-navigation="true"] .settings-mobile-subnav-list,
+.app-shell[data-mobile-navigation="true"] .settings-mobile-subnav-redundant-actions {
+  display: none !important;
 }
 
 /* Mobile Harness settings should remain touch-friendly and avoid horizontal overflow. */
