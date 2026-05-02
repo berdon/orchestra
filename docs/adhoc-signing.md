@@ -136,6 +136,8 @@ open src-tauri/target/release/bundle/macos/Orchestra.app
 - Uses the same adhoc signing configuration
 - Automatically signs the dev build
 - Notifications work during development
+- Defaults Orchestra storage to `~/.orchestra-dev` so dev runs do not mutate the normal `~/.orchestra` state
+- Set `ORCHESTRA_STORAGE_ROOT` or run `cargo tauri dev -- --orchestra-home "$HOME/.orchestra"` if you intentionally want a different storage root
 - `src-tauri/Cargo.toml` sets `default-run = "orchestra"`, so `cargo tauri dev` still works when helper binaries are present
 
 ### Production Build

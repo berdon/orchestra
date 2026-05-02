@@ -167,24 +167,24 @@ The Rust backend also ships an `orc` CLI under `src-tauri/src/bin/orc.rs`.
 Current command surface:
 
 ```bash
-orc chat [--agent <agent>]
-orc msg [--agent <agent>] <message...>
-orc [--project <project>] task list [--json]
-orc [--project <project>] task show <task> [--json]
-orc [--project <project>] task create --title <title> [...flags] [--json]
-orc [--project <project>] task update <task> [...flags] [--json]
-orc [--project <project>] task comment <task> <message...> [--reply-to <comment-id>] [--interrupt] [--json]
-orc [--project <project>] task comments <task> [--json]
-orc [--project <project>] task approve <task> [--json]
-orc [--project <project>] task needs-work <task> [--notes <text>] [--json]
-orc [--project <project>] task pause <task> [--notes <text>] [--json]
-orc [--project <project>] task resume <task> [--notes <text>] [--json]
-orc [--project <project>] task stop <task> [--notes <text>] [--json]
-orc [--project <project>] task dispatch <task> [--json]
-orc [--project <project>] task move <task> --lane <lane-id> [--notes <text>] [--json]
+orc [--orchestra-home <path>] chat [--agent <agent>]
+orc [--orchestra-home <path>] msg [--agent <agent>] <message...>
+orc [--orchestra-home <path>] [--project <project>] task list [--json]
+orc [--orchestra-home <path>] [--project <project>] task show <task> [--json]
+orc [--orchestra-home <path>] [--project <project>] task create --title <title> [...flags] [--json]
+orc [--orchestra-home <path>] [--project <project>] task update <task> [...flags] [--json]
+orc [--orchestra-home <path>] [--project <project>] task comment <task> <message...> [--reply-to <comment-id>] [--interrupt] [--json]
+orc [--orchestra-home <path>] [--project <project>] task comments <task> [--json]
+orc [--orchestra-home <path>] [--project <project>] task approve <task> [--json]
+orc [--orchestra-home <path>] [--project <project>] task needs-work <task> [--notes <text>] [--json]
+orc [--orchestra-home <path>] [--project <project>] task pause <task> [--notes <text>] [--json]
+orc [--orchestra-home <path>] [--project <project>] task resume <task> [--notes <text>] [--json]
+orc [--orchestra-home <path>] [--project <project>] task stop <task> [--notes <text>] [--json]
+orc [--orchestra-home <path>] [--project <project>] task dispatch <task> [--json]
+orc [--orchestra-home <path>] [--project <project>] task move <task> --lane <lane-id> [--notes <text>] [--json]
 ```
 
-Task selectors accept canonical ids, task numbers like `ORC-67`, and numeric shorthand like `67` when a selected/default project makes the reference unambiguous. Human-readable text is the default output mode; pass `--json` for structured scripting output.
+Task selectors accept canonical ids, task numbers like `ORC-67`, and numeric shorthand like `67` when a selected/default project makes the reference unambiguous. Human-readable text is the default output mode; pass `--json` for structured scripting output. Use `--orchestra-home <path>` when you want the CLI to read/write a different Orchestra storage root than the default `~/.orchestra`; the value should be the final storage root itself (for example `~/.orchestra-dev`).
 
 #### Prerequisites
 
@@ -197,6 +197,8 @@ Task selectors accept canonical ids, task numbers like `ORC-67`, and numeric sho
 source "$HOME/.cargo/env"
 cargo tauri dev
 ```
+
+Tauri dev runs now default to `~/.orchestra-dev` so local development does not mutate the normal `~/.orchestra` state. Set `ORCHESTRA_STORAGE_ROOT` or run `cargo tauri dev -- --orchestra-home "$HOME/.orchestra"` if you intentionally want a different storage root.
 
 `src-tauri/Cargo.toml` sets `default-run = "orchestra"`, so this works even though the crate also includes helper binaries under `src-tauri/src/bin/`.
 

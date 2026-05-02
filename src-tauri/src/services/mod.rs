@@ -48,6 +48,7 @@ pub mod session_ownership;
 pub mod session_records;
 pub mod skill_bindings;
 pub mod skills;
+pub mod startup_options;
 pub mod startup_resume;
 pub mod system_notifications;
 pub mod task_attachments;

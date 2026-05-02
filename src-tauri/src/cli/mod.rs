@@ -24,6 +24,10 @@ const CLI_UNSUPPORTED_BRIDGE_COMMANDS: &[&str] = &[
 #[derive(Debug, Parser)]
 #[command(name = "orc", about = "Orchestra command-line interface")]
 pub struct Cli {
+    /// Orchestra storage root to use instead of the default ~/.orchestra path.
+    #[arg(long = "orchestra-home", global = true, value_name = "PATH")]
+    orchestra_home: Option<std::path::PathBuf>,
+
     /// Project id or slug to scope CLI operations.
     #[arg(long = "project", global = true)]
     project: Option<String>,
@@ -54,6 +58,7 @@ pub struct ResolvedAgentTarget {
 }
 
 pub fn run() -> Result<i32, String> {
+    services::startup_options::prepare_process_startup(false)?;
     let cli = Cli::parse();
     let backend = services::backend_bootstrap::initialize_cli_backend()?;
 
@@ -267,6 +272,26 @@ mod tests {
         let cli = Cli::try_parse_from(["orc", "--project", "orchestra", "task", "list"])
             .expect("task list should parse");
         assert_eq!(cli.project.as_deref(), Some("orchestra"));
+        match cli.command {
+            Commands::Task(_) => {}
+            _ => panic!("expected task command"),
+        }
+    }
+
+    #[test]
+    fn global_orchestra_home_flag_parses_before_task_command() {
+        let cli = Cli::try_parse_from([
+            "orc",
+            "--orchestra-home",
+            "/tmp/orchestra-dev",
+            "task",
+            "list",
+        ])
+        .expect("task list should parse");
+        assert_eq!(
+            cli.orchestra_home,
+            Some(std::path::PathBuf::from("/tmp/orchestra-dev"))
+        );
         match cli.command {
             Commands::Task(_) => {}
             _ => panic!("expected task command"),

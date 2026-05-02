@@ -123,12 +123,29 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
     services::remote_api::run_remote_api_route_probe(case)
 }
 
+pub fn run_remote_api_route_probe_from_process_args() -> Result<(), String> {
+    let options = services::startup_options::prepare_process_startup(false)?;
+    let case = options.remaining_args.get(1).ok_or_else(|| {
+        "usage: remote_api_route_probe <frontend_bootstrap|session_message|hosted_web_entrypoint|task_attachment_content|task_list_parity|inbox_parity|sessions_parity|skills_parity|skills_permissions>".to_string()
+    })?;
+    services::remote_api::run_remote_api_route_probe(&case.to_string_lossy())
+}
+
 pub fn run_hosted_web_e2e_server() -> Result<(), String> {
+    services::remote_api::run_hosted_web_e2e_server()
+}
+
+pub fn run_hosted_web_e2e_server_from_process_args() -> Result<(), String> {
+    services::startup_options::prepare_process_startup(false)?;
     services::remote_api::run_hosted_web_e2e_server()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    services::startup_options::prepare_process_startup(
+        services::startup_options::desktop_tauri_dev_default_enabled(),
+    )
+    .expect("unable to resolve Orchestra startup storage options");
     let bootstrap = services::backend_bootstrap::initialize_backend()
         .expect("unable to initialize Orchestra backend");
     let database_path = bootstrap.database_path;

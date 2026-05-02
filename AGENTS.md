@@ -31,6 +31,8 @@ source "$HOME/.cargo/env"
 cargo tauri dev
 ```
 
+Tauri dev runs now default to `~/.orchestra-dev` so development does not touch the normal `~/.orchestra` state. To target a different storage root explicitly, set `ORCHESTRA_STORAGE_ROOT` or run `cargo tauri dev -- --orchestra-home "$HOME/.orchestra"`.
+
 `src-tauri/Cargo.toml` sets `default-run = "orchestra"`, so the command works even though the crate also contains helper binaries.
 
 ## Running the dev app in the background
@@ -40,6 +42,8 @@ cargo tauri dev
 ```bash
 bash -lc 'source "$HOME/.cargo/env"; cargo tauri dev >/tmp/orchestra-dev.log 2>&1 & pid=$!; disown "$pid"; echo "$pid" > /tmp/orchestra-dev.pid; echo "PID $pid"'
 ```
+
+That background dev app also uses `~/.orchestra-dev` by default.
 
 ### Check status
 
