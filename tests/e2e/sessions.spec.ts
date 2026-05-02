@@ -53,6 +53,7 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
       listPanelWidth: listPanel ? listPanel.getBoundingClientRect().width : 0,
       detailHeight: detailRect.height,
       detailTop: detailRect.top,
+      detailScrollHeight: detailColumn.scrollHeight,
       panelHeight: panelRect.height,
       panelTop: panelRect.top,
       panelHeaderVisible: panelHeader ? window.getComputedStyle(panelHeader).display !== 'none' : false,
@@ -64,6 +65,7 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
       composerInputHeight: composerRect.height,
       composerInputWidth: composerRect.width,
       composerFooterWidth: composerFooterRect?.width ?? 0,
+      composerTop: composerRect.top,
       composerBottom: composerRect.bottom,
       sendBottom: sendRect?.bottom ?? null,
       sendDisabled: sendButton?.disabled ?? null,
@@ -79,6 +81,21 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
       composerResize: window.getComputedStyle(composerInput).resize,
     };
   });
+}
+
+async function dragComposerResizeCorner(page: import("@playwright/test").Page) {
+  const composerInput = page.locator('[data-role="composer-input"]');
+  const box = await composerInput.boundingBox();
+  if (!box) {
+    throw new Error("Expected composer input bounds");
+  }
+
+  const x = box.x + box.width - 3;
+  const y = box.y + box.height - 3;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + 120, { steps: 15 });
+  await page.mouse.up();
 }
 
 async function appendMockSessionEvents(page: import("@playwright/test").Page, sessionId: string, count = 80) {
@@ -263,7 +280,6 @@ test("sessions transcript fills the available page height while the composer rem
 
   const panel = page.locator('[data-role="session-chat-panel"]');
   const transcript = page.locator('[data-role="session-transcript"]');
-  const composerInput = page.locator('[data-role="composer-input"]');
 
   await expect(panel).toBeVisible();
   await expect(transcript).toBeVisible();
@@ -272,8 +288,9 @@ test("sessions transcript fills the available page height while the composer rem
   expect(initialLayout).not.toBeNull();
   expect(initialLayout?.stackHeight ?? 0).toBeGreaterThan((initialLayout?.contentBodyHeight ?? 0) - 24);
   expect(initialLayout?.listPanelWidth ?? 0).toBeGreaterThan(220);
-  expect(initialLayout?.detailHeight ?? 0).toBeGreaterThan((initialLayout?.stackHeight ?? 0) - 24);
-  expect(initialLayout?.panelHeight ?? 0).toBeGreaterThan((initialLayout?.detailHeight ?? 0) * 0.85);
+  expect(initialLayout?.detailHeight ?? 0).toBeGreaterThan(900);
+  expect(initialLayout?.detailScrollHeight ?? 0).toBeGreaterThan((initialLayout?.detailHeight ?? 0) + 80);
+  expect(initialLayout?.panelHeight ?? 0).toBeGreaterThan((initialLayout?.detailHeight ?? 0) * 1.05);
   expect(initialLayout?.panelHeaderVisible).toBe(true);
   expect(initialLayout?.transcriptHeight ?? 0).toBeGreaterThan(400);
   expect(initialLayout?.panelResize).toBe("none");
@@ -281,23 +298,24 @@ test("sessions transcript fills the available page height while the composer rem
 
   const sessionId = await panel.getAttribute("data-session-id");
   expect(sessionId).toBeTruthy();
-  await appendMockSessionEvents(page, sessionId ?? "");
-  await expect(transcript).toContainText("Layout resize event 79");
+  await appendMockSessionEvents(page, sessionId ?? "", 160);
+  await expect(transcript).toContainText("Layout resize event 159");
 
   const beforeResize = await measureSessionLayout(page);
   expect(beforeResize).not.toBeNull();
   expect((beforeResize?.transcriptScrollHeight ?? 0) - (beforeResize?.transcriptClientHeight ?? 0)).toBeGreaterThan(200);
 
-  await composerInput.evaluate((element) => {
-    (element as HTMLTextAreaElement).style.height = "240px";
-  });
+  await dragComposerResizeCorner(page);
   await page.waitForTimeout(100);
 
   const afterResize = await measureSessionLayout(page);
   expect(afterResize).not.toBeNull();
   expect(afterResize?.composerInputHeight ?? 0).toBeGreaterThan((beforeResize?.composerInputHeight ?? 0) + 100);
-  expect(afterResize?.transcriptHeight ?? 0).toBeLessThan((beforeResize?.transcriptHeight ?? 0) - 100);
-  expect(Math.abs((afterResize?.panelHeight ?? 0) - (beforeResize?.panelHeight ?? 0))).toBeLessThan(8);
+  expect(Math.abs((afterResize?.composerTop ?? 0) - (beforeResize?.composerTop ?? 0))).toBeLessThan(16);
+  expect(afterResize?.composerBottom ?? 0).toBeGreaterThan((beforeResize?.composerBottom ?? 0) + 100);
+  expect(afterResize?.panelHeight ?? 0).toBeGreaterThan((beforeResize?.panelHeight ?? 0) + 100);
+  expect(Math.abs((afterResize?.transcriptHeight ?? 0) - (beforeResize?.transcriptHeight ?? 0))).toBeLessThan(16);
+  expect(afterResize?.detailScrollHeight ?? 0).toBeGreaterThan((beforeResize?.detailScrollHeight ?? 0) + 100);
   expect((afterResize?.transcriptScrollHeight ?? 0) - (afterResize?.transcriptClientHeight ?? 0)).toBeGreaterThan(200);
 
   await transcript.evaluate((element) => {

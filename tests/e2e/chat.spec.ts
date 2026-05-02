@@ -39,12 +39,14 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
       stackHeight: stack.getBoundingClientRect().height,
       detailHeight: detailRect.height,
       detailTop: detailRect.top,
+      detailScrollHeight: detailColumn.scrollHeight,
       panelHeight: panelRect.height,
       panelTop: panelRect.top,
       transcriptHeight: transcriptRect.height,
       transcriptTop: transcriptRect.top,
       composerInputHeight: composerRect.height,
       composerInputWidth: composerRect.width,
+      composerTop: composerRect.top,
       composerBottom: composerRect.bottom,
       sendBottom: sendRect.bottom,
       sendDisabled: sendButton.disabled,
@@ -56,6 +58,21 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
       composerResize: window.getComputedStyle(composerInput).resize,
     };
   });
+}
+
+async function dragComposerResizeCorner(page: import("@playwright/test").Page) {
+  const composerInput = page.locator('[data-role="composer-input"]');
+  const box = await composerInput.boundingBox();
+  if (!box) {
+    throw new Error("Expected composer input bounds");
+  }
+
+  const x = box.x + box.width - 3;
+  const y = box.y + box.height - 3;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + 120, { steps: 15 });
+  await page.mouse.up();
 }
 
 test("chat nav lists named agents and excludes roles", async ({ page }) => {
@@ -334,7 +351,6 @@ test("chat page fills the available height while keeping the composer resizable"
   await page.locator('[data-role="chat-agent-nav-data"]').click();
 
   const transcript = page.locator('[data-role="session-transcript"]');
-  const composerInput = page.locator('[data-role="composer-input"]');
 
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data chat");
   await expect(transcript).toBeVisible();
@@ -348,16 +364,17 @@ test("chat page fills the available height while keeping the composer resizable"
   expect(initialLayout?.panelResize).toBe("none");
   expect(initialLayout?.composerResize).toBe("vertical");
 
-  await composerInput.evaluate((element) => {
-    (element as HTMLTextAreaElement).style.height = "240px";
-  });
+  await dragComposerResizeCorner(page);
   await page.waitForTimeout(100);
 
   const afterResize = await measureChatLayout(page);
   expect(afterResize).not.toBeNull();
   expect(afterResize?.composerInputHeight ?? 0).toBeGreaterThan((initialLayout?.composerInputHeight ?? 0) + 100);
-  expect(afterResize?.transcriptHeight ?? 0).toBeLessThan((initialLayout?.transcriptHeight ?? 0) - 100);
-  expect(Math.abs((afterResize?.panelHeight ?? 0) - (initialLayout?.panelHeight ?? 0))).toBeLessThan(8);
+  expect(Math.abs((afterResize?.composerTop ?? 0) - (initialLayout?.composerTop ?? 0))).toBeLessThan(16);
+  expect(afterResize?.composerBottom ?? 0).toBeGreaterThan((initialLayout?.composerBottom ?? 0) + 100);
+  expect(afterResize?.panelHeight ?? 0).toBeGreaterThan((initialLayout?.panelHeight ?? 0) + 100);
+  expect(Math.abs((afterResize?.transcriptHeight ?? 0) - (initialLayout?.transcriptHeight ?? 0))).toBeLessThan(16);
+  expect(afterResize?.detailScrollHeight ?? 0).toBeGreaterThan((initialLayout?.detailScrollHeight ?? 0) + 100);
 });
 
 test("chat mobile keeps a page-local agent picker and usable transcript/composer layout", async ({ page }) => {
@@ -379,6 +396,7 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
 
   await expect(page.locator('[data-role="chat-mobile-agent-picker-trigger"]')).toContainText("Data");
   await expect(page.locator('[data-role="session-chat-panel"] > .panel__header')).toBeHidden();
+  await expect(page.locator('[data-role="composer-resize-handle"]')).toHaveCount(0);
   await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
   await page.locator('[data-role="composer-input"]').fill("Mobile chat message");
   await page.locator('[data-role="send-message"]').click();

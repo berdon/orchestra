@@ -662,7 +662,13 @@ export function SessionChatPanel({
 
   return (
     <section
-      className={sessionReadOnly || !sessionMessageable ? "panel session-detail-panel session-chat-panel session-chat-panel--readonly" : "panel session-detail-panel session-chat-panel"}
+      className={[
+        "panel",
+        "session-detail-panel",
+        "session-chat-panel",
+        sessionReadOnly || !sessionMessageable ? "session-chat-panel--readonly" : null,
+        session ? "session-chat-panel--desktop-native-resize" : null,
+      ].filter(Boolean).join(" ")}
       data-role="session-chat-panel"
       data-session-id={session?.id ?? ""}
       data-terminal-attached={sessionReadOnly ? "true" : "false"}
