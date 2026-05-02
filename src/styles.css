@@ -5724,6 +5724,12 @@ strong {
     width: 42px;
   }
 
+  .session-chat-panel[data-surface="page-mobile-detail"] .session-actions-menu__dropdown {
+    left: 0;
+    right: auto;
+    max-width: min(calc(100vw - 28px), 240px);
+  }
+
   .session-model-field--composer {
     min-width: 0;
     width: auto;

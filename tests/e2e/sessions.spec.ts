@@ -527,6 +527,39 @@ test("sessions mobile truncates long session labels without horizontal overflow 
   expect(openLayout?.mobilePickerSheetRight ?? 999).toBeLessThanOrEqual(openLayout?.viewportWidth ?? 0);
 });
 
+test("sessions mobile session actions menu stays within the viewport", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.goto("/");
+
+  await expect(page.locator('[data-role="create-session"]')).toBeVisible();
+  await page.locator('[data-role="create-session"]').click();
+
+  const menuTrigger = page.locator('[data-role="session-actions-trigger"]');
+  await expect(menuTrigger).toBeVisible();
+  await menuTrigger.click();
+
+  const menu = page.locator('[data-role="session-actions-menu"]');
+  await expect(menu).toBeVisible();
+
+  const menuBounds = await menu.evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    return {
+      left: rect.left,
+      right: rect.right,
+      viewportWidth: window.innerWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+    };
+  });
+
+  expect(menuBounds.left).toBeGreaterThanOrEqual(-1);
+  expect(menuBounds.right).toBeLessThanOrEqual(menuBounds.viewportWidth + 1);
+  expect(menuBounds.documentScrollWidth).toBeLessThanOrEqual(menuBounds.viewportWidth);
+});
+
 test("sessions secondary nav width is resizable and persists", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
