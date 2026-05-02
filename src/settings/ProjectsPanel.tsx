@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import {
@@ -124,6 +124,8 @@ export function ProjectsPanel() {
   const [secretsLoadedProjectSlug, setSecretsLoadedProjectSlug] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const projectDetailPanelRef = useRef<HTMLElement | null>(null);
+  const [projectDetailTabDockLayout, setProjectDetailTabDockLayout] = useState<{ left: number; right: number } | null>(null);
 
   const selectedProject = useMemo(
     () => (isCreatingProject ? null : projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? null),
@@ -288,37 +290,84 @@ export function ProjectsPanel() {
   }, [activeDetailTab, projectDetailTabs]);
 
   useEffect(() => {
-    if (
-      activeDetailTab === "automation"
-      && projectDetail?.slug
-      && !loadingAutomation
-      && automationLoadedProjectSlug !== projectDetail.slug
-    ) {
-      void loadAutomationSettings(projectDetail.slug);
+    if (!projectDetail?.slug || typeof window === "undefined") {
+      return;
     }
-  }, [activeDetailTab, automationLoadedProjectSlug, loadingAutomation, projectDetail?.slug]);
+
+    const projectSlug = projectDetail.slug;
+    const timeoutId = window.setTimeout(() => {
+      if (!loadingAutomation && automationLoadedProjectSlug !== projectSlug) {
+        void loadAutomationSettings(projectSlug);
+      }
+      if (!loadingSourceControl && sourceControlLoadedProjectSlug !== projectSlug) {
+        void loadSourceControlTabSettings(projectSlug);
+      }
+      if (!loadingSecrets && secretsLoadedProjectSlug !== projectSlug) {
+        void loadSecrets(projectSlug);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    automationLoadedProjectSlug,
+    loadingAutomation,
+    loadingSecrets,
+    loadingSourceControl,
+    projectDetail?.slug,
+    secretsLoadedProjectSlug,
+    sourceControlLoadedProjectSlug,
+  ]);
 
   useEffect(() => {
-    if (
-      activeDetailTab === "source-control"
-      && projectDetail?.slug
-      && !loadingSourceControl
-      && sourceControlLoadedProjectSlug !== projectDetail.slug
-    ) {
-      void loadSourceControlTabSettings(projectDetail.slug);
+    const panel = projectDetailPanelRef.current;
+    if (!panel || typeof window === "undefined" || projectDetailTabs.length < 2) {
+      setProjectDetailTabDockLayout(null);
+      return;
     }
-  }, [activeDetailTab, loadingSourceControl, projectDetail?.slug, sourceControlLoadedProjectSlug]);
 
-  useEffect(() => {
-    if (
-      activeDetailTab === "secrets"
-      && projectDetail?.slug
-      && !loadingSecrets
-      && secretsLoadedProjectSlug !== projectDetail.slug
-    ) {
-      void loadSecrets(projectDetail.slug);
-    }
-  }, [activeDetailTab, loadingSecrets, projectDetail?.slug, secretsLoadedProjectSlug]);
+    let frameId: number | null = null;
+    const updateDockLayout = () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+      frameId = window.requestAnimationFrame(() => {
+        const rect = panel.getBoundingClientRect();
+        const nextLayout = rect.width > 0
+          ? {
+              left: Math.max(rect.left, 12),
+              right: Math.max(window.innerWidth - rect.right, 12),
+            }
+          : null;
+        setProjectDetailTabDockLayout((current) => {
+          if (!current && !nextLayout) {
+            return current;
+          }
+          if (
+            current
+            && nextLayout
+            && current.left === nextLayout.left
+            && current.right === nextLayout.right
+          ) {
+            return current;
+          }
+          return nextLayout;
+        });
+      });
+    };
+
+    updateDockLayout();
+    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateDockLayout) : null;
+    resizeObserver?.observe(panel);
+    window.addEventListener("resize", updateDockLayout);
+
+    return () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateDockLayout);
+    };
+  }, [projectDetailTabs.length, selectedProject?.id]);
 
   function handleProjectNameChange(value: string) {
     setProjectDraft((current) => ({
@@ -333,6 +382,25 @@ export function ProjectsPanel() {
   function resetSecretEditor() {
     setSecretDraft(createBlankSecretDraft());
     setEditingSecretKey(null);
+  }
+
+  function handleDetailTabSelect(tabId: ProjectDetailTabId) {
+    setActiveDetailTab(tabId);
+    const projectSlug = projectDetail?.slug;
+    if (!projectSlug) {
+      return;
+    }
+    if (tabId === "automation" && !loadingAutomation && automationLoadedProjectSlug !== projectSlug) {
+      void loadAutomationSettings(projectSlug);
+      return;
+    }
+    if (tabId === "source-control" && !loadingSourceControl && sourceControlLoadedProjectSlug !== projectSlug) {
+      void loadSourceControlTabSettings(projectSlug);
+      return;
+    }
+    if (tabId === "secrets" && !loadingSecrets && secretsLoadedProjectSlug !== projectSlug) {
+      void loadSecrets(projectSlug);
+    }
   }
 
   async function handleSaveProject() {
@@ -933,6 +1001,13 @@ export function ProjectsPanel() {
     }
   }
 
+  const projectDetailTabDockStyle = projectDetailTabDockLayout
+    ? {
+        left: `${projectDetailTabDockLayout.left}px`,
+        right: `${projectDetailTabDockLayout.right}px`,
+      }
+    : undefined;
+
   return (
     <ResizableSidebarLayout
       className="task-shell"
@@ -1034,38 +1109,29 @@ export function ProjectsPanel() {
               </div>
             </div>
 
-            <section className="panel task-detail-tabs-panel project-detail-tabs-panel">
-              <label className="task-detail-section-select" data-role="project-detail-section-select-mobile">
-                <span className="task-detail-section-select__label">Section</span>
-                <select
-                  className="select-input task-detail-section-select__control"
-                  data-role="project-detail-section-select-control"
-                  aria-label="Project detail section"
-                  value={activeDetailTab}
-                  onChange={(event) => setActiveDetailTab(event.target.value as ProjectDetailTabId)}
-                >
-                  {projectDetailTabs.map((tab) => (
-                    <option key={tab.id} value={tab.id}>{tab.label}</option>
-                  ))}
-                </select>
-              </label>
-              <div className="task-detail-tabs task-detail-tabs--dock project-detail-tabs" role="tablist" aria-label="Project detail sections">
-                {projectDetailTabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    className={activeDetailTab === tab.id ? "task-detail-tab task-detail-tab--active" : "task-detail-tab"}
-                    data-role={`project-detail-tab-${tab.id}`}
-                    role="tab"
-                    aria-selected={activeDetailTab === tab.id}
-                    type="button"
-                    onClick={() => setActiveDetailTab(tab.id)}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
+            <section ref={projectDetailPanelRef} className="panel task-detail-tabs-panel project-detail-tabs-panel">
               <div className="task-detail-tabs__body">{renderTabPanel()}</div>
             </section>
+
+            {projectDetailTabs.length > 1 && projectDetailTabDockStyle ? (
+              <div className="task-detail-tab-dock project-detail-tab-dock" data-role="project-detail-tab-dock" style={projectDetailTabDockStyle}>
+                <div className="task-detail-tabs task-detail-tabs--dock project-detail-tabs" role="tablist" aria-label="Project detail sections">
+                  {projectDetailTabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      className={activeDetailTab === tab.id ? "task-detail-tab task-detail-tab--active" : "task-detail-tab"}
+                      data-role={`project-detail-tab-${tab.id}`}
+                      role="tab"
+                      aria-selected={activeDetailTab === tab.id}
+                      type="button"
+                      onClick={() => handleDetailTabSelect(tab.id)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </>
       )}

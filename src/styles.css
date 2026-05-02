@@ -3917,11 +3917,19 @@ strong {
 }
 
 .project-detail-tabs-panel {
-  padding: 0;
+  padding: 0 0 168px;
 }
 
 .project-detail-tabs {
   margin-bottom: 4px;
+}
+
+.project-detail-tab-dock {
+  z-index: 19;
+}
+
+.project-detail-tab-dock .task-detail-tabs--dock {
+  display: flex;
 }
 
 .task-detail-floating-header,
@@ -6267,8 +6275,7 @@ strong {
     padding-inline: 14px;
   }
 
-  .task-detail-tab-dock .task-detail-tabs--dock,
-  .project-detail-tabs-panel .task-detail-tabs--dock {
+  .task-detail-tab-dock:not(.project-detail-tab-dock) .task-detail-tabs--dock {
     display: none;
   }
 

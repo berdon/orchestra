@@ -4291,6 +4291,7 @@ async fn get_project_detail(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     project_commands::get_project(project_id)
+        .await
         .map(Json)
         .map_err(command_api_error)
 }
@@ -4325,6 +4326,7 @@ async fn get_project_repositories(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     project_commands::list_repositories(Some(project_id))
+        .await
         .map(Json)
         .map_err(command_api_error)
 }
@@ -4364,6 +4366,7 @@ async fn get_repositories(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     project_commands::list_repositories(query.project_id)
+        .await
         .map(Json)
         .map_err(command_api_error)
 }
@@ -4375,6 +4378,7 @@ async fn get_repository_detail(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     project_commands::get_repository(repository_id)
+        .await
         .map(Json)
         .map_err(command_api_error)
 }
@@ -5226,11 +5230,10 @@ async fn get_projects(
     headers: HeaderMap,
 ) -> Result<Json<Vec<crate::models::ProjectSummary>>, (StatusCode, Json<ApiError>)> {
     let _device = resolve_remote_auth(&context.app, &headers, None)?;
-    let connection = database::open_connection()
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    projects::list_projects(&connection)
+    project_commands::list_projects()
+        .await
         .map(Json)
-        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))
+        .map_err(command_api_error)
 }
 
 async fn get_project_tasks(

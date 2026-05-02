@@ -295,7 +295,7 @@ test("settings projects panel creates a project and repository", async ({ page }
   expect(storedState?.repositories?.[0]?.name).toBe("Client repo");
 });
 
-test("project settings detail uses tabs and shows the browser unsupported secrets state", async ({ page }) => {
+test("project settings detail uses the floating tab dock and shows the browser unsupported secrets state", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
@@ -311,11 +311,26 @@ test("project settings detail uses tabs and shows the browser unsupported secret
   await page.locator('[data-role="project-task-prefix"]').fill("SEC");
   await page.getByRole("button", { name: /Create project/i }).click();
 
+  await expect(page.locator('[data-role="project-detail-tab-dock"]')).toBeVisible();
   await expect(page.locator('[data-role="project-detail-tab-general"]')).toBeVisible();
   await expect(page.locator('[data-role="project-detail-tab-repositories"]')).toBeVisible();
   await expect(page.locator('[data-role="project-detail-tab-automation"]')).toBeVisible();
   await expect(page.locator('[data-role="project-detail-tab-source-control"]')).toBeVisible();
   await expect(page.locator('[data-role="project-detail-tab-secrets"]')).toBeVisible();
+
+  const dockLayout = await page.evaluate(() => {
+    const dock = document.querySelector('[data-role="project-detail-tab-dock"]') as HTMLElement | null;
+    if (!dock) {
+      throw new Error("Expected project detail tab dock to be rendered");
+    }
+    const rect = dock.getBoundingClientRect();
+    return {
+      position: window.getComputedStyle(dock).position,
+      bottomGap: Math.round(window.innerHeight - rect.bottom),
+    };
+  });
+  expect(dockLayout.position).toBe("fixed");
+  expect(dockLayout.bottomGap).toBeLessThanOrEqual(32);
 
   await page.locator('[data-role="project-detail-tab-repositories"]').click();
   await expect(page.locator('[data-role="project-detail-tabpanel-repositories"]')).toBeVisible();
@@ -330,7 +345,7 @@ test("project settings detail uses tabs and shows the browser unsupported secret
   await expect(page.locator('[data-role="save-project-secret"]')).toBeDisabled();
 });
 
-test("project settings lazily loads tab-specific hosted-web settings data", async ({ page }) => {
+test("project settings asynchronously prefetches tab-specific hosted-web settings data after the general panel renders", async ({ page }) => {
   const api = createHostedWebSecretsApiMock();
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -347,18 +362,59 @@ test("project settings lazily loads tab-specific hosted-web settings data", asyn
   expect(api.requestCounts.sourceControlProject).toBe(0);
   expect(api.requestCounts.secrets).toBe(0);
 
+  await expect.poll(() => api.requestCounts.taskAutomation).toBe(1);
+  await expect.poll(() => api.requestCounts.sourceControlGlobal).toBe(1);
+  await expect.poll(() => api.requestCounts.sourceControlProject).toBe(1);
+  await expect.poll(() => api.requestCounts.secrets).toBe(1);
+
   await page.locator('[data-role="project-detail-tab-automation"]').click();
   await expect(page.locator('[data-role="project-detail-tabpanel-automation"]')).toBeVisible();
-  await expect.poll(() => api.requestCounts.taskAutomation).toBe(1);
+  expect(api.requestCounts.taskAutomation).toBe(1);
 
   await page.locator('[data-role="project-detail-tab-source-control"]').click();
   await expect(page.locator('[data-role="project-detail-tabpanel-source-control"]')).toBeVisible();
-  await expect.poll(() => api.requestCounts.sourceControlGlobal).toBe(1);
-  await expect.poll(() => api.requestCounts.sourceControlProject).toBe(1);
+  expect(api.requestCounts.sourceControlGlobal).toBe(1);
+  expect(api.requestCounts.sourceControlProject).toBe(1);
 
   await page.locator('[data-role="project-detail-tab-secrets"]').click();
   await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toBeVisible();
-  await expect.poll(() => api.requestCounts.secrets).toBe(1);
+  expect(api.requestCounts.secrets).toBe(1);
+});
+
+test("project settings keeps the floating tab dock visible on mobile", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?page=settings&settingsTab=projects");
+
+  const dock = page.locator('[data-role="project-detail-tab-dock"]');
+  await expect(dock).toBeVisible();
+  await expect(page.locator('[data-role="project-detail-tab-general"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-detail-tab-repositories"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-detail-tab-automation"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-detail-tab-source-control"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-detail-tab-secrets"]')).toBeVisible();
+
+  await page.locator('[data-role="project-detail-tab-secrets"]').click();
+  await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toBeVisible();
+
+  const dockLayout = await page.evaluate(() => {
+    const dockElement = document.querySelector('[data-role="project-detail-tab-dock"]') as HTMLElement | null;
+    if (!dockElement) {
+      throw new Error("Expected project detail tab dock to be rendered");
+    }
+    const rect = dockElement.getBoundingClientRect();
+    return {
+      position: window.getComputedStyle(dockElement).position,
+      bottomGap: Math.round(window.innerHeight - rect.bottom),
+      rightGap: Math.round(window.innerWidth - rect.right),
+    };
+  });
+  expect(dockLayout.position).toBe("fixed");
+  expect(dockLayout.bottomGap).toBeLessThanOrEqual(32);
+  expect(dockLayout.rightGap).toBeGreaterThanOrEqual(0);
 });
 
 test("project settings secrets tab supports hosted-web CRUD and rotation flows without revealing values", async ({ page }) => {

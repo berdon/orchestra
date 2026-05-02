@@ -1,5 +1,5 @@
 use serde_json::json;
-use tauri::State;
+use tauri::{async_runtime::spawn_blocking, State};
 
 use crate::{
     models::{
@@ -11,15 +11,23 @@ use crate::{
 };
 
 #[tauri::command]
-pub fn list_projects() -> Result<Vec<ProjectSummary>, String> {
-    let connection = database::open_connection()?;
-    projects::list_projects(&connection)
+pub async fn list_projects() -> Result<Vec<ProjectSummary>, String> {
+    spawn_blocking(|| {
+        let connection = database::open_connection()?;
+        projects::list_projects(&connection)
+    })
+    .await
+    .map_err(|error| format!("Unable to list projects: {error}"))?
 }
 
 #[tauri::command]
-pub fn get_project(project_id: String) -> Result<ProjectDetail, String> {
-    let connection = database::open_connection()?;
-    projects::get_project(&connection, &project_id)
+pub async fn get_project(project_id: String) -> Result<ProjectDetail, String> {
+    spawn_blocking(move || {
+        let connection = database::open_connection()?;
+        projects::get_project(&connection, &project_id)
+    })
+    .await
+    .map_err(|error| format!("Unable to load project detail: {error}"))?
 }
 
 #[tauri::command]
@@ -112,15 +120,23 @@ pub fn delete_project(
 }
 
 #[tauri::command]
-pub fn list_repositories(project_id: Option<String>) -> Result<Vec<RepositoryRecord>, String> {
-    let connection = database::open_connection()?;
-    projects::list_repositories(&connection, project_id.as_deref())
+pub async fn list_repositories(project_id: Option<String>) -> Result<Vec<RepositoryRecord>, String> {
+    spawn_blocking(move || {
+        let connection = database::open_connection()?;
+        projects::list_repositories(&connection, project_id.as_deref())
+    })
+    .await
+    .map_err(|error| format!("Unable to list repositories: {error}"))?
 }
 
 #[tauri::command]
-pub fn get_repository(repository_id: String) -> Result<RepositoryRecord, String> {
-    let connection = database::open_connection()?;
-    projects::get_repository(&connection, &repository_id)
+pub async fn get_repository(repository_id: String) -> Result<RepositoryRecord, String> {
+    spawn_blocking(move || {
+        let connection = database::open_connection()?;
+        projects::get_repository(&connection, &repository_id)
+    })
+    .await
+    .map_err(|error| format!("Unable to load repository: {error}"))?
 }
 
 #[tauri::command]
