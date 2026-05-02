@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { MarkdownContent } from "../components/MarkdownContent";
+import { NotesCreateDialog, type NotesCreateDialogMode } from "../components/NotesCreateDialog";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { SyntaxHighlightedMarkdownEditor } from "../components/SyntaxHighlightedMarkdownEditor";
 import { useOrchestraClient } from "../lib/orchestraClient";
@@ -214,6 +215,8 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
+  const [createDialogMode, setCreateDialogMode] = useState<NotesCreateDialogMode | null>(null);
+  const [createDialogError, setCreateDialogError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -303,6 +306,16 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
     return selection.location;
   }, [selection]);
 
+  const createDialogInitialLocation = useMemo(() => {
+    if (activeContainerLocation) {
+      return activeContainerLocation;
+    }
+    if (tree?.roots[0]) {
+      return createRootSelection(tree.roots[0]).location;
+    }
+    return { scope: "project" as const, repositoryId: null, path: "" };
+  }, [activeContainerLocation, tree]);
+
   const requestSelection = useCallback(async (nextSelection: NotesSelection) => {
     if (dirty && !window.confirm("Discard unsaved note changes?")) {
       return;
@@ -354,47 +367,57 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
     setStatusMessage("Reverted unsaved changes.");
   }, [savedMarkdown]);
 
-  const handleCreateNote = useCallback(async () => {
-    if (!projectId || !activeContainerLocation || !canWrite) {
+  const handleOpenCreateDialog = useCallback((mode: NotesCreateDialogMode) => {
+    if (!canWrite || !projectId || !tree?.roots.length) {
       return;
     }
-    try {
-      const name = window.prompt("New note path relative to docs/", activeContainerLocation.path ? `${activeContainerLocation.path}/new-note.md` : "new-note.md");
-      if (!name) {
-        return;
-      }
-      const path = normalizePromptPath(name, true);
-      const location: NoteLocation = { ...activeContainerLocation, path };
-      const detail = await orchestraClient.notes.update(projectId, location, "");
-      setSelection({ kind: "note", location: detail.location });
-      setSelectedNote(detail);
-      setDraftMarkdown(detail.markdown);
-      setSavedMarkdown(detail.markdown);
-      setStatusMessage(`Created note ${detail.location.path}.`);
-      await loadTree({ nextSelection: { kind: "note", location: detail.location }, preserveStatus: true });
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : String(actionError));
-    }
-  }, [activeContainerLocation, canWrite, loadTree, orchestraClient.notes, projectId]);
+    setCreateDialogError(null);
+    setCreateDialogMode(mode);
+  }, [canWrite, projectId, tree]);
 
-  const handleCreateDirectory = useCallback(async () => {
-    if (!projectId || !activeContainerLocation || !canWrite) {
+  const handleCloseCreateDialog = useCallback(() => {
+    if (saving) {
       return;
     }
-    try {
-      const name = window.prompt("New directory path relative to docs/", activeContainerLocation.path ? `${activeContainerLocation.path}/new-directory` : "new-directory");
-      if (!name) {
-        return;
-      }
-      const path = normalizePromptPath(name, false);
-      const location: NoteLocation = { ...activeContainerLocation, path };
-      await orchestraClient.notes.createDirectory(projectId, location);
-      setStatusMessage(`Created directory ${path}.`);
-      await loadTree({ nextSelection: { kind: "directory", location }, preserveStatus: true });
-    } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : String(actionError));
+    setCreateDialogMode(null);
+    setCreateDialogError(null);
+  }, [saving]);
+
+  const handleCreateLocation = useCallback(async (location: NoteLocation) => {
+    if (!projectId || !canWrite || !createDialogMode) {
+      return;
     }
-  }, [activeContainerLocation, canWrite, loadTree, orchestraClient.notes, projectId]);
+    if (dirty && !window.confirm("Discard unsaved note changes?")) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setCreateDialogError(null);
+    setStatusMessage(null);
+    try {
+      if (createDialogMode === "note") {
+        const detail = await orchestraClient.notes.update(projectId, location, "");
+        setSelection({ kind: "note", location: detail.location });
+        setSelectedNote(detail);
+        setDraftMarkdown(detail.markdown);
+        setSavedMarkdown(detail.markdown);
+        setStatusMessage(`Created note ${detail.location.path}.`);
+        await loadTree({ nextSelection: { kind: "note", location: detail.location }, preserveStatus: true });
+      } else {
+        await orchestraClient.notes.createDirectory(projectId, location);
+        setStatusMessage(`Created directory ${location.path}.`);
+        await loadTree({ nextSelection: { kind: "directory", location }, preserveStatus: true });
+      }
+      setCreateDialogMode(null);
+      setCreateDialogError(null);
+    } catch (actionError) {
+      const message = actionError instanceof Error ? actionError.message : String(actionError);
+      setError(message);
+      setCreateDialogError(message);
+    } finally {
+      setSaving(false);
+    }
+  }, [canWrite, createDialogMode, dirty, loadTree, orchestraClient.notes, projectId]);
 
   const handleDeleteSelected = useCallback(async () => {
     if (!projectId || !selection || selection.kind === "root" || !canWrite) {
@@ -570,8 +593,8 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
         <div className="notes-page__actions">
           {canWrite ? (
             <>
-              <button className="secondary-button" type="button" onClick={() => void handleCreateNote()} disabled={!activeContainerLocation || saving}>New note</button>
-              <button className="secondary-button" type="button" onClick={() => void handleCreateDirectory()} disabled={!activeContainerLocation || saving}>New folder</button>
+              <button className="secondary-button" type="button" onClick={() => handleOpenCreateDialog("note")} disabled={!tree?.roots.length || saving}>New note</button>
+              <button className="secondary-button" type="button" onClick={() => handleOpenCreateDialog("directory")} disabled={!tree?.roots.length || saving}>New folder</button>
               {selection && selection.kind !== "root" ? (
                 <>
                   <button className="secondary-button" type="button" onClick={() => void handleMoveOrRenameSelected()} disabled={saving}>Move / rename</button>
@@ -637,16 +660,29 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
   );
 
   return (
-    <ResizableSidebarLayout
-      className="notes-page"
-      storageKey="orchestra.notes.secondary-nav-width"
-      navigation={navigation}
-      detail={detail}
-      navigationClassName="notes-page__navigation"
-      detailClassName="notes-page__detail-shell"
-      minWidth={240}
-      maxWidth={420}
-      defaultWidth={280}
-    />
+    <>
+      <ResizableSidebarLayout
+        className="notes-page"
+        storageKey="orchestra.notes.secondary-nav-width"
+        navigation={navigation}
+        detail={detail}
+        navigationClassName="notes-page__navigation"
+        detailClassName="notes-page__detail-shell"
+        minWidth={240}
+        maxWidth={420}
+        defaultWidth={280}
+      />
+      {createDialogMode && tree?.roots.length ? (
+        <NotesCreateDialog
+          mode={createDialogMode}
+          roots={tree.roots}
+          initialLocation={createDialogInitialLocation}
+          submitting={saving}
+          error={createDialogError}
+          onSubmit={handleCreateLocation}
+          onClose={handleCloseCreateDialog}
+        />
+      ) : null}
+    </>
   );
 }

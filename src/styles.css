@@ -6556,6 +6556,53 @@ strong {
   justify-content: flex-end;
 }
 
+.notes-create-dialog {
+  width: min(560px, calc(100vw - 48px));
+}
+
+.notes-create-dialog__form,
+.notes-create-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.notes-create-dialog__form {
+  gap: 0.85rem;
+}
+
+.notes-create-dialog__label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.notes-create-dialog__hint {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.notes-create-dialog__preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--panel-background) 92%, var(--accent-color) 8%);
+}
+
+.notes-create-dialog__preview code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.notes-create-dialog__actions {
+  justify-content: flex-end;
+}
+
 .notes-editor {
   display: flex;
   flex-direction: column;
