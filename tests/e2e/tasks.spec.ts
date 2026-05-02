@@ -2622,6 +2622,8 @@ test("task detail opens tracked repo files when clicking $file mentions in comme
 
   await page.goto("/");
   await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("tab", { name: "Projects" }).click();
+  await page.locator('[data-role="project-detail-tab-repositories"]').click();
   await page.locator('[data-role="repository-name"]').fill("Docs repo");
   await page.locator('[data-role="repository-path"]').fill("/tmp/docs-repo");
   await page.locator('[data-role="repository-default-branch"]').fill("main");
@@ -2648,7 +2650,6 @@ test("task detail opens tracked repo files when clicking $file mentions in comme
   await page.locator('[data-role="add-task-file-reference"]').click();
   await expect(page.locator('[data-role="task-file-references"]')).toContainText("docs/design.md");
 
-  await page.locator('[data-role="task-detail-tab-comments"]').click();
   await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
   await page.locator('[data-role="task-comment-message"]').fill("Please review $docs/design.md before you continue.");
   await page.locator('[data-role="add-task-comment"]').click();
@@ -2693,7 +2694,6 @@ test("task comment composer autocompletes tasks, agents, and roles and renders t
   await page.getByRole("button", { name: "New task" }).click();
   await page.locator('[data-role="task-title"]').fill("Mention source task");
   await page.locator('[data-role="save-task"]').click();
-  await page.locator('[data-role="task-detail-tab-comments"]').click();
   await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
 
   await page.locator('[data-role="task-comment-message"]').fill("Coordinate with @dat");
@@ -2727,7 +2727,6 @@ test("task comments show newest threads first", async ({ page }) => {
   await page.locator('[data-role="task-title"]').fill("Comment ordering task");
   await page.locator('[data-role="save-task"]').click();
 
-  await page.locator('[data-role="task-detail-tab-comments"]').click();
   await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
   await page.locator('[data-role="task-comment-message"]').fill("First comment");
   await page.locator('[data-role="add-task-comment"]').click();
@@ -2736,7 +2735,7 @@ test("task comments show newest threads first", async ({ page }) => {
   await page.locator('[data-role="task-comment-message"]').fill("Second comment");
   await page.locator('[data-role="add-task-comment"]').click();
 
-  const comments = page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-item"]');
+  const comments = page.locator('[data-role="task-comments"] [data-role="task-comment-item"]');
   await expect(comments).toHaveCount(2);
   await expect(comments.first()).toContainText("Second comment");
   await expect(comments.nth(1)).toContainText("First comment");
@@ -2829,13 +2828,12 @@ test("task detail renders markdown descriptions and comments with preserved line
   expect(descriptionHtml).toContain("<br");
   expect(descriptionHtml).toContain("<ol");
 
-  await page.locator('[data-role="task-detail-tab-comments"]').click();
-  const detailedComment = page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-markdown"]').first();
+  const detailedComment = page.locator('[data-role="task-detail-summary-comments"] [data-role="task-comment-markdown"]').first();
   await expect(detailedComment).toContainText("First review line");
   await expect(detailedComment).toContainText("Second review line with important context");
-  await expect(page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-markdown"] strong')).toContainText("important");
-  await expect(page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-markdown"] li')).toHaveCount(2);
-  await expect(page.locator('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-markdown"] ol li').nth(1)).toHaveAttribute("value", "2");
+  await expect(page.locator('[data-role="task-detail-summary-comments"] [data-role="task-comment-markdown"] strong')).toContainText("important");
+  await expect(page.locator('[data-role="task-detail-summary-comments"] [data-role="task-comment-markdown"] li')).toHaveCount(2);
+  await expect(page.locator('[data-role="task-detail-summary-comments"] [data-role="task-comment-markdown"] ol li').nth(1)).toHaveAttribute("value", "2");
   const commentHtml = await detailedComment.evaluate((node) => node.innerHTML);
   expect(commentHtml).toContain("<br");
   expect(commentHtml).toContain("<ol");
@@ -2929,7 +2927,6 @@ test("task comment reply actions scroll/focus composer and nested replies target
   await page.goto("/");
   await page.getByRole("button", { name: "Tasks" }).click();
   await page.locator('[data-role="task-card"]').filter({ hasText: "Reply scroll focus task" }).first().click();
-  await page.locator('[data-role="task-detail-tab-comments"]').click();
 
   const topLevelReplyButton = page.locator('[data-role="reply-task-comment"][data-comment-id="thread-parent"]');
   await expect(topLevelReplyButton).toBeVisible();
@@ -3008,7 +3005,7 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   expect(download.suggestedFilename()).toBe("notes.txt");
   expect(await readFile((await download.path())!, "utf8")).toBe("Attachment preview text");
 
-  await page.locator('[data-role="task-detail-tab-comments"]').click();
+  await page.locator('[data-role="task-detail-tab-summary"]').click();
   await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
   await page.locator('[data-role="task-comment-message"]').fill("Pause and re-check the task context before you continue.");
   await page.locator('[data-role="task-comment-interrupt"]').check();
@@ -3018,8 +3015,7 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Interrupt requested");
 
   await page.locator('[data-role="task-detail-tab-repo-files"]').click();
-  await page.locator('[data-role="reply-task-comment-summary"]').first().click();
-  await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveAttribute("aria-selected", "true");
+  await page.locator('[data-role="reply-task-comment"]').first().click();
   await page.locator('[data-role="task-reply-author"]').fill("Worker");
   await page.locator('[data-role="task-reply-message"]').fill("I checked the task context and updated the plan.");
   await page.locator('[data-role="task-reply-message"]').press("Control+Enter");
@@ -3272,7 +3268,6 @@ test("task comment unread badges hide on completed tasks but still clear for act
   ).toHaveCount(0);
   await page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread completed task comments" }).first().click();
   await expect(page.locator('[data-role="task-unread-comments-footer-badge"]')).toHaveCount(0);
-  await expect(page.locator('[data-role="task-unread-comments-tab-badge"]')).toHaveCount(0);
 
   await page.locator('[data-role="nav-item-tasks"]').click();
   await page.locator('[data-role="task-filter-all"]').click();
@@ -3281,11 +3276,7 @@ test("task comment unread badges hide on completed tasks but still clear for act
     page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread active task comments" }).locator('[data-role="task-table-unread-comments-badge"]'),
   ).toContainText("1 unread");
   await page.locator('[data-role="task-table-row"]').filter({ hasText: "Unread active task comments" }).first().click();
-  await expect(page.locator('[data-role="task-unread-comments-footer-badge"]')).toContainText("1 unread");
-  await page.locator('[data-role="open-task-comments"]').click();
-  await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveAttribute("aria-selected", "true");
   await expect(page.locator('[data-role="task-unread-comments-footer-badge"]')).toHaveCount(0);
-  await expect(page.locator('[data-role="task-unread-comments-tab-badge"]')).toHaveCount(0);
   await expect(page.locator('[data-role="nav-badge-tasks"]')).toHaveCount(0);
 });
 
@@ -4539,7 +4530,6 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
     'Repo files',
     'Todos',
     'Attachments',
-    'Comments',
     'Timeline',
     'Lane history',
   ]);
@@ -4570,10 +4560,7 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
     return Boolean((content && content.scrollTop < 220) || window.scrollY < 220);
   });
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText('Implement task foundation shell');
-
-  await tabDock.getByRole('tab', { name: 'Comments' }).click();
-  await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('[data-role="task-detail-tabpanel-comments"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-detail-summary-comments"]')).toContainText('Comment 8');
 
 });
 
@@ -4688,16 +4675,12 @@ test("task detail on mobile uses a section select for tab panels", async ({ page
     { value: 'repo-files', label: 'Repo files' },
     { value: 'todos', label: 'Todos' },
     { value: 'attachments', label: 'Attachments' },
-    { value: 'comments', label: 'Comments' },
     { value: 'timeline', label: 'Timeline' },
     { value: 'history', label: 'Lane history' },
   ]);
   await expect(mobileSectionSelect).toHaveValue("details");
   await expect(page.getByRole("tablist", { name: "Task detail panels" })).toBeHidden();
-
-  await mobileSectionSelect.selectOption("comments");
-  await expect(mobileSectionSelect).toHaveValue("comments");
-  await expect(page.locator('[data-role="task-detail-tabpanel-comments"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-detail-summary-comments"]')).toContainText('Task conversation');
 
   await mobileSectionSelect.selectOption("todos");
   await expect(mobileSectionSelect).toHaveValue("todos");
@@ -4710,10 +4693,7 @@ test("task detail on mobile uses a section select for tab panels", async ({ page
   });
   await expect(mobileSectionSelect).toHaveValue("details");
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText('Implement task foundation shell');
-
-  await page.locator('[data-role="open-task-comments"]').click();
-  await expect(mobileSectionSelect).toHaveValue("comments");
-  await expect(page.locator('[data-role="task-detail-tabpanel-comments"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-detail-summary-comments"]')).toBeVisible();
 });
 
 test("task detail edit mode exposes bottom-right Save and Cancel FABs on mobile", async ({ page }) => {

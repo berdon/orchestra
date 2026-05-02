@@ -86,18 +86,18 @@ describe("desktop task quick comment file mentions", () => {
       await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', project.name);
 
       await openTaskCard(sessionId, "Quick comment mention task");
-      await waitForText(sessionId, "Comment on this task");
+      await waitForText(sessionId, "Task conversation");
 
-      await setInputValue(sessionId, '[data-role="default-file-quick-comment-message"]', 'Please inspect $docs/design.md');
+      await setInputValue(sessionId, '[data-role="task-comment-message"]', 'Please inspect $docs/design.md');
 
       const quickCommentValue = await executeScript<string>(sessionId, `
-        const textarea = document.querySelector('[data-role="default-file-quick-comment-message"]');
+        const textarea = document.querySelector('[data-role="task-comment-message"]');
         return textarea instanceof HTMLTextAreaElement ? textarea.value : '';
       `);
       expect(quickCommentValue).toContain('$docs/design.md');
 
       await executeScript(sessionId, `
-        const button = document.querySelector('[data-role="add-default-file-quick-comment"]');
+        const button = document.querySelector('[data-role="add-task-comment"]');
         if (!(button instanceof HTMLElement)) return false;
         button.click();
         return true;

@@ -33,7 +33,7 @@ async function waitForTextContent(sessionId: string, selector: string, expected:
 }
 
 describe("desktop task comment unread badges", () => {
-  it.skipIf(!isDesktopE2E)("hides unread task comment badges on completed tasks and still clears active-task badges when comments are opened", async () => {
+  it.skipIf(!isDesktopE2E)("hides unread task comment badges on completed tasks and still clears active-task badges when task details open", async () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
@@ -170,12 +170,10 @@ describe("desktop task comment unread badges", () => {
       const completedUnreadState = await executeScript(
         sessionId,
         `return {
-          footer: Boolean(document.querySelector('[data-role="task-unread-comments-footer-badge"]')),
-          tab: Boolean(document.querySelector('[data-role="task-unread-comments-tab-badge"]'))
+          footer: Boolean(document.querySelector('[data-role="task-unread-comments-footer-badge"]'))
         };`,
       );
       expect(completedUnreadState.footer).toBe(false);
-      expect(completedUnreadState.tab).toBe(false);
 
       await clickSelector(sessionId, '[data-role="nav-item-tasks"]');
       await clickSelector(sessionId, '[data-role="task-filter-all"]');
@@ -188,25 +186,16 @@ describe("desktop task comment unread badges", () => {
       expect(activeTableBadge).toBe(expectedActiveUnreadBadge);
 
       await clickSelector(sessionId, `[data-role="task-table-row"][data-task-id="${activeTask.id}"]`);
-      await waitForSelector(sessionId, '[data-role="task-unread-comments-footer-badge"]');
-      const footerBadge = await waitForTextContent(
-        sessionId,
-        '[data-role="task-unread-comments-footer-badge"]',
-        expectedActiveUnreadBadge,
-      );
-      expect(footerBadge).toBe(expectedActiveUnreadBadge);
-
-      await clickSelector(sessionId, '[data-role="open-task-comments"]');
-      await waitForSelector(sessionId, '[data-role="task-detail-tab-comments"][aria-selected="true"]');
+      await sleep(500);
       const unreadState = await executeScript(
         sessionId,
         `return {
           footer: Boolean(document.querySelector('[data-role="task-unread-comments-footer-badge"]')),
-          tab: Boolean(document.querySelector('[data-role="task-unread-comments-tab-badge"]'))
+          navBadge: Boolean(document.querySelector('[data-role="nav-badge-tasks"]'))
         };`,
       );
       expect(unreadState.footer).toBe(false);
-      expect(unreadState.tab).toBe(false);
+      expect(unreadState.navBadge).toBe(false);
     } finally {
       await deleteWebdriverSession(sessionId);
     }

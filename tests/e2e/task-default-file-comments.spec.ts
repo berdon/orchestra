@@ -96,10 +96,10 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
   await expect(page.getByRole("heading", { name: "Implement task foundation shell" })).toBeVisible();
 
-  await page.getByRole("textbox", { name: "Quick comment" }).fill("General note under the default file. See $docs/design.md");
-  await page.locator('[data-role="add-default-file-quick-comment"]').click();
+  await page.locator('[data-role="task-comment-message"]').fill("General note under the default file. See $docs/design.md");
+  await page.locator('[data-role="add-task-comment"]').click();
 
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("General note under the default file. See docs/design.md");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("General note under the default file. See docs/design.md");
   await expect(page.locator('[data-role="default-file-code-viewer"]')).toContainText("Gamma line");
   await expect(page.locator('.file-content-viewer__header').first()).not.toContainText("Resizable");
   const wrapToggle = page.locator('[data-role="default-file-wrap-toggle"]');
@@ -182,8 +182,8 @@ test("task detail supports quick comments, line comments, replies, and viewer co
     return viewer?.scrollTop ?? null;
   })).toBeGreaterThan(scrollTopBeforeLineComment - 24);
 
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("docs/design.md · line 3");
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Please revisit this line.");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("docs/design.md · line 3");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Please revisit this line.");
   await page.evaluate(() => {
     const viewer = document.querySelector('[data-role="default-file-code-viewer"]') as HTMLElement | null;
     if (viewer) {
@@ -201,7 +201,7 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   await page.locator('[data-role="default-file-open-reply"]').click();
   await page.getByRole("textbox", { name: "Reply" }).fill("Acknowledged on line 3.");
   await page.locator('[data-role="add-default-file-reply"]').click();
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Please revisit this line.");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Please revisit this line.");
 
   const selectionState = await page.evaluate(() => {
     const viewer = document.querySelector('[data-role="default-file-code-viewer"]') as HTMLElement | null;
@@ -286,8 +286,8 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   await expect(page.locator('[data-role="default-file-comment-popover"]')).toContainText("selected text");
   await page.locator('[data-role="default-file-comment-popover"]').getByRole("textbox", { name: "Comment" }).fill("Clarify this selected text.");
   await page.locator('[data-role="add-default-file-comment"]').click();
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("Clarify this selected text.");
-  await expect(page.locator('[data-role="default-file-comment-summary"]')).toContainText("selected text");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Clarify this selected text.");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("selected text");
 
   await expect(page.locator('[data-role="default-file-viewer-toggle"]')).toHaveText("Minimize");
   await page.locator('[data-role="default-file-viewer-toggle"]').click();
@@ -297,7 +297,6 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   await page.locator('[data-role="default-file-viewer-toggle"]').click();
   await expect(page.locator('[data-role="default-file-viewer-toggle"]')).toHaveText("Minimize");
 
-  await page.locator('[data-role="task-detail-tab-comments"]').click();
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Default file");
   await expect(page.locator('[data-role="task-comments"]')).toContainText("docs/design.md · line 3");
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Acknowledged on line 3.");

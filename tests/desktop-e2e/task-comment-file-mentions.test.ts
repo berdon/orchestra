@@ -81,7 +81,6 @@ describe("desktop task comment file mentions", () => {
       await waitForSelectedLabel(sessionId, '[data-role="project-switcher"]', project.name);
 
       await openTaskCard(sessionId, "Comment mention task");
-      await clickByText(sessionId, '[role="tab"]', 'Comments');
       await waitForText(sessionId, 'Task conversation');
 
       await setInputValue(sessionId, '[data-role="task-comment-author"]', 'Reviewer');

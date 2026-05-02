@@ -193,20 +193,15 @@ test("mobile task detail keeps typography consistent across summary cards, comme
   await expectTypographyRootRule(page);
 
   const descriptionFontSize = await readFontSize(page, '[data-role="task-description-markdown"] p');
-  const summaryCommentFontSize = await readFontSize(page, '[data-role="task-detail-summary-comments"] [data-role="task-comment-item"] [data-role="task-comment-markdown"] p');
+  const detailCommentFontSize = await readFontSize(page, '[data-role="task-detail-summary-comments"] [data-role="task-comment-item"] [data-role="task-comment-markdown"] p');
+  const detailReplyFontSize = await readFontSize(page, '[data-role="task-detail-summary-comments"] [data-role="task-comment-reply"] [data-role="task-comment-markdown"] p');
 
   await page.locator('[data-role="default-file-line-comment-button"][data-line-number="3"]').click();
   await expect(page.locator('[data-role="default-file-thread-popover"]')).toBeVisible();
   const fileThreadFontSize = await readFontSize(page, '[data-role="default-file-thread-popover"] .file-content-viewer__thread-card [data-role="task-comment-markdown"] p');
   const fileThreadReplyFontSize = await readFontSize(page, '[data-role="default-file-thread-popover"] .file-content-viewer__thread-reply [data-role="task-comment-markdown"] p');
 
-  const mobileSectionSelect = page.locator('[data-role="task-detail-section-select-control"]');
-  await mobileSectionSelect.selectOption("comments");
-  await expect(page.locator('[data-role="task-detail-tabpanel-comments"]')).toBeVisible();
-  const commentsTabParentFontSize = await readFontSize(page, '[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-item"] [data-role="task-comment-markdown"] p');
-  const commentsTabReplyFontSize = await readFontSize(page, '[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-reply"] [data-role="task-comment-markdown"] p');
-
-  for (const value of [summaryCommentFontSize, fileThreadFontSize, fileThreadReplyFontSize, commentsTabParentFontSize, commentsTabReplyFontSize]) {
+  for (const value of [detailCommentFontSize, detailReplyFontSize, fileThreadFontSize, fileThreadReplyFontSize]) {
     expect(value).toBeCloseTo(descriptionFontSize, 3);
   }
 });
@@ -221,11 +216,9 @@ test("desktop task detail keeps the same body font sizing after the global mobil
   await expect(page.locator('[data-role="task-detail-section-select-mobile"]')).toBeHidden();
 
   const descriptionFontSize = await readFontSize(page, '[data-role="task-description-markdown"] p');
-  await page.locator('[data-role="task-detail-tab-comments"]').click();
-  await expect(page.locator('[data-role="task-detail-tabpanel-comments"]')).toBeVisible();
-  const commentsTabParentFontSize = await readFontSize(page, '[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-item"] [data-role="task-comment-markdown"] p');
-  const commentsTabReplyFontSize = await readFontSize(page, '[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-reply"] [data-role="task-comment-markdown"] p');
+  const detailCommentFontSize = await readFontSize(page, '[data-role="task-detail-summary-comments"] [data-role="task-comment-item"] [data-role="task-comment-markdown"] p');
+  const detailReplyFontSize = await readFontSize(page, '[data-role="task-detail-summary-comments"] [data-role="task-comment-reply"] [data-role="task-comment-markdown"] p');
 
-  expect(commentsTabParentFontSize).toBeCloseTo(descriptionFontSize, 3);
-  expect(commentsTabReplyFontSize).toBeCloseTo(descriptionFontSize, 3);
+  expect(detailCommentFontSize).toBeCloseTo(descriptionFontSize, 3);
+  expect(detailReplyFontSize).toBeCloseTo(descriptionFontSize, 3);
 });

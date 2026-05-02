@@ -40,7 +40,6 @@ describe("desktop task markdown lists", () => {
       expect(descriptionListState.orderedListCount).toBe(1);
       expect(descriptionListState.secondValue).toBe('2');
 
-      await clickByText(sessionId, '[role="tab"]', 'Comments');
       await waitForText(sessionId, 'Task conversation');
       await setInputValue(sessionId, '[data-role="task-comment-author"]', 'Reviewer');
       await setInputValue(sessionId, '[data-role="task-comment-message"]', 'Please double-check this flow.\n\n1. Check API shape\n2. Confirm UI');

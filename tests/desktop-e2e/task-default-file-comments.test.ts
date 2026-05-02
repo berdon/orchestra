@@ -99,8 +99,8 @@ describe("desktop default-file anchored task comments", () => {
       await waitForText(sessionId, "Default repo file");
       await waitForText(sessionId, "docs/design.md");
 
-      await setInputValue(sessionId, '[data-role="default-file-quick-comment-message"]', 'General note under the default file.');
-      await clickSelector(sessionId, '[data-role="add-default-file-quick-comment"]');
+      await setInputValue(sessionId, '[data-role="task-comment-message"]', 'General note under the default file.');
+      await clickSelector(sessionId, '[data-role="add-task-comment"]');
       await waitForText(sessionId, 'General note under the default file.');
 
       const viewerHeaderText = await executeScript<string>(sessionId, `

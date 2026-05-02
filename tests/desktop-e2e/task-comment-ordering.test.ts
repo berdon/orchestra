@@ -56,7 +56,7 @@ describe("desktop task comment ordering", () => {
       await addTaskCommentViaUi(sessionId, "Reviewer", "Second comment");
 
       const comments = await executeScript<string[]>(sessionId, `
-        return Array.from(document.querySelectorAll('[data-role="task-detail-tabpanel-comments"] [data-role="task-comment-item"]')).map((entry) => entry.textContent || '');
+        return Array.from(document.querySelectorAll('[data-role="task-comments"] [data-role="task-comment-item"]')).map((entry) => entry.textContent || '');
       `);
 
       expect(comments).toHaveLength(2);

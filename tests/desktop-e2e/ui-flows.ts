@@ -458,7 +458,6 @@ export async function openTaskCard(sessionId: string, title: string) {
 }
 
 export async function addTaskCommentViaUi(sessionId: string, author: string, message: string) {
-  await clickByText(sessionId, '[role="tab"]', 'Comments');
   await waitForText(sessionId, 'Task conversation');
   await setInputValue(sessionId, '[data-role="task-comment-author"]', author);
   await setInputValue(sessionId, '[data-role="task-comment-message"]', message);

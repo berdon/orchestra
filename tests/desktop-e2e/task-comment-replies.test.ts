@@ -53,9 +53,9 @@ describe("desktop task comment replies", () => {
       await clickByText(sessionId, '[role="tab"]', "Repo files");
       await waitForText(sessionId, "Older parent comment.");
       const openedReplyComposer = await executeScript<boolean>(sessionId, `
-        const threads = Array.from(document.querySelectorAll('[data-role="default-file-comment-summary"] .task-comment-thread'));
+        const threads = Array.from(document.querySelectorAll('[data-role="task-comments"] .task-comment-thread'));
         const target = threads.find((thread) => thread.textContent?.includes(arguments[0]));
-        const button = target?.querySelector('[data-role="reply-task-comment-summary"]');
+        const button = target?.querySelector('[data-role="reply-task-comment"]');
         if (!(button instanceof HTMLElement)) {
           return false;
         }
@@ -98,7 +98,6 @@ describe("desktop task comment replies", () => {
 
       await clickByText(sessionId, "button", "Tasks");
       await openTaskCard(sessionId, "Comment reply task");
-      await clickByText(sessionId, '[role="tab"]', "Comments");
       await waitForText(sessionId, "Reply on the older thread.");
 
       renderedThreads = await getRenderedThreads(sessionId);

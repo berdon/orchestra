@@ -37,7 +37,6 @@ type TaskDetailTab =
   | "dependencies"
   | "repo-files"
   | "attachments"
-  | "comments"
   | "todos"
   | "timeline"
   | "history";
@@ -311,7 +310,6 @@ const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
   { id: "repo-files", label: "Repo files" },
   { id: "todos", label: "Todos" },
   { id: "attachments", label: "Attachments" },
-  { id: "comments", label: "Comments" },
   { id: "timeline", label: "Timeline" },
   { id: "history", label: "Lane history" },
 ];
@@ -451,7 +449,6 @@ export function TaskDetailPage({
   const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
   const defaultFileAbsolutePath = defaultFile?.exists ? defaultFile.absolutePath ?? null : null;
   const recentHistory = timelineItems.slice(0, historyLimit);
-  const summaryComments = commentThreads.slice(0, 4);
   const taskTags = getTaskTags(task);
   const todoGroups = groupTodosByLane(task);
   const availableRelaneTargets = workflowLanes.filter((lane) => lane.id !== task.currentLaneId);
@@ -499,7 +496,7 @@ export function TaskDetailPage({
   }, [commentDraft.author, replyTargetCommentId]);
 
   useEffect(() => {
-    if (activeTab !== "comments" || task.unreadCommentCount <= 0) {
+    if (!detailsNavActive || task.unreadCommentCount <= 0) {
       return;
     }
     const readKey = `${task.id}:${task.unreadCommentCount}`;
@@ -508,7 +505,7 @@ export function TaskDetailPage({
     }
     lastMarkedCommentsReadKeyRef.current = readKey;
     onCommentsTabViewed();
-  }, [activeTab, onCommentsTabViewed, task.id, task.unreadCommentCount]);
+  }, [detailsNavActive, onCommentsTabViewed, task.id, task.unreadCommentCount]);
 
   useEffect(() => {
     if (activeTab === "repo-files" && task.fileReferences.length > 0) {
@@ -547,7 +544,7 @@ export function TaskDetailPage({
   }, [activeTab, pendingScrollReferenceId, selectedFileReference]);
 
   useEffect(() => {
-    if (activeTab !== "comments" || !pendingReplyFocusTargetId || pendingReplyFocusTargetId !== replyTargetCommentId) {
+    if (!pendingReplyFocusTargetId || pendingReplyFocusTargetId !== replyTargetCommentId) {
       return;
     }
 
@@ -570,7 +567,7 @@ export function TaskDetailPage({
         window.clearTimeout(timeoutId);
       }
     };
-  }, [activeTab, pendingReplyFocusTargetId, replyTargetCommentId]);
+  }, [pendingReplyFocusTargetId, replyTargetCommentId]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -978,6 +975,9 @@ export function TaskDetailPage({
     selectTaskDetailTab("repo-files");
     setSelectedFileReference(reference.id);
     loadFileContent(reference);
+    window.requestAnimationFrame(() => {
+      tabBodyRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
   }
 
   function handleScrollToTaskDetails() {
@@ -1564,148 +1564,6 @@ export function TaskDetailPage({
             ) : <p className="supporting-copy">No attachments yet.</p>}
           </section>
         );
-      case "comments":
-        return (
-          <section className="task-section" data-role="task-detail-tabpanel-comments">
-            <div className="task-section__header">
-              <div>
-                <p className="eyebrow">Comments</p>
-                <h4>Task conversation</h4>
-              </div>
-            </div>
-
-            <TaskCommentComposer
-              author={commentDraft.author}
-              authorDataRole="task-comment-author"
-              tasks={tasks}
-              agents={agents}
-              roles={roles}
-              message={commentDraft.message}
-              messageDataRole="task-comment-message"
-              messageLabel="Add comment"
-              mentionListDataRole="task-comment-mention-list"
-              mentionOptionDataRole="task-comment-mention-option"
-              onAuthorChange={(author) => onCommentDraftChange({ ...commentDraft, author })}
-              onInterruptChange={(interruptAgent) => onCommentDraftChange({ ...commentDraft, interruptAgent })}
-              onMessageChange={(message) => onCommentDraftChange({ ...commentDraft, message })}
-              onSubmit={() => void handleAddTopLevelComment()}
-              rows={4}
-              submitDataRole="add-task-comment"
-              submitLabel="Add comment"
-              taskId={task.id}
-              interruptChecked={commentDraft.interruptAgent}
-              interruptDataRole="task-comment-interrupt"
-            />
-
-            {commentThreads.length ? (
-              <div className="task-section-list" data-role="task-comments">
-                {commentThreads.map(({ comment, replies }) => (
-                  <article className="task-comment-thread" data-role="task-comment-thread" key={comment.id}>
-                    <article className="transcript-event transcript-event--system task-comment-thread__parent" data-role="task-comment-item">
-                      <div className="transcript-event__meta">
-                        <span>{comment.author}</span>
-                        <div className="transcript-event__meta-group">
-                          {comment.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
-                          {formatCommentAnchorLabel(comment) ? <span className="status-badge status-badge--accent">{formatCommentAnchorLabel(comment)}</span> : null}
-                          {isAnchoredToReference(comment, defaultFile) ? <span className="status-badge status-badge--neutral">Default file</span> : null}
-                          <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
-                        </div>
-                      </div>
-                      <TaskCommentMessage
-                        dataRole="task-comment-mention-link"
-                        fileReferences={task.fileReferences}
-                        tasks={tasks}
-                        agents={agents}
-                        roles={roles}
-                        message={comment.message}
-                        onOpenFileReference={handleOpenCommentFileReference}
-                        onOpenTask={onOpenTask}
-                        onOpenAgent={onOpenAgent}
-                        onOpenRole={onOpenRole}
-                      />
-                      {comment.selectedText ? <pre className="task-comment-thread__quote">{comment.selectedText}</pre> : null}
-                      <div className="task-comment-thread__actions">
-                        <button className="secondary-button" data-role="reply-task-comment" data-comment-id={comment.id} type="button" onClick={() => openReplyComposer(comment)}>
-                          Reply
-                        </button>
-                      </div>
-                    </article>
-
-                    {replies.length ? (
-                      <div className="task-comment-thread__replies" data-role="task-comment-replies">
-                        {replies.map((reply) => (
-                          <article className="transcript-event transcript-event--system task-comment-thread__reply" data-role="task-comment-reply" key={reply.id}>
-                            <div className="transcript-event__meta">
-                              <span>{reply.author}</span>
-                              <div className="transcript-event__meta-group">
-                                {reply.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
-                                {formatCommentAnchorLabel(reply) ? <span className="status-badge status-badge--accent">{formatCommentAnchorLabel(reply)}</span> : null}
-                                {isAnchoredToReference(reply, defaultFile) ? <span className="status-badge status-badge--neutral">Default file</span> : null}
-                                <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
-                              </div>
-                            </div>
-                            <TaskCommentMessage
-                              dataRole="task-comment-mention-link"
-                              fileReferences={task.fileReferences}
-                              tasks={tasks}
-                              agents={agents}
-                              roles={roles}
-                              message={reply.message}
-                              onOpenFileReference={handleOpenCommentFileReference}
-                              onOpenTask={onOpenTask}
-                              onOpenAgent={onOpenAgent}
-                              onOpenRole={onOpenRole}
-                            />
-                            {reply.selectedText ? <pre className="task-comment-thread__quote">{reply.selectedText}</pre> : null}
-                            <div className="task-comment-thread__actions">
-                              <button className="secondary-button" data-role="reply-task-comment" data-comment-id={reply.id} data-parent-comment-id={comment.id} type="button" onClick={() => openReplyComposer(comment)}>
-                                Reply
-                              </button>
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-                    ) : null}
-
-                    {replyTargetCommentId === comment.id ? (
-                      <TaskCommentComposer
-                        author={replyDraft.author}
-                        authorDataRole="task-reply-author"
-                        className="task-comment-reply-composer"
-                        tasks={tasks}
-                        agents={agents}
-                        roles={roles}
-                        interruptChecked={replyDraft.interruptAgent}
-                        interruptDataRole="task-reply-interrupt"
-                        message={replyDraft.message}
-                        messageDataRole="task-reply-message"
-                        messageRef={replyMessageRef}
-                        messageLabel={`Reply to ${comment.author}`}
-                        mentionListDataRole="task-reply-mention-list"
-                        mentionOptionDataRole="task-reply-mention-option"
-                        onAuthorChange={(author) => setReplyDraft({ ...replyDraft, author })}
-                        onCancel={() => {
-                          setReplyTargetCommentId(null);
-                          setReplyDraft(createReplyDraft(commentDraft.author));
-                          setPendingReplyFocusTargetId(null);
-                        }}
-                        onInterruptChange={(interruptAgent) => setReplyDraft({ ...replyDraft, interruptAgent })}
-                        onMessageChange={(message) => setReplyDraft({ ...replyDraft, message })}
-                        onSubmit={() => void handleAddReply()}
-                        rows={3}
-                        submitDataRole="add-task-reply"
-                        submitLabel="Add reply"
-                        cancelDataRole="cancel-task-reply"
-                        cancelLabel="Cancel"
-                        taskId={task.id}
-                      />
-                    ) : null}
-                  </article>
-                ))}
-              </div>
-            ) : <p className="muted-copy">No comments yet. Add one to capture guidance, review notes, or an interrupt request.</p>}
-          </section>
-        );
       case "timeline":
         return (
           <section className="task-section" data-role="task-detail-tabpanel-timeline">
@@ -1962,6 +1820,154 @@ export function TaskDetailPage({
               )}
             </div>
 
+            <section className="task-detail-summary__comments task-history-card" data-role="task-detail-summary-comments">
+              <div className="task-detail-summary__history-header">
+                <div>
+                  <p className="eyebrow">Discussion</p>
+                  <h4>Task conversation</h4>
+                </div>
+                <div className="transcript-event__meta-group">
+                  <span className="status-badge status-badge--neutral">{task.commentCount}</span>
+                  {shouldShowUnreadCommentAttention(task) ? (
+                    <span className="status-badge status-badge--warning status-badge--compact" data-role="task-unread-comments-footer-badge">
+                      {task.unreadCommentCount} unread
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              <TaskCommentComposer
+                author={commentDraft.author}
+                authorDataRole="task-comment-author"
+                tasks={tasks}
+                agents={agents}
+                roles={roles}
+                message={commentDraft.message}
+                messageDataRole="task-comment-message"
+                messageLabel="Add comment"
+                mentionListDataRole="task-comment-mention-list"
+                mentionOptionDataRole="task-comment-mention-option"
+                onAuthorChange={(author) => onCommentDraftChange({ ...commentDraft, author })}
+                onInterruptChange={(interruptAgent) => onCommentDraftChange({ ...commentDraft, interruptAgent })}
+                onMessageChange={(message) => onCommentDraftChange({ ...commentDraft, message })}
+                onSubmit={() => void handleAddTopLevelComment()}
+                rows={4}
+                submitDataRole="add-task-comment"
+                submitLabel="Add comment"
+                taskId={task.id}
+                interruptChecked={commentDraft.interruptAgent}
+                interruptDataRole="task-comment-interrupt"
+              />
+
+              {commentThreads.length ? (
+                <div className="task-section-list" data-role="task-comments">
+                  {commentThreads.map(({ comment, replies }) => (
+                    <article className="task-comment-thread" data-role="task-comment-thread" key={comment.id}>
+                      <article className="transcript-event transcript-event--system task-comment-thread__parent" data-role="task-comment-item">
+                        <div className="transcript-event__meta">
+                          <span>{comment.author}</span>
+                          <div className="transcript-event__meta-group">
+                            {comment.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
+                            {formatCommentAnchorLabel(comment) ? <span className="status-badge status-badge--accent">{formatCommentAnchorLabel(comment)}</span> : null}
+                            {isAnchoredToReference(comment, defaultFile) ? <span className="status-badge status-badge--neutral">Default file</span> : null}
+                            <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
+                          </div>
+                        </div>
+                        <TaskCommentMessage
+                          dataRole="task-comment-mention-link"
+                          fileReferences={task.fileReferences}
+                          tasks={tasks}
+                          agents={agents}
+                          roles={roles}
+                          message={comment.message}
+                          onOpenFileReference={handleOpenCommentFileReference}
+                          onOpenTask={onOpenTask}
+                          onOpenAgent={onOpenAgent}
+                          onOpenRole={onOpenRole}
+                        />
+                        {comment.selectedText ? <pre className="task-comment-thread__quote">{comment.selectedText}</pre> : null}
+                        <div className="task-comment-thread__actions">
+                          <button className="secondary-button" data-role="reply-task-comment" data-comment-id={comment.id} type="button" onClick={() => openReplyComposer(comment)}>
+                            Reply
+                          </button>
+                        </div>
+                      </article>
+
+                      {replies.length ? (
+                        <div className="task-comment-thread__replies" data-role="task-comment-replies">
+                          {replies.map((reply) => (
+                            <article className="transcript-event transcript-event--system task-comment-thread__reply" data-role="task-comment-reply" key={reply.id}>
+                              <div className="transcript-event__meta">
+                                <span>{reply.author}</span>
+                                <div className="transcript-event__meta-group">
+                                  {reply.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
+                                  {formatCommentAnchorLabel(reply) ? <span className="status-badge status-badge--accent">{formatCommentAnchorLabel(reply)}</span> : null}
+                                  {isAnchoredToReference(reply, defaultFile) ? <span className="status-badge status-badge--neutral">Default file</span> : null}
+                                  <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
+                                </div>
+                              </div>
+                              <TaskCommentMessage
+                                dataRole="task-comment-mention-link"
+                                fileReferences={task.fileReferences}
+                                tasks={tasks}
+                                agents={agents}
+                                roles={roles}
+                                message={reply.message}
+                                onOpenFileReference={handleOpenCommentFileReference}
+                                onOpenTask={onOpenTask}
+                                onOpenAgent={onOpenAgent}
+                                onOpenRole={onOpenRole}
+                              />
+                              {reply.selectedText ? <pre className="task-comment-thread__quote">{reply.selectedText}</pre> : null}
+                              <div className="task-comment-thread__actions">
+                                <button className="secondary-button" data-role="reply-task-comment" data-comment-id={reply.id} data-parent-comment-id={comment.id} type="button" onClick={() => openReplyComposer(comment)}>
+                                  Reply
+                                </button>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {replyTargetCommentId === comment.id ? (
+                        <TaskCommentComposer
+                          author={replyDraft.author}
+                          authorDataRole="task-reply-author"
+                          className="task-comment-reply-composer"
+                          tasks={tasks}
+                          agents={agents}
+                          roles={roles}
+                          interruptChecked={replyDraft.interruptAgent}
+                          interruptDataRole="task-reply-interrupt"
+                          message={replyDraft.message}
+                          messageDataRole="task-reply-message"
+                          messageRef={replyMessageRef}
+                          messageLabel={`Reply to ${comment.author}`}
+                          mentionListDataRole="task-reply-mention-list"
+                          mentionOptionDataRole="task-reply-mention-option"
+                          onAuthorChange={(author) => setReplyDraft({ ...replyDraft, author })}
+                          onCancel={() => {
+                            setReplyTargetCommentId(null);
+                            setReplyDraft(createReplyDraft(commentDraft.author));
+                            setPendingReplyFocusTargetId(null);
+                          }}
+                          onInterruptChange={(interruptAgent) => setReplyDraft({ ...replyDraft, interruptAgent })}
+                          onMessageChange={(message) => setReplyDraft({ ...replyDraft, message })}
+                          onSubmit={() => void handleAddReply()}
+                          rows={3}
+                          submitDataRole="add-task-reply"
+                          submitLabel="Add reply"
+                          cancelDataRole="cancel-task-reply"
+                          cancelLabel="Cancel"
+                          taskId={task.id}
+                        />
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              ) : <p className="muted-copy">No comments yet. Add one to capture guidance, review notes, or an interrupt request.</p>}
+            </section>
+
             {unfinishedCurrentLaneTodos.length ? (
               <section className="task-history-card" data-role="task-overview-todo-warning">
                 <div className="workflow-section__header">
@@ -2022,117 +2028,6 @@ export function TaskDetailPage({
                 <p className="muted-copy">Set a default repo file from the Repo files tab to keep the most important file visible here.</p>
               )}
             </div>
-
-            <section className="task-detail-summary__comments task-history-card" data-role="task-detail-summary-comments">
-              <div className="task-detail-summary__history-header">
-                <div>
-                  <p className="eyebrow">Discussion</p>
-                  <h4>Comment on this task</h4>
-                </div>
-                <span className="status-badge status-badge--neutral">{task.commentCount}</span>
-              </div>
-
-              <TaskCommentComposer
-                className="task-comment-composer task-comment-composer--summary"
-                compactMeta
-                tasks={tasks}
-                agents={agents}
-                roles={roles}
-                interruptChecked={commentDraft.interruptAgent}
-                interruptDataRole="default-file-quick-comment-interrupt"
-                message={commentDraft.message}
-                messageDataRole="default-file-quick-comment-message"
-                messageLabel="Quick comment"
-                mentionListDataRole="default-file-quick-comment-mention-list"
-                mentionOptionDataRole="default-file-quick-comment-mention-option"
-                onInterruptChange={(interruptAgent) => onCommentDraftChange({ ...commentDraft, interruptAgent })}
-                onMessageChange={(message) => onCommentDraftChange({ ...commentDraft, message })}
-                onSubmit={() => void handleAddTopLevelComment()}
-                rows={3}
-                submitDataRole="add-default-file-quick-comment"
-                submitLabel="Add comment"
-                taskId={task.id}
-              />
-
-              {summaryComments.length ? (
-                <div className="task-section-list" data-role="default-file-comment-summary">
-                  {summaryComments.map(({ comment, replies }) => (
-                    <article className="task-comment-thread task-comment-thread--summary" key={comment.id}>
-                      <article className="transcript-event transcript-event--system task-comment-thread__parent" data-role="task-comment-item">
-                        <div className="transcript-event__meta">
-                          <span>{comment.author}</span>
-                          <div className="transcript-event__meta-group">
-                            {comment.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
-                            {formatCommentAnchorLabel(comment) ? <span className="status-badge status-badge--accent">{formatCommentAnchorLabel(comment)}</span> : null}
-                            <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
-                          </div>
-                        </div>
-                        <TaskCommentMessage
-                          dataRole="task-comment-mention-link"
-                          fileReferences={task.fileReferences}
-                          tasks={tasks}
-                          agents={agents}
-                          roles={roles}
-                          message={comment.message}
-                          onOpenFileReference={handleOpenCommentFileReference}
-                          onOpenTask={onOpenTask}
-                          onOpenAgent={onOpenAgent}
-                          onOpenRole={onOpenRole}
-                        />
-                        {comment.selectedText ? <pre className="task-comment-thread__quote">{comment.selectedText}</pre> : null}
-                        <div className="task-comment-thread__actions">
-                          <button className="secondary-button" data-role="reply-task-comment-summary" data-comment-id={comment.id} type="button" onClick={() => {
-                            selectTaskDetailTab("comments");
-                            openReplyComposer(comment);
-                          }}>
-                            Reply
-                          </button>
-                        </div>
-                      </article>
-                      {replies.length ? (
-                        <div className="task-comment-thread__replies task-comment-thread__replies--summary">
-                          {replies.slice(-2).map((reply) => (
-                            <article className="transcript-event transcript-event--system task-comment-thread__reply" key={reply.id}>
-                              <div className="transcript-event__meta">
-                                <span>{reply.author}</span>
-                                <div className="transcript-event__meta-group">
-                                  {formatCommentAnchorLabel(reply) ? <span className="status-badge status-badge--accent">{formatCommentAnchorLabel(reply)}</span> : null}
-                                  <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
-                                </div>
-                              </div>
-                              <TaskCommentMessage
-                                dataRole="task-comment-mention-link"
-                                fileReferences={task.fileReferences}
-                                tasks={tasks}
-                                agents={agents}
-                                roles={roles}
-                                message={reply.message}
-                                onOpenFileReference={handleOpenCommentFileReference}
-                                onOpenTask={onOpenTask}
-                                onOpenAgent={onOpenAgent}
-                                onOpenRole={onOpenRole}
-                              />
-                            </article>
-                          ))}
-                        </div>
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <p className="muted-copy">No comments yet. Add one here or anchor a comment directly from the file preview.</p>
-              )}
-              <div className="task-detail-summary__comments-footer">
-                <button className="secondary-button" data-role="open-task-comments" type="button" onClick={() => handleTabSelect("comments")}>
-                  View all comments
-                </button>
-                {shouldShowUnreadCommentAttention(task) ? (
-                  <span className="status-badge status-badge--warning status-badge--compact" data-role="task-unread-comments-footer-badge">
-                    {task.unreadCommentCount} unread
-                  </span>
-                ) : null}
-              </div>
-            </section>
 
             <section className="task-detail-summary__history">
               <div className="task-detail-summary__history-header">
@@ -2274,11 +2169,6 @@ export function TaskDetailPage({
                   onClick={() => handleTabSelect(tabId)}
                 >
                   <span>{item.label}</span>
-                  {item.id === "comments" && shouldShowUnreadCommentAttention(task) ? (
-                    <span className="status-badge status-badge--warning status-badge--compact" data-role="task-unread-comments-tab-badge">
-                      {task.unreadCommentCount}
-                    </span>
-                  ) : null}
                 </button>
               );
             })}
