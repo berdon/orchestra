@@ -4836,9 +4836,7 @@ test("task detail on mobile swaps the brand for back and actions while hiding th
   await page.locator('[data-role="toggle-mobile-navigation"]').click();
   await page.getByRole("button", { name: "Tasks" }).click();
 
-  await page.locator('[data-role="new-task"]').click();
-  await page.locator('[data-role="task-title"]').fill("Mobile header detail task");
-  await page.locator('[data-role="save-task"]').click();
+  await page.locator('[data-role="task-card"]').first().click();
 
   await expect(page.locator('[data-role="task-detail-panel"]')).toBeVisible();
   await expect(page.locator('[data-role="mobile-topbar-brand"]')).toHaveCount(0);
@@ -4851,6 +4849,7 @@ test("task detail on mobile swaps the brand for back and actions while hiding th
 
   await page.locator('[data-role="mobile-subpage-back"]').click();
   await expect(page.locator('[data-role="task-detail-panel"]')).toHaveCount(0);
-  await expect(page.locator('[data-role="new-task"]')).toBeVisible();
+  await expect(page.locator('[data-role="new-task"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="mobile-supervisor-chat-fab"]')).toBeVisible();
   await expect(page.locator('[data-role="mobile-topbar-brand"]')).toBeVisible();
 });

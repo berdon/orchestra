@@ -319,7 +319,8 @@ test("chat page hides shared header controls on mobile while keeping chat usable
   await page.locator('[data-role="toggle-mobile-navigation"]').click();
   await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
   await page.getByRole("button", { name: "Tasks" }).click();
-  await expect(page.locator('[data-role="new-task"]')).toBeVisible();
+  await expect(page.locator('[data-role="new-task"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="mobile-supervisor-chat-fab"]')).toBeVisible();
 });
 
 test("chat page fills the available height while keeping the composer resizable", async ({ page }) => {

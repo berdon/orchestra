@@ -151,7 +151,44 @@ test("mobile navigation keeps Settings open long enough to expose settings secti
   await openMobileNavigation(page);
   await page.getByRole('button', { name: 'Tasks' }).click();
   await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
-  await expect(page.locator('[data-role="new-task"]')).toBeVisible();
+  await expect(page.locator('[data-role="tasks-create-fab"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="new-task"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="mobile-supervisor-chat-fab"]')).toBeVisible();
+});
+
+test("mobile top-level pages show a supervisor chat launcher instead of the tasks create fab", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.goto('/');
+
+  await expect(page.locator('[data-role="mobile-supervisor-chat-fab"]')).toHaveCount(0);
+
+  await openMobileNavigation(page);
+  await page.getByRole('button', { name: 'Tasks' }).click();
+  await expect(page.locator('[data-role="tasks-create-fab"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="new-task"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="mobile-supervisor-chat-fab"]')).toBeVisible();
+  await expect(page.locator('[data-role="open-mobile-supervisor-chat"]')).toHaveAccessibleName('Open Supervisor chat');
+
+  await openMobileNavigation(page);
+  await page.getByRole('button', { name: 'Agents' }).click();
+  await expect(page.locator('[data-role="mobile-supervisor-chat-fab"]')).toBeVisible();
+
+  await page.locator('[data-role="open-mobile-supervisor-chat"]').click();
+  await expect(page.locator('[data-role="chat-mobile-agent-picker-trigger"]')).toContainText('Supervisor');
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText('Supervisor chat');
+  await expect(page.locator('[data-role="mobile-supervisor-chat-fab"]')).toHaveCount(0);
+
+  await openMobileNavigation(page);
+  await page.getByRole('button', { name: 'Sessions' }).click();
+  await expect(page.locator('[data-role="mobile-supervisor-chat-fab"]')).toHaveCount(0);
+
+  await openMobileNavigation(page);
+  await page.getByRole('button', { name: 'Inbox' }).click();
+  await expect(page.locator('[data-role="mobile-supervisor-chat-fab"]')).toBeVisible();
 });
 
 

@@ -2872,6 +2872,10 @@ export function App() {
     sessions: formatNavigationBadgeCount(activeSessionCount),
   }), [activeProjectTaskCommentUnreadCount, activeProjectUnreadCount, activeSessionCount]);
   const activeTasksMobileHeaderContext = activePage === "tasks" ? tasksMobileHeaderContextRef.current : null;
+  const showMobileSupervisorChatFab = isMobileNavigation
+    && activePage !== "chat"
+    && activePage !== "sessions"
+    && !activeTasksMobileHeaderContext;
 
   const handleThemeChange = useCallback((nextThemeId: OrchestraThemeId) => {
     setThemeId(nextThemeId);
@@ -3011,6 +3015,12 @@ export function App() {
     lastKnownChatSessionDraftRef.current = "";
     // Reload session list for debugging surfaces that still reference it.
     void loadSessions({ background: true });
+  }
+
+  function handleOpenSupervisorChatPage() {
+    setSupervisorQuickChatOpen(false);
+    navigateToChatAgent(SUPERVISOR_AGENT_ID);
+    closeMobileNavigation({ restoreFocus: false });
   }
 
   function navigateToRole(roleId: string) {
@@ -4012,7 +4022,7 @@ export function App() {
           </aside>
         )}
 
-        <main className={activePage === "chat" || activePage === "sessions" ? "content content--fill-page" : "content"}>
+        <main className={`${activePage === "chat" || activePage === "sessions" ? "content content--fill-page" : "content"}${showMobileSupervisorChatFab ? " content--with-mobile-fab" : ""}`}>
           <div className={activePage === "chat" || activePage === "sessions" ? "content__body content__body--fill" : "content__body"}>
           <ConnectionStatusBanner
             connection={connection}
@@ -4324,10 +4334,28 @@ export function App() {
             onOpenRole={navigateToRole}
             onOpenSession={navigateToSession}
             onMobileHeaderContextChange={handleTasksMobileHeaderContextChange}
+            showCreateFab={!isMobileNavigation}
           />
         )}
         </div>
       </main>
+
+      {showMobileSupervisorChatFab ? (
+        <div className="page-fab" data-role="mobile-supervisor-chat-fab">
+          <button
+            className="primary-button page-fab__button"
+            data-role="open-mobile-supervisor-chat"
+            type="button"
+            aria-label="Open Supervisor chat"
+            onClick={handleOpenSupervisorChatPage}
+          >
+            <span className="page-fab__icon" aria-hidden="true">
+              <NavIcon pageId="chat" className="nav-item__icon-svg" />
+            </span>
+            <span className="page-fab__label">Supervisor</span>
+          </button>
+        </div>
+      ) : null}
 
       <CommandPalette
         items={commandPaletteItems}

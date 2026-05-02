@@ -1331,6 +1331,10 @@ strong {
   overflow: auto;
 }
 
+.content--with-mobile-fab {
+  padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+}
+
 .content--fill-page {
   min-height: 100vh;
   min-height: 100dvh;

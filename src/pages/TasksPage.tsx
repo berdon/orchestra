@@ -169,6 +169,7 @@ interface TasksPageProps {
   onOpenRole?: (roleId: string) => void;
   onOpenSession?: (sessionId: string, projectId?: string | null) => void;
   onMobileHeaderContextChange?: (context: TasksMobileHeaderContext | null) => void;
+  showCreateFab?: boolean;
 }
 
 function sameData<T>(current: T, next: T) {
@@ -193,6 +194,7 @@ export function TasksPage({
   onOpenRole,
   onOpenSession,
   onMobileHeaderContextChange,
+  showCreateFab = true,
 }: TasksPageProps) {
   const orchestraClient = useOrchestraClient();
   const connection = useOrchestraConnection();
@@ -1692,7 +1694,7 @@ export function TasksPage({
         </section>
       )}
 
-      {route.kind !== "create" && route.kind !== "detail" ? (
+      {showCreateFab && route.kind !== "create" && route.kind !== "detail" ? (
         <div className="page-fab page-fab--tasks" data-role="tasks-create-fab">
           <button
             className="primary-button page-fab__button"

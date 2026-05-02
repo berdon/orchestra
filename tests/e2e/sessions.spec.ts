@@ -248,7 +248,8 @@ test("sessions page hides shared header controls on mobile while keeping session
   await page.locator('[data-role="toggle-mobile-navigation"]').click();
   await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
   await page.getByRole("button", { name: "Tasks" }).click();
-  await expect(page.locator('[data-role="new-task"]')).toBeVisible();
+  await expect(page.locator('[data-role="new-task"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="mobile-supervisor-chat-fab"]')).toBeVisible();
 });
 
 test("sessions transcript fills the available page height while the composer remains the resizable surface", async ({ page }) => {
