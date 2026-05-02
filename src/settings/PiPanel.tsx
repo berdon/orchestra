@@ -8,6 +8,7 @@ import type {
 } from "../types";
 
 interface PiPanelProps {
+  mode?: "setup" | "models";
   piSetupState: PiSetupState | null;
   piOAuthFlowState: PiOAuthFlowState | null;
   piModelsJson: string;
@@ -242,6 +243,7 @@ function OAuthConnectButton({ provider, disabled, busy, onSelect }: OAuthConnect
 }
 
 export function PiPanel({
+  mode = "setup",
   piSetupState,
   piOAuthFlowState,
   piModelsJson,
@@ -275,6 +277,9 @@ export function PiPanel({
   useEffect(() => {
     setOauthInputDraft("");
   }, [piOAuthFlowState?.prompt?.kind, piOAuthFlowState?.prompt?.message, piOAuthFlowState?.status]);
+
+  const showSetupSections = mode === "setup";
+  const showModelsEditor = mode === "models";
 
   const apiKeyProviders = useMemo(
     () => (piSetupState?.availableProviders ?? []).filter((provider) => provider.authModes.includes("api_key")),
@@ -398,24 +403,28 @@ export function PiPanel({
 
   return (
     <section className="panel general-panel">
-      <div className="panel__header panel__header--stacked">
-        <div>
-          <p className="eyebrow">Harness setup</p>
-          <h3>Harness auth and models</h3>
-          <p className="muted-copy">Configure Orchestra-owned harness credentials and model sources under the Orchestra runtime instead of relying on a separate personal <code>~/.pi/agent</code> setup.</p>
+      {showSetupSections ? (
+        <div className="panel__header panel__header--stacked">
+          <div>
+            <p className="eyebrow">Harness setup</p>
+            <h3>Harness auth and models</h3>
+            <p className="muted-copy">Configure Orchestra-owned harness credentials and model sources under the Orchestra runtime instead of relying on a separate personal <code>~/.pi/agent</code> setup.</p>
+          </div>
+          <div className="action-cluster action-cluster--wrap">
+            <span className={`status-badge status-badge--${statusTone(piSetupState?.status)}`} data-role="pi-setup-status">
+              {loadingPiSetup ? "Refreshing…" : formatStatusLabel(piSetupState?.status)}
+            </span>
+            <button className="secondary-button" type="button" onClick={onRefresh}>
+              Refresh
+            </button>
+          </div>
         </div>
-        <div className="action-cluster action-cluster--wrap">
-          <span className={`status-badge status-badge--${statusTone(piSetupState?.status)}`} data-role="pi-setup-status">
-            {loadingPiSetup ? "Refreshing…" : formatStatusLabel(piSetupState?.status)}
-          </span>
-          <button className="secondary-button" type="button" onClick={onRefresh}>
-            Refresh
-          </button>
-        </div>
-      </div>
+      ) : null}
 
       {panelError ? <p className="error-copy">{panelError}</p> : null}
 
+      {showSetupSections ? (
+        <>
       <section className="task-section task-section--compact">
         <div className="task-section__header">
           <div>
@@ -665,34 +674,38 @@ export function PiPanel({
           </div>
         </section>
       ) : null}
+        </>
+      ) : null}
 
-      <section className="task-section task-section--compact">
-        <div className="task-section__header">
-          <div>
-            <p className="eyebrow">Models</p>
-            <h4>Advanced models.json editor</h4>
-            <p className="muted-copy">Use the raw Pi-compatible <code>models.json</code> editor for advanced custom providers, imported configs, or provider/model definitions that Orchestra does not model directly yet.</p>
+      {showModelsEditor ? (
+        <section className="task-section task-section--compact">
+          <div className="task-section__header">
+            <div>
+              <p className="eyebrow">Models</p>
+              <h4>Advanced models.json editor</h4>
+              <p className="muted-copy">Use the raw Pi-compatible <code>models.json</code> editor for advanced custom providers, imported configs, or provider/model definitions that Orchestra does not model directly yet.</p>
+            </div>
+            <div className="action-cluster action-cluster--wrap">
+              <button className="secondary-button" type="button" disabled={savingModels || loadingPiModelsJson} onClick={() => setModelsDraft(piModelsJson)}>
+                Reset draft
+              </button>
+              <button className="secondary-button" type="button" disabled={savingModels || loadingPiModelsJson} onClick={() => void handleSaveModels()}>
+                {savingModels ? "Saving…" : "Save models.json"}
+              </button>
+            </div>
           </div>
-          <div className="action-cluster action-cluster--wrap">
-            <button className="secondary-button" type="button" disabled={savingModels || loadingPiModelsJson} onClick={() => setModelsDraft(piModelsJson)}>
-              Reset draft
-            </button>
-            <button className="secondary-button" type="button" disabled={savingModels || loadingPiModelsJson} onClick={() => void handleSaveModels()}>
-              {savingModels ? "Saving…" : "Save models.json"}
-            </button>
-          </div>
-        </div>
-        <label className="field-group">
-          <span className="field-group__label">models.json</span>
-          <textarea
-            className="text-area general-panel__prompt-template"
-            rows={18}
-            value={modelsDraft}
-            disabled={loadingPiModelsJson}
-            onChange={(event) => setModelsDraft(event.target.value)}
-          />
-        </label>
-      </section>
+          <label className="field-group">
+            <span className="field-group__label">models.json</span>
+            <textarea
+              className="text-area general-panel__prompt-template"
+              rows={18}
+              value={modelsDraft}
+              disabled={loadingPiModelsJson}
+              onChange={(event) => setModelsDraft(event.target.value)}
+            />
+          </label>
+        </section>
+      ) : null}
     </section>
   );
 }

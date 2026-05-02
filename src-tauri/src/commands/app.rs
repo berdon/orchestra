@@ -15,15 +15,16 @@ use zip::{write::FileOptions, CompressionMethod, ZipWriter};
 
 use crate::{
     models::{
-        AppInfo, BridgeCleanupEvent, BridgeDiagnostics, LogEntry, PiExecutableDiagnostic,
-        PiImportLegacyResult, PiLegacyImportPreview, PiOAuthFlowState, PiRuntimeDiagnostics,
-        PiRuntimeSettings, PiSetupState, ProjectUpsertInput, RoleUpsertInput, SessionModel,
-        SessionStorageInfo, SourceControlSettings, SystemNotificationEnvironmentStatus,
+        AppInfo, BridgeCleanupEvent, BridgeDiagnostics, HarnessModelLimitsSnapshot,
+        HarnessModelRef, LogEntry, PiExecutableDiagnostic, PiImportLegacyResult,
+        PiLegacyImportPreview, PiOAuthFlowState, PiRuntimeDiagnostics, PiRuntimeSettings,
+        PiSetupState, ProjectUpsertInput, RoleUpsertInput, SessionModel, SessionStorageInfo,
+        SourceControlSettings, SystemNotificationEnvironmentStatus,
         SystemNotificationPermissionState, SystemNotificationRequest, TaskUpsertInput,
         WorkflowLaneInput, WorkflowUpsertInput,
     },
     services::{
-        app_events, database, harness_settings,
+        app_events, database, harness_settings, model_limits,
         orchestra_paths::default_orchestra_root,
         pi_oauth, pi_runtime,
         pi_sessions::{
@@ -320,6 +321,46 @@ pub fn update_pi_runtime_settings(
     default_compaction_window: Option<String>,
 ) -> Result<PiRuntimeSettings, String> {
     harness_settings::update_pi_runtime_settings(extra_extensions, default_compaction_window)
+}
+
+#[tauri::command]
+pub async fn get_harness_model_limits_snapshot() -> Result<HarnessModelLimitsSnapshot, String> {
+    spawn_blocking(model_limits::get_harness_model_limits_snapshot)
+        .await
+        .map_err(|error| format!("Unable to load Harness model limits: {error}"))?
+}
+
+#[tauri::command]
+pub fn save_harness_model_limit_policy(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    model_ref: HarnessModelRef,
+    rolling_5h_percent: Option<i64>,
+    weekly_percent: Option<i64>,
+) -> Result<HarnessModelLimitsSnapshot, String> {
+    let result = model_limits::save_harness_model_limit_policy(
+        model_ref.clone(),
+        rolling_5h_percent,
+        weekly_percent,
+    )?;
+    state.log(
+        "info",
+        "harness.model_limits.saved",
+        &format!(
+            "Saved Harness model limits for {}/{}",
+            model_ref.provider, model_ref.model_id
+        ),
+    );
+    let _ = app_events::emit_window_event(
+        &app,
+        "orchestra:harness-model-limits-change",
+        &json!({
+            "reason": "harness.model_limits.saved",
+            "provider": model_ref.provider,
+            "modelId": model_ref.model_id,
+        }),
+    );
+    Ok(result)
 }
 
 #[tauri::command]

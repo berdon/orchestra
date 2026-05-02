@@ -4,7 +4,11 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    models::{PiRuntimeSettings, PiSetupMetadata},
+    models::{
+        HarnessModelLimitPolicy, HarnessModelRef, HarnessModelLimitRule, HarnessModelLimitsSnapshot,
+        HarnessModelLimitState, HarnessModelLimitMetricValue, HarnessUsageSource,
+        PiRuntimeSettings, PiSetupMetadata,
+    },
     services::{
         orchestra_paths::{default_orchestra_root, orchestra_settings_path},
         pi_runtime,
@@ -24,6 +28,8 @@ struct StoredHarnessSettings {
 struct StoredHarnessSection {
     #[serde(default)]
     pi: StoredPiRuntimeSettings,
+    #[serde(default)]
+    models: StoredHarnessModelsSettings,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -37,6 +43,13 @@ struct StoredPiRuntimeSettings {
     migration: PiMigrationStateRecord,
     #[serde(default)]
     setup: StoredPiSetupMetadata,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredHarnessModelsSettings {
+    #[serde(default)]
+    policies: Vec<HarnessModelLimitPolicy>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -131,6 +144,142 @@ pub fn update_pi_runtime_settings_in(
     settings.harness.pi.updated_at = Some(Utc::now().to_rfc3339());
     save_harness_settings(orchestra_root, &settings)?;
     get_pi_runtime_settings_in(orchestra_root)
+}
+
+pub fn get_harness_model_limit_policies() -> Result<Vec<HarnessModelLimitPolicy>, String> {
+    let orchestra_root = default_orchestra_root()?;
+    get_harness_model_limit_policies_in(&orchestra_root)
+}
+
+pub fn get_harness_model_limit_policies_in(
+    orchestra_root: &Path,
+) -> Result<Vec<HarnessModelLimitPolicy>, String> {
+    Ok(load_harness_settings(orchestra_root)?.harness.models.policies)
+}
+
+pub fn save_harness_model_limit_policy(
+    model_ref: HarnessModelRef,
+    rolling_5h_percent: Option<i64>,
+    weekly_percent: Option<i64>,
+) -> Result<Vec<HarnessModelLimitPolicy>, String> {
+    let orchestra_root = default_orchestra_root()?;
+    save_harness_model_limit_policy_in(
+        &orchestra_root,
+        model_ref,
+        rolling_5h_percent,
+        weekly_percent,
+    )
+}
+
+pub fn save_harness_model_limit_policy_in(
+    orchestra_root: &Path,
+    model_ref: HarnessModelRef,
+    rolling_5h_percent: Option<i64>,
+    weekly_percent: Option<i64>,
+) -> Result<Vec<HarnessModelLimitPolicy>, String> {
+    validate_percent_limit(rolling_5h_percent, "5-hour")?;
+    validate_percent_limit(weekly_percent, "weekly")?;
+
+    let mut settings = load_harness_settings(orchestra_root)?;
+    settings.harness.models.policies.retain(|policy| {
+        !same_model_ref(&policy.model_ref, &model_ref)
+    });
+
+    let mut rules = Vec::new();
+    if let Some(value) = rolling_5h_percent {
+        rules.push(HarnessModelLimitRule {
+            metric_key: "rolling_5h_percent".into(),
+            threshold_kind: "percent".into(),
+            threshold_value: value,
+            action: "pause".into(),
+        });
+    }
+    if let Some(value) = weekly_percent {
+        rules.push(HarnessModelLimitRule {
+            metric_key: "weekly_percent".into(),
+            threshold_kind: "percent".into(),
+            threshold_value: value,
+            action: "pause".into(),
+        });
+    }
+
+    if !rules.is_empty() {
+        settings.harness.models.policies.push(HarnessModelLimitPolicy {
+            usage_source: usage_source_for_model(&model_ref),
+            model_ref,
+            rules,
+            updated_at: Some(Utc::now().to_rfc3339()),
+        });
+    }
+
+    settings
+        .harness
+        .models
+        .policies
+        .sort_by(|left, right| model_ref_sort_key(&left.model_ref).cmp(&model_ref_sort_key(&right.model_ref)));
+    save_harness_settings(orchestra_root, &settings)?;
+    Ok(settings.harness.models.policies)
+}
+
+pub fn build_harness_model_limits_snapshot(
+    policies: Vec<HarnessModelLimitPolicy>,
+    states: Vec<HarnessModelLimitState>,
+) -> HarnessModelLimitsSnapshot {
+    HarnessModelLimitsSnapshot { policies, states }
+}
+
+pub fn unsupported_model_limit_state(model_ref: &HarnessModelRef) -> HarnessModelLimitState {
+    HarnessModelLimitState {
+        model_ref: model_ref.clone(),
+        usage_source: usage_source_for_model(model_ref),
+        capped: false,
+        last_checked_at: None,
+        capped_at: None,
+        cleared_at: None,
+        last_error: Some(format!(
+            "Usage polling is not supported for provider {} yet.",
+            model_ref.provider
+        )),
+        reason: None,
+        metrics: Vec::<HarnessModelLimitMetricValue>::new(),
+    }
+}
+
+pub fn usage_source_for_model(model_ref: &HarnessModelRef) -> HarnessUsageSource {
+    if model_ref.provider.trim().eq_ignore_ascii_case("zai") {
+        HarnessUsageSource {
+            adapter: "zai_quota".into(),
+            scope_key: "shared_supported_models".into(),
+        }
+    } else {
+        HarnessUsageSource {
+            adapter: "unsupported".into(),
+            scope_key: format!("{}:{}", model_ref.provider, model_ref.model_id),
+        }
+    }
+}
+
+pub fn same_model_ref(left: &HarnessModelRef, right: &HarnessModelRef) -> bool {
+    left.provider == right.provider && left.model_id == right.model_id && left.api == right.api
+}
+
+fn model_ref_sort_key(model_ref: &HarnessModelRef) -> (String, String, String) {
+    (
+        model_ref.provider.clone(),
+        model_ref.model_id.clone(),
+        model_ref.api.clone().unwrap_or_default(),
+    )
+}
+
+fn validate_percent_limit(value: Option<i64>, label: &str) -> Result<(), String> {
+    if let Some(value) = value {
+        if !(1..=100).contains(&value) {
+            return Err(format!(
+                "{label} limit must be a percentage between 1 and 100."
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub fn resolve_spawn_extra_extensions(

@@ -3717,11 +3717,13 @@ fn build_frontend_bootstrap<R: Runtime>(
 fn prepare_session_message_request<R: Runtime>(
     app: &AppHandle<R>,
     headers: &HeaderMap,
+    session_id: &str,
     input: SessionMessageInput,
 ) -> Result<(String, Option<String>), (StatusCode, Json<ApiError>)> {
     let _device = resolve_remote_auth(app, headers, None)?;
     let trimmed_message = session_commands::validate_session_message_request(
         app.state::<AppState>().inner(),
+        session_id,
         input.message,
     )
     .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
@@ -6441,7 +6443,7 @@ where
     Sender: FnOnce(String, String, Option<String>) -> Fut,
     Fut: std::future::Future<Output = Result<QueuedSessionMessage, String>>,
 {
-    let (trimmed_message, run_id) = prepare_session_message_request(app, &headers, input)?;
+    let (trimmed_message, run_id) = prepare_session_message_request(app, &headers, &session_id, input)?;
     sender(session_id, trimmed_message, run_id)
         .await
         .map(Json)

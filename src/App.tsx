@@ -7,6 +7,10 @@ import { reconcileListedSessions } from "./lib/sessionListMerge";
 import { getActiveProjectId, setActiveProjectId } from "./lib/projects";
 import { listRoleOperations } from "./lib/roleRuntime";
 import { listRoles } from "./lib/roles";
+import {
+  getHarnessModelLimitsSnapshot,
+  saveHarnessModelLimitPolicy,
+} from "./lib/harnessSettings";
 import { getSessionPromptSettings, updateSessionPromptSettings } from "./lib/projectSettings";
 import { listenToAgentCatalogChanges } from "./lib/agentCatalogEvents";
 import { BUILT_IN_ORCHESTRA_THEMES, applyOrchestraTheme, getOrchestraThemeDefinition, loadStoredOrchestraTheme, storeOrchestraTheme, type OrchestraThemeId } from "./lib/theme";
@@ -72,6 +76,7 @@ import type {
   AgentSummary,
   AppInfo,
   BridgeDiagnostics,
+  HarnessModelLimitsSnapshot,
   JsonValue,
   LogEntry,
   PiOAuthFlowState,
@@ -807,6 +812,7 @@ export function App() {
   const [bridgeDiagnostics, setBridgeDiagnostics] = useState<BridgeDiagnostics | null>(null);
   const [sessionPromptSettings, setSessionPromptSettings] = useState<ProjectSessionPromptSettings | null>(null);
   const [piRuntimeSettings, setPiRuntimeSettings] = useState<PiRuntimeSettings | null>(null);
+  const [harnessModelLimitsSnapshot, setHarnessModelLimitsSnapshot] = useState<HarnessModelLimitsSnapshot | null>(null);
   const [piSetupState, setPiSetupState] = useState<PiSetupState | null>(null);
   const [piOAuthFlowState, setPiOAuthFlowState] = useState<PiOAuthFlowState | null>(null);
   const [piModelsJson, setPiModelsJson] = useState('{\n  "providers": {}\n}\n');
@@ -1729,9 +1735,22 @@ export function App() {
     }
   }
 
+  async function loadHarnessModelLimitSettings() {
+    if (!canManageHarnessSettings) {
+      setHarnessModelLimitsSnapshot(null);
+      return;
+    }
+    try {
+      setHarnessModelLimitsSnapshot(await getHarnessModelLimitsSnapshot());
+    } catch (error) {
+      setSessionActionError((current) => current ?? toUiErrorState(error, "Unable to load Harness model limits."));
+    }
+  }
+
   async function refreshPiSetupState(options?: { includeModelsJson?: boolean }) {
     await loadPiSetup();
     await loadAppInfo();
+    await loadHarnessModelLimitSettings();
     setModelStates({});
     if (options?.includeModelsJson) {
       await loadPiModelsJsonState();
@@ -1814,6 +1833,21 @@ export function App() {
       await loadAppInfo();
     } catch (error) {
       setSessionActionError(toUiErrorState(error, "Unable to save PI runtime settings."));
+    }
+  }
+
+  async function handleSaveHarnessModelLimitPolicy(input: {
+    modelRef: { provider: string; modelId: string; api?: string | null };
+    rolling5hPercent?: number | null;
+    weeklyPercent?: number | null;
+  }) {
+    if (!canManageHarnessSettings) {
+      return;
+    }
+    try {
+      setHarnessModelLimitsSnapshot(await saveHarnessModelLimitPolicy(input));
+    } catch (error) {
+      setSessionActionError(toUiErrorState(error, "Unable to save Harness model limits."));
     }
   }
 
@@ -2236,6 +2270,7 @@ export function App() {
 
     void loadAppInfo();
     void loadPiRuntimeSettings();
+    void loadHarnessModelLimitSettings();
     void loadPiSetup();
     void loadPiOAuthFlow();
     void loadSystemNotificationPermission();
@@ -2254,6 +2289,9 @@ export function App() {
         await loadPiOAuthFlow();
       })();
     };
+    const onHarnessModelLimitsChanged = () => {
+      void loadHarnessModelLimitSettings();
+    };
     const onPiOAuthFlowChanged = (event: Event) => {
       if (event instanceof CustomEvent) {
         setPiOAuthFlowState(event.detail as PiOAuthFlowState | null);
@@ -2261,10 +2299,12 @@ export function App() {
     };
     window.addEventListener("orchestra:projects-changed", onProjectsChanged);
     window.addEventListener("orchestra:pi-setup-change", onPiSetupChanged);
+    window.addEventListener("orchestra:harness-model-limits-change", onHarnessModelLimitsChanged);
     window.addEventListener("orchestra:pi-oauth-flow-change", onPiOAuthFlowChanged);
     return () => {
       window.removeEventListener("orchestra:projects-changed", onProjectsChanged);
       window.removeEventListener("orchestra:pi-setup-change", onPiSetupChanged);
+      window.removeEventListener("orchestra:harness-model-limits-change", onHarnessModelLimitsChanged);
       window.removeEventListener("orchestra:pi-oauth-flow-change", onPiOAuthFlowChanged);
     };
   }, [hostAdminExtension, shellExtension]);
@@ -4051,6 +4091,7 @@ export function App() {
             />
           ) : activeSettingsTab === "harness" ? (
             <HarnessPanel
+              harnessModelLimitsSnapshot={harnessModelLimitsSnapshot}
               piRuntimeSettings={piRuntimeSettings}
               piRuntimeDiagnostics={appInfo?.piRuntimeDiagnostics ?? null}
               piSetupState={piSetupState}
@@ -4069,6 +4110,7 @@ export function App() {
               onDismissLegacyImport={() => handleDismissPiLegacyImport()}
               onSaveModelsJson={(content) => handleSavePiModelsJson(content)}
               onSavePiRuntimeSettings={(input) => void handleSavePiRuntimeSettings(input)}
+              onSaveHarnessModelLimitPolicy={(input) => void handleSaveHarnessModelLimitPolicy(input)}
               onImportLegacyPiConfiguration={(input) => void handleImportLegacyPiConfiguration(input)}
             />
           ) : (

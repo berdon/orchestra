@@ -15,6 +15,7 @@ use crate::{
     },
     services::{
         agent_dispatch, agent_runtime, agents, app_events, database, domain_events,
+        model_limits,
         live_sessions::{
             ensure_runtime, get_session_control_snapshot, is_unknown_command_error,
             maybe_auto_compact, maybe_runtime, perform_session_compaction, perform_session_reload,
@@ -2726,6 +2727,7 @@ pub async fn stop_session_runtime(
 
 pub(crate) fn validate_session_message_request(
     state: &AppState,
+    session_id: &str,
     message: String,
 ) -> Result<String, String> {
     let trimmed_message = message.trim().to_string();
@@ -2739,6 +2741,7 @@ pub(crate) fn validate_session_message_request(
     pi_setup::require_pi_setup_ready().map_err(|error| {
         format!("Unable to send a session message because Pi setup is incomplete: {error}")
     })?;
+    model_limits::ensure_session_message_allowed(state, session_id)?;
 
     Ok(trimmed_message)
 }
@@ -2750,7 +2753,7 @@ pub async fn send_session_message_with_optional_run_id(
     message: String,
     requested_run_id: Option<String>,
 ) -> Result<QueuedSessionMessage, String> {
-    let trimmed_message = validate_session_message_request(state, message)?;
+    let trimmed_message = validate_session_message_request(state, &session_id, message)?;
 
     let session_id_for_task = session_id.clone();
     let (project_root, session_dir) =

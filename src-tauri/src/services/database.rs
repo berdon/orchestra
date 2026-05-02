@@ -478,6 +478,49 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 FOREIGN KEY(superseded_by_session_id) REFERENCES sessions(id) ON DELETE SET NULL
             );
 
+            CREATE TABLE IF NOT EXISTS provider_usage_snapshots (
+                adapter TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                checked_at TEXT NOT NULL,
+                status TEXT NOT NULL,
+                raw_json TEXT,
+                error_message TEXT,
+                next_poll_after TEXT NOT NULL,
+                PRIMARY KEY (adapter, scope_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS model_limit_states (
+                model_key TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                api TEXT,
+                adapter TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                is_capped INTEGER NOT NULL DEFAULT 0,
+                last_checked_at TEXT,
+                capped_at TEXT,
+                cleared_at TEXT,
+                last_error TEXT,
+                reason TEXT,
+                metrics_json TEXT,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_model_limit_states_provider_model
+                ON model_limit_states(provider, model_id, is_capped);
+
+            CREATE TABLE IF NOT EXISTS session_model_snapshots (
+                session_id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                api TEXT,
+                source TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_model_snapshots_provider_model
+                ON session_model_snapshots(provider, model_id, updated_at DESC);
+
             CREATE TABLE IF NOT EXISTS worker_reminders (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,

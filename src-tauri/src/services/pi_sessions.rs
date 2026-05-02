@@ -19,7 +19,7 @@ use crate::{
         SessionStats, SessionStreamEvent, SessionTokenUsage,
     },
     services::{
-        database,
+        database, model_limits,
         orchestra_paths::{
             configured_project_root, default_orchestra_root, discover_dev_checkout_root,
             infer_project_slug, pi_agent_dir, project_session_dir, sanitize_slug,
@@ -1162,7 +1162,11 @@ pub fn get_session_model_state(
     session_dir: &Path,
     session_id: &str,
 ) -> Result<SessionModelState, String> {
-    get_session_model_state_with_executable(project_root, session_dir, session_id, Path::new("pi"))
+    let state = get_session_model_state_with_executable(project_root, session_dir, session_id, Path::new("pi"))?;
+    if let Some(model) = state.current_model.as_ref() {
+        let _ = model_limits::record_session_model_snapshot(session_id, model, "runtime_observed");
+    }
+    Ok(state)
 }
 
 pub fn get_session_stats(
@@ -1180,14 +1184,18 @@ pub fn set_session_model(
     provider: &str,
     model_id: &str,
 ) -> Result<SessionModelState, String> {
-    set_session_model_with_executable(
+    let state = set_session_model_with_executable(
         project_root,
         session_dir,
         session_id,
         provider,
         model_id,
         Path::new("pi"),
-    )
+    )?;
+    if let Some(model) = state.current_model.as_ref() {
+        let _ = model_limits::record_session_model_snapshot(session_id, model, "runtime_selected");
+    }
+    Ok(state)
 }
 
 pub fn set_session_thinking_level(

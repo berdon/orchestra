@@ -109,6 +109,7 @@ describe("HarnessPanel package diagnostics", () => {
         onImportLegacyConfig={async () => {}}
         onDismissLegacyImport={async () => {}}
         onSaveModelsJson={async () => {}}
+        harnessModelLimitsSnapshot={{ policies: [], states: [] }}
         piRuntimeSettings={{
           extraExtensions: [],
           defaultCompactionWindow: "10%",
@@ -124,6 +125,8 @@ describe("HarnessPanel package diagnostics", () => {
   test("renders Bun status and concrete package source details", () => {
     const markup = renderHarnessPanel(createSetupState());
 
+    expect(markup).toContain("harness-subnav-general");
+    expect(markup).toContain("harness-subnav-models");
     expect(markup).toContain("Package source + Bun status");
     expect(markup).toContain("Bun is not available on the PATH Orchestra uses for runtime subprocesses.");
     expect(markup).toContain("/mock/.orchestra/runtime/pi/agent/settings.json");

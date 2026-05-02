@@ -13,6 +13,9 @@ interface ResizableSidebarLayoutProps {
 }
 
 function readStoredWidth(storageKey: string, defaultWidth: number, minWidth: number, maxWidth: number) {
+  if (typeof window === "undefined") {
+    return defaultWidth;
+  }
   const raw = window.localStorage.getItem(storageKey);
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
   if (!Number.isFinite(parsed)) {

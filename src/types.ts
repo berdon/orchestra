@@ -761,6 +761,55 @@ export interface PiRuntimeSettings {
   updatedAt?: string | null;
 }
 
+export interface HarnessModelRef {
+  provider: string;
+  modelId: string;
+  api?: string | null;
+}
+
+export interface HarnessUsageSource {
+  adapter: string;
+  scopeKey: string;
+}
+
+export interface HarnessModelLimitRule {
+  metricKey: string;
+  thresholdKind: string;
+  thresholdValue: number;
+  action: string;
+}
+
+export interface HarnessModelLimitPolicy {
+  modelRef: HarnessModelRef;
+  usageSource: HarnessUsageSource;
+  rules: HarnessModelLimitRule[];
+  updatedAt?: string | null;
+}
+
+export interface HarnessModelLimitMetricValue {
+  metricKey: string;
+  value: number;
+  unit: string;
+  nextResetAt?: string | null;
+}
+
+export interface HarnessModelLimitState {
+  modelRef: HarnessModelRef;
+  usageSource: HarnessUsageSource;
+  capped: boolean;
+  lastCheckedAt?: string | null;
+  cappedAt?: string | null;
+  clearedAt?: string | null;
+  lastError?: string | null;
+  reason?: string | null;
+  metrics: HarnessModelLimitMetricValue[];
+}
+
+export interface HarnessModelLimitsSnapshot {
+  policies: HarnessModelLimitPolicy[];
+  states: HarnessModelLimitState[];
+}
+
 export interface PiSetupIssue {
   code: string;
   message: string;

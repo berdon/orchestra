@@ -1203,6 +1203,69 @@ pub struct PiRuntimeSettings {
     pub updated_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessModelRef {
+    pub provider: String,
+    pub model_id: String,
+    pub api: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessUsageSource {
+    pub adapter: String,
+    pub scope_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessModelLimitRule {
+    pub metric_key: String,
+    pub threshold_kind: String,
+    pub threshold_value: i64,
+    pub action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessModelLimitPolicy {
+    pub model_ref: HarnessModelRef,
+    pub usage_source: HarnessUsageSource,
+    pub rules: Vec<HarnessModelLimitRule>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessModelLimitMetricValue {
+    pub metric_key: String,
+    pub value: i64,
+    pub unit: String,
+    pub next_reset_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessModelLimitState {
+    pub model_ref: HarnessModelRef,
+    pub usage_source: HarnessUsageSource,
+    pub capped: bool,
+    pub last_checked_at: Option<String>,
+    pub capped_at: Option<String>,
+    pub cleared_at: Option<String>,
+    pub last_error: Option<String>,
+    pub reason: Option<String>,
+    pub metrics: Vec<HarnessModelLimitMetricValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessModelLimitsSnapshot {
+    pub policies: Vec<HarnessModelLimitPolicy>,
+    pub states: Vec<HarnessModelLimitState>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PiSetupMetadata {

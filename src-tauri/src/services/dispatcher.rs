@@ -5,8 +5,8 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     services::{
-        agent_dispatch, app_events, database, pi_sessions, reminders, role_dispatch, role_runtime,
-        task_runtime, task_schedules,
+        agent_dispatch, app_events, database, model_limits, pi_sessions, reminders,
+        role_dispatch, role_runtime, task_runtime, task_schedules,
     },
     state::AppState,
 };
@@ -71,6 +71,7 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, 
     let context = pi_sessions::detect_session_context(None)?;
 
     let stale_assignment_recoveries = recover_stale_task_assignments(app.clone(), state)?;
+    let model_limit_actions = model_limits::process_usage_checks(app.clone(), state)?;
 
     let agent_dispatches = agent_dispatch::dispatch_all_agent_queues(
         app.clone(),
@@ -134,6 +135,7 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, 
     let reminder_results = reminders::process_due_reminders(app.clone(), state)?;
 
     let total_actions = stale_assignment_recoveries
+        + model_limit_actions
         + agent_dispatches
         + activated_roles
         + schedule_results
@@ -145,8 +147,8 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, 
         "info",
         "dispatcher.tick.completed",
         &format!(
-            "Completed dispatcher tick with {} stale assignment recoveries, {} agent dispatches, {} activated role assignments, {} schedule actions, {} auto-dispatched tasks, {} whip actions, {} reminder actions ({} total actions)",
-            stale_assignment_recoveries, agent_dispatches, activated_roles, schedule_results, auto_dispatched_tasks, whip_results, reminder_results, total_actions
+            "Completed dispatcher tick with {} stale assignment recoveries, {} model-limit actions, {} agent dispatches, {} activated role assignments, {} schedule actions, {} auto-dispatched tasks, {} whip actions, {} reminder actions ({} total actions)",
+            stale_assignment_recoveries, model_limit_actions, agent_dispatches, activated_roles, schedule_results, auto_dispatched_tasks, whip_results, reminder_results, total_actions
         ),
     );
     Ok(total_actions)
