@@ -114,7 +114,26 @@ test("settings general, harness, prompting, and source control panels render and
   }
 
   async function openSettingsDetailTab(prefix: string, id: string) {
-    await page.locator(`[data-role="${prefix}-tab-${id}"]`).click();
+    const dock = page.locator(`[data-role="${prefix}-tab-dock"]`);
+    if (await dock.count()) {
+      await page.evaluate(() => {
+        const content = document.querySelector('.content') as HTMLElement | null;
+        if (content && content.scrollHeight > content.clientHeight) {
+          content.scrollTop = Math.max(0, content.scrollTop - 180);
+          content.dispatchEvent(new Event('scroll'));
+        }
+        const scrollingElement = document.scrollingElement ?? document.documentElement;
+        if (scrollingElement.scrollTop > 0) {
+          scrollingElement.scrollTop = Math.max(0, scrollingElement.scrollTop - 180);
+          window.dispatchEvent(new Event('scroll'));
+        }
+      });
+      await expect(dock).toHaveAttribute('data-scroll-state', 'visible');
+    }
+    const tab = page.locator(`[data-role="${prefix}-tab-${id}"]`);
+    await tab.scrollIntoViewIfNeeded();
+    await expect(tab).toBeVisible();
+    await tab.click();
   }
 
   await page.goto("/");

@@ -300,11 +300,12 @@ test("settings projects panel creates a project and repository", async ({ page }
   expect(storedState?.repositories?.[0]?.name).toBe("Client repo");
 });
 
-test("project settings detail uses the floating tab dock and shows the browser unsupported secrets state", async ({ page }) => {
+test("project settings detail hides the floating tab dock on scroll down and still shows the browser unsupported secrets state", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
 
+  await page.setViewportSize({ width: 1280, height: 420 });
   await page.goto("/");
   await page.getByRole("button", { name: "Settings" }).click();
 
@@ -336,6 +337,18 @@ test("project settings detail uses the floating tab dock and shows the browser u
   });
   expect(dockLayout.position).toBe("fixed");
   expect(dockLayout.bottomGap).toBeLessThanOrEqual(32);
+  await expect(page.locator('[data-role="project-detail-tab-dock"]')).toHaveAttribute('data-scroll-state', 'visible');
+
+  await page.evaluate(() => {
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' });
+    window.dispatchEvent(new Event('scroll'));
+  });
+  await expect(page.locator('[data-role="project-detail-tab-dock"]')).toHaveAttribute('data-scroll-state', 'hidden');
+  await page.evaluate(() => {
+    window.scrollTo({ top: 120, behavior: 'auto' });
+    window.dispatchEvent(new Event('scroll'));
+  });
+  await expect(page.locator('[data-role="project-detail-tab-dock"]')).toHaveAttribute('data-scroll-state', 'visible');
 
   await page.locator('[data-role="project-detail-tab-repositories"]').click();
   await expect(page.locator('[data-role="project-detail-tabpanel-repositories"]')).toBeVisible();
@@ -386,7 +399,7 @@ test("project settings asynchronously prefetches tab-specific hosted-web setting
   expect(api.requestCounts.secrets).toBe(1);
 });
 
-test("project settings keeps the floating tab dock visible on mobile", async ({ page }) => {
+test("project settings hides the floating tab dock on mobile scroll down and restores it on scroll up", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
@@ -397,6 +410,7 @@ test("project settings keeps the floating tab dock visible on mobile", async ({ 
   const mobileSubnav = page.locator('[data-role="project-mobile-subnav-shell"]');
   const floatingSubnav = page.locator('[data-role="project-mobile-subnav-floating-shell"]');
   const mobileSubnavSelect = page.locator('[data-role="project-mobile-subnav-select-control"]');
+  const dock = page.locator('[data-role="project-detail-tab-dock"]');
   await expect(mobileSubnav).toBeVisible();
   await expect(mobileSubnavSelect).toBeVisible();
   await expect(page.locator('.settings-mobile-subnav-panel')).toBeHidden();
@@ -414,6 +428,7 @@ test("project settings keeps the floating tab dock visible on mobile", async ({ 
     }
   });
   await expect(floatingSubnav).toHaveAttribute('data-scroll-state', 'hidden');
+  await expect(dock).toHaveAttribute('data-scroll-state', 'hidden');
   await page.evaluate(() => {
     const content = document.querySelector('.content') as HTMLElement | null;
     if (content) {
@@ -422,6 +437,7 @@ test("project settings keeps the floating tab dock visible on mobile", async ({ 
     }
   });
   await expect(floatingSubnav).toHaveAttribute('data-scroll-state', 'visible');
+  await expect(dock).toHaveAttribute('data-scroll-state', 'visible');
   await page.waitForFunction(() => {
     const topbar = document.querySelector('[data-role="mobile-topbar"]') as HTMLElement | null;
     const floating = document.querySelector('[data-role="project-mobile-subnav-floating-shell"]') as HTMLElement | null;
@@ -431,8 +447,8 @@ test("project settings keeps the floating tab dock visible on mobile", async ({ 
     return floating.getBoundingClientRect().top >= topbar.getBoundingClientRect().bottom + 8;
   });
 
-  const dock = page.locator('[data-role="project-detail-tab-dock"]');
   await expect(dock).toBeVisible();
+  await expect(dock).toHaveAttribute('data-scroll-state', 'visible');
   await expect(page.locator('[data-role="project-detail-tab-general"]')).toBeVisible();
   await expect(page.locator('[data-role="project-detail-tab-repositories"]')).toBeVisible();
   await expect(page.locator('[data-role="project-detail-tab-automation"]')).toBeVisible();

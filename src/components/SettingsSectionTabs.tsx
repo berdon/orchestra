@@ -24,6 +24,9 @@ interface FloatingDockLayout {
   right: number;
 }
 
+const FLOATING_DOCK_SCROLL_EPSILON = 2;
+const FLOATING_DOCK_DIRECTION_THRESHOLD = 28;
+
 export function resolveVisibleSettingsSectionTab(
   tabs: readonly Pick<SettingsSectionTab, "id" | "hidden">[],
   activeTabId: string,
@@ -68,6 +71,7 @@ export function SettingsSectionTabs({
   const rootRef = useRef<HTMLElement | null>(null);
   const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState(initialTabId ?? tabs.find((tab) => !tab.hidden)?.id ?? "");
   const [dockLayout, setDockLayout] = useState<FloatingDockLayout | null>(null);
+  const [dockShown, setDockShown] = useState(true);
   const visibleTabs = useMemo(() => tabs.filter((tab) => !tab.hidden), [tabs]);
   const resolvedActiveTab = resolveVisibleSettingsSectionTab(visibleTabs, activeTabId ?? uncontrolledActiveTab, initialTabId);
 
@@ -82,12 +86,19 @@ export function SettingsSectionTabs({
     const root = rootRef.current;
     if (!root || visibleTabs.length < 2 || typeof window === "undefined") {
       setDockLayout(null);
+      setDockShown(true);
       return;
     }
 
-    const scrollRoot = findScrollRoot(root);
+    const contentRoot = root.closest(".content") as HTMLElement | null;
+    const scrollRoot = findScrollRoot(root) ?? contentRoot;
     let frameId: number | null = null;
     let resizeObserver: ResizeObserver | null = null;
+    const getScrollPosition = () => Math.max(scrollRoot?.scrollTop ?? 0, window.scrollY, root.ownerDocument.documentElement.scrollTop);
+    let lastScrollPosition = getScrollPosition();
+    let accumulatedDirection: "up" | "down" | null = null;
+    let accumulatedDistance = 0;
+    let pendingScrollIntent: "up" | "down" | null = null;
 
     const updateLayout = () => {
       if (frameId !== null) {
@@ -101,6 +112,8 @@ export function SettingsSectionTabs({
               right: Math.max(window.innerWidth - rect.right, 12),
             }
           : null;
+        const scrollPosition = getScrollPosition();
+        const nextEligible = Boolean(nextLayout) && scrollPosition > 24;
 
         setDockLayout((current) => {
           if (!nextLayout && !current) {
@@ -111,13 +124,50 @@ export function SettingsSectionTabs({
           }
           return nextLayout;
         });
+
+        if (!nextEligible) {
+          accumulatedDirection = null;
+          accumulatedDistance = 0;
+          pendingScrollIntent = null;
+          lastScrollPosition = scrollPosition;
+          setDockShown((current) => (current === true ? current : true));
+          return;
+        }
+
+        if (pendingScrollIntent) {
+          const nextShown = pendingScrollIntent === "up";
+          pendingScrollIntent = null;
+          setDockShown((current) => (current === nextShown ? current : nextShown));
+        }
       });
     };
 
     updateLayout();
+    const handleScroll = () => {
+      const scrollPosition = getScrollPosition();
+      const delta = scrollPosition - lastScrollPosition;
+      lastScrollPosition = scrollPosition;
+
+      if (Math.abs(delta) >= FLOATING_DOCK_SCROLL_EPSILON) {
+        const nextDirection = delta > 0 ? "down" : "up";
+        if (accumulatedDirection !== nextDirection) {
+          accumulatedDirection = nextDirection;
+          accumulatedDistance = Math.abs(delta);
+        } else {
+          accumulatedDistance += Math.abs(delta);
+        }
+
+        if (accumulatedDistance >= FLOATING_DOCK_DIRECTION_THRESHOLD) {
+          pendingScrollIntent = nextDirection;
+          accumulatedDistance = 0;
+        }
+      }
+
+      updateLayout();
+    };
     const handleMeasure = () => updateLayout();
-    scrollRoot?.addEventListener("scroll", handleMeasure, { passive: true });
-    window.addEventListener("scroll", handleMeasure, { passive: true });
+    scrollRoot?.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("scroll", handleScroll, { passive: true });
     window.addEventListener("resize", handleMeasure);
 
     if (typeof ResizeObserver !== "undefined") {
@@ -130,8 +180,8 @@ export function SettingsSectionTabs({
         window.cancelAnimationFrame(frameId);
       }
       resizeObserver?.disconnect();
-      scrollRoot?.removeEventListener("scroll", handleMeasure);
-      window.removeEventListener("scroll", handleMeasure);
+      scrollRoot?.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("scroll", handleScroll);
       window.removeEventListener("resize", handleMeasure);
     };
   }, [visibleTabs.length]);
@@ -169,7 +219,14 @@ export function SettingsSectionTabs({
       ) : null}
 
       {visibleTabs.length > 1 ? (
-        <div className="task-detail-tab-dock task-detail-tab-dock--persistent-settings" data-role={`${dataRolePrefix}-tab-dock`} style={dockStyle}>
+        <div
+          className={dockShown
+            ? "task-detail-tab-dock task-detail-tab-dock--persistent-settings"
+            : "task-detail-tab-dock task-detail-tab-dock--persistent-settings task-detail-tab-dock--hidden"}
+          data-role={`${dataRolePrefix}-tab-dock`}
+          data-scroll-state={dockShown ? "visible" : "hidden"}
+          style={dockStyle}
+        >
           <label className="task-detail-section-select" data-role={`${dataRolePrefix}-section-select-mobile`}>
             <span className="task-detail-section-select__label">Section</span>
             <select
