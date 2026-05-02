@@ -147,6 +147,53 @@ async function openTasksOverviewOnMobile(page: Page) {
   await page.getByRole("button", { name: "Tasks" }).click();
 }
 
+async function scrollTaskDetailTo(page: Page, top: number) {
+  await page.evaluate((nextTop) => {
+    const content = document.querySelector(".content") as HTMLElement | null;
+    if (content && content.scrollHeight > content.clientHeight) {
+      content.scrollTop = nextTop;
+      content.dispatchEvent(new Event("scroll"));
+      return;
+    }
+    window.scrollTo({ top: nextTop, behavior: "auto" });
+    window.dispatchEvent(new Event("scroll"));
+  }, top);
+}
+
+async function revealTaskDetailDock(page: Page) {
+  const tabDock = page.locator('[data-role="task-detail-tab-dock"]');
+  if (!(await tabDock.isVisible())) {
+    await page.evaluate(() => {
+      const content = document.querySelector(".content") as HTMLElement | null;
+      if (content && content.scrollHeight > content.clientHeight) {
+        content.scrollTop = Math.max(0, content.scrollTop - 160);
+        content.dispatchEvent(new Event("scroll"));
+        return;
+      }
+
+      window.scrollTo({ top: Math.max(0, window.scrollY - 160), behavior: "auto" });
+      window.dispatchEvent(new Event("scroll"));
+    });
+  }
+
+  await page.waitForFunction(() => {
+    const dock = document.querySelector('[data-role="task-detail-tab-dock"]') as HTMLElement | null;
+    if (!dock) {
+      return false;
+    }
+
+    const styles = window.getComputedStyle(dock);
+    const rect = dock.getBoundingClientRect();
+    return dock.dataset.scrollState === "visible"
+      && styles.visibility !== "hidden"
+      && styles.pointerEvents !== "none"
+      && rect.top >= 0
+      && rect.bottom <= window.innerHeight;
+  });
+  await page.waitForTimeout(220);
+  await expect(tabDock).toBeVisible();
+}
+
 async function seedClickableTagNavigationData(page: Page) {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -2650,6 +2697,8 @@ test("task detail opens tracked repo files when clicking $file mentions in comme
   await page.locator('[data-role="add-task-file-reference"]').click();
   await expect(page.locator('[data-role="task-file-references"]')).toContainText("docs/design.md");
 
+  await revealTaskDetailDock(page);
+  await page.locator('[data-role="task-detail-tab-comments"]').click();
   await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
   await page.locator('[data-role="task-comment-message"]').fill("Please review $docs/design.md before you continue.");
   await page.locator('[data-role="add-task-comment"]').click();
@@ -2968,7 +3017,7 @@ test("task comment reply actions scroll/focus composer and nested replies target
   })).toBe("thread-parent");
 });
 
-test("task detail supports attachments, comments, timeline, and review inbox filtering", async ({ page }) => {
+test("task detail supports attachments, comments, recent activity, and review inbox filtering", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
@@ -3005,6 +3054,7 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   expect(download.suggestedFilename()).toBe("notes.txt");
   expect(await readFile((await download.path())!, "utf8")).toBe("Attachment preview text");
 
+  await revealTaskDetailDock(page);
   await page.locator('[data-role="task-detail-tab-summary"]').click();
   await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
   await page.locator('[data-role="task-comment-message"]').fill("Pause and re-check the task context before you continue.");
@@ -3014,7 +3064,6 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Reviewer");
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Interrupt requested");
 
-  await page.locator('[data-role="task-detail-tab-repo-files"]').click();
   await page.locator('[data-role="reply-task-comment"]').first().click();
   await page.locator('[data-role="task-reply-author"]').fill("Worker");
   await page.locator('[data-role="task-reply-message"]').fill("I checked the task context and updated the plan.");
@@ -3023,10 +3072,10 @@ test("task detail supports attachments, comments, timeline, and review inbox fil
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Worker");
   await expect(page.locator('[data-role="task-comment-reply"]')).toContainText("I checked the task context and updated the plan.");
 
-  await page.locator('[data-role="task-detail-tab-timeline"]').click();
-  await expect(page.locator('[data-role="task-timeline"]')).toContainText("Attachment added: notes.txt");
-  await expect(page.locator('[data-role="task-timeline"]')).toContainText("Reviewer commented");
-  await expect(page.locator('[data-role="task-timeline"]')).toContainText("Worker replied");
+  const recentHistory = page.locator('.task-detail-summary__history-list');
+  await expect(recentHistory).toContainText("Attachment added: notes.txt");
+  await expect(recentHistory).toContainText("Reviewer commented");
+  await expect(recentHistory).toContainText("Worker replied");
 
   await page.getByRole("button", { name: "Tasks", exact: true }).click();
   await page.getByRole("button", { name: "New task" }).click();
@@ -4483,7 +4532,7 @@ test("dispatching an agent-owned task reuses the agent main session instead of s
   expect(sessionCounts).toBe(1);
 });
 
-test("task detail keeps the bottom tab dock visible while scrolling", async ({ page }) => {
+test("task detail hides and reveals the bottom tab dock based on scroll direction", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
   });
@@ -4522,8 +4571,11 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
     }));
   });
 
-  const tabDock = page.getByRole('tablist', { name: 'Task detail panels' });
+  const tabDock = page.locator('[data-role="task-detail-tab-dock"]');
+  const tabList = page.getByRole("tablist", { name: "Task detail panels" });
+  const compactHeader = page.locator('[data-role="task-detail-compact-header"]');
   await expect(tabDock).toBeVisible();
+  await expect(tabList).toBeVisible();
   await expect(page.locator('[data-role="task-detail-section-select-mobile"]')).toBeHidden();
   expect(await page.evaluate(() => Array.from(document.querySelectorAll('[data-role="task-detail-tab-dock"] button')).map((button) => (button.firstElementChild?.textContent ?? button.textContent ?? '').trim()))).toEqual([
     'Details',
@@ -4538,37 +4590,34 @@ test("task detail keeps the bottom tab dock visible while scrolling", async ({ p
     'Lane history',
   ]);
 
-  const initialDockGap = await tabDock.evaluate((node) => Math.round(window.innerHeight - node.getBoundingClientRect().bottom));
+  const initialDockGap = await tabList.evaluate((node) => Math.round(window.innerHeight - node.getBoundingClientRect().bottom));
   expect(initialDockGap).toBeLessThanOrEqual(32);
 
-  await page.evaluate(() => {
-    const content = document.querySelector('.content') as HTMLElement | null;
-    if (content && content.scrollHeight > content.clientHeight) {
-      content.scrollTop = 1400;
-      content.dispatchEvent(new Event('scroll'));
-      return;
-    }
-    window.scrollTo({ top: 1400, behavior: 'auto' });
-    window.dispatchEvent(new Event('scroll'));
-  });
+  await scrollTaskDetailTo(page, 1400);
   await page.waitForFunction(() => {
-    const content = document.querySelector('.content') as HTMLElement | null;
+    const content = document.querySelector(".content") as HTMLElement | null;
     return Boolean((content && content.scrollTop > 500) || window.scrollY > 500);
   });
 
-  await expect(page.locator('[data-role="task-detail-compact-header"]')).toHaveAttribute('data-scroll-state', 'hidden');
-  await expect(page.locator('[data-role="task-detail-tab-dock"]')).toBeVisible();
-  await tabDock.getByRole('button', { name: 'Comments' }).click();
+  await expect(compactHeader).toHaveAttribute("data-scroll-state", "hidden");
+  await expect(tabDock).toBeHidden();
+
+  await scrollTaskDetailTo(page, 1332);
+  await expect(compactHeader).toHaveAttribute("data-scroll-state", "visible");
+  await expect(tabDock).toBeVisible();
+  await expect(tabList).toBeVisible();
+
+  await tabList.getByRole("button", { name: "Comments" }).click();
   await expect(page.locator('[data-role="task-detail-tab-comments"]')).toHaveClass(/task-detail-tab--active/);
   await expect(page.locator('[data-role="task-detail-summary-comments"]')).toContainText('Comment 8');
-  await tabDock.getByRole('button', { name: 'Details' }).click();
+
+  await scrollTaskDetailTo(page, 0);
   await page.waitForFunction(() => {
-    const content = document.querySelector('.content') as HTMLElement | null;
+    const content = document.querySelector(".content") as HTMLElement | null;
     return Boolean((content && content.scrollTop < 220) || window.scrollY < 220);
   });
-  await expect(page.locator('[data-role="task-title-heading"]')).toContainText('Implement task foundation shell');
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Implement task foundation shell");
   await expect(page.locator('[data-role="task-detail-summary-comments"]')).toContainText('Comment 8');
-
 });
 
 test("task detail compact header follows scroll direction without jitter", async ({ page }) => {
@@ -4608,39 +4657,29 @@ test("task detail compact header follows scroll direction without jitter", async
     );
   });
 
-  const scrollTaskDetailTo = async (top: number) => {
-    await page.evaluate((nextTop) => {
-      const content = document.querySelector('.content') as HTMLElement | null;
-      if (content && content.scrollHeight > content.clientHeight) {
-        content.scrollTop = nextTop;
-        content.dispatchEvent(new Event('scroll'));
-        return;
-      }
-      window.scrollTo({ top: nextTop, behavior: 'auto' });
-      window.dispatchEvent(new Event('scroll'));
-    }, top);
-  };
-
   const compactHeader = page.locator('[data-role="task-detail-compact-header"]');
-  await scrollTaskDetailTo(1400);
+  const tabDock = page.locator('[data-role="task-detail-tab-dock"]');
+  await scrollTaskDetailTo(page, 1400);
   await expect(compactHeader).toHaveAttribute('data-scroll-state', 'hidden');
-  await expect(page.locator('[data-role="task-detail-tab-dock"]')).toBeVisible();
+  await expect(tabDock).toBeHidden();
 
-  await scrollTaskDetailTo(1332);
+  await scrollTaskDetailTo(page, 1332);
   await expect(compactHeader).toHaveAttribute('data-scroll-state', 'visible');
   await expect(compactHeader).toBeVisible();
+  await expect(tabDock).toBeVisible();
 
-  await scrollTaskDetailTo(1337);
-  await scrollTaskDetailTo(1332);
-  await scrollTaskDetailTo(1336);
-  await scrollTaskDetailTo(1333);
+  await scrollTaskDetailTo(page, 1337);
+  await scrollTaskDetailTo(page, 1332);
+  await scrollTaskDetailTo(page, 1336);
+  await scrollTaskDetailTo(page, 1333);
   await page.waitForTimeout(220);
   await expect(compactHeader).toHaveAttribute('data-scroll-state', 'visible');
   await expect(compactHeader).toBeVisible();
 
-  await scrollTaskDetailTo(1372);
+  await scrollTaskDetailTo(page, 1372);
   await expect(compactHeader).toHaveAttribute('data-scroll-state', 'hidden');
   await expect(compactHeader).toBeHidden();
+  await expect(tabDock).toBeHidden();
 });
 
 test("task detail on mobile uses a section select for tab panels", async ({ page }) => {
@@ -4698,6 +4737,7 @@ test("task detail on mobile uses a section select for tab panels", async ({ page
   await expect(mobileSectionSelect).toHaveValue("todos");
   await expect(page.locator('[data-role="task-detail-tabpanel-todos"]')).toBeVisible();
 
+  await revealTaskDetailDock(page);
   await mobileSectionSelect.selectOption("details");
   await page.waitForFunction(() => {
     const content = document.querySelector('.content') as HTMLElement | null;
@@ -4705,6 +4745,62 @@ test("task detail on mobile uses a section select for tab panels", async ({ page
   });
   await expect(mobileSectionSelect).toHaveValue("details");
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText('Implement task foundation shell');
+  await expect(page.locator('[data-role="task-detail-summary-comments"]')).toBeVisible();
+});
+
+test("task detail hides the mobile section dock on scroll down and restores it on scroll up", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openTasksOverviewOnMobile(page);
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+
+  await page.evaluate(() => {
+    const key = "orchestra.mock.tasks";
+    const raw = window.localStorage.getItem(key);
+    const tasks = raw ? JSON.parse(raw) : [];
+    const target = tasks.find((entry: { title?: string }) => entry.title === "Implement task foundation shell");
+    if (!target) {
+      throw new Error("Expected seeded task was not found");
+    }
+    target.description = Array.from({ length: 80 }, (_, index) => `Mobile dock detail line ${index + 1}`).join("\n\n");
+    target.updatedAt = new Date().toISOString();
+    window.localStorage.setItem(key, JSON.stringify(tasks));
+    window.dispatchEvent(new CustomEvent("orchestra:task-change", {
+      detail: {
+        taskIds: [target.id],
+        reason: "task.updated",
+      },
+    }));
+  });
+
+  await page.waitForFunction(() => {
+    const content = document.querySelector(".content") as HTMLElement | null;
+    const documentElement = document.documentElement;
+    return Boolean(
+      (content && content.scrollHeight > content.clientHeight + 500)
+      || documentElement.scrollHeight > window.innerHeight + 500,
+    );
+  });
+
+  const tabDock = page.locator('[data-role="task-detail-tab-dock"]');
+  const mobileSectionSelect = page.locator('[data-role="task-detail-section-select-control"]');
+  await expect(tabDock).toBeVisible();
+  await expect(page.locator('[data-role="task-detail-section-select-mobile"]')).toBeVisible();
+
+  await scrollTaskDetailTo(page, 1400);
+  await expect(tabDock).toBeHidden();
+
+  const hiddenDockTop = await tabDock.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  expect(hiddenDockTop).toBeGreaterThanOrEqual(828);
+
+  await scrollTaskDetailTo(page, 1332);
+  await expect(tabDock).toBeVisible();
+
+  await mobileSectionSelect.selectOption("comments");
+  await expect(mobileSectionSelect).toHaveValue("comments");
   await expect(page.locator('[data-role="task-detail-summary-comments"]')).toBeVisible();
 });
 

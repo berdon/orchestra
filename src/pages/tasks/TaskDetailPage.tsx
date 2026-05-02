@@ -321,8 +321,8 @@ const NAV_OPTIONS: Array<{ id: TaskDetailNavItem; label: string }> = [
 ];
 
 const DELETE_HOLD_MS = 2000;
-const COMPACT_HEADER_SCROLL_EPSILON = 2;
-const COMPACT_HEADER_DIRECTION_THRESHOLD = 28;
+const FLOATING_CHROME_SCROLL_EPSILON = 2;
+const FLOATING_CHROME_DIRECTION_THRESHOLD = 28;
 
 interface FloatingTaskChromeLayout {
   left: number;
@@ -443,6 +443,7 @@ export function TaskDetailPage({
   const [floatingChromeLayout, setFloatingChromeLayout] = useState<FloatingTaskChromeLayout | null>(null);
   const [compactHeaderEligible, setCompactHeaderEligible] = useState(false);
   const [compactHeaderShown, setCompactHeaderShown] = useState(false);
+  const [tabDockShown, setTabDockShown] = useState(true);
   const getTooltipProps = useExplanatoryTooltipProps();
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
@@ -640,6 +641,7 @@ export function TaskDetailPage({
       setFloatingChromeLayout(null);
       setCompactHeaderEligible(false);
       setCompactHeaderShown(false);
+      setTabDockShown(true);
       return;
     }
 
@@ -659,6 +661,7 @@ export function TaskDetailPage({
     window.scrollTo({ top: 0, behavior: "auto" });
     setCompactHeaderEligible(false);
     setCompactHeaderShown(false);
+    setTabDockShown(true);
     let frameId: number | null = null;
     const getScrollPosition = () => Math.max(scrollRoot?.scrollTop ?? 0, window.scrollY, detailPage.ownerDocument.documentElement.scrollTop);
     let lastScrollPosition = getScrollPosition();
@@ -708,6 +711,7 @@ export function TaskDetailPage({
           lastScrollPosition = scrollPosition;
           setCompactHeaderEligible((current) => (current ? false : current));
           setCompactHeaderShown((current) => (current ? false : current));
+          setTabDockShown((current) => (current === true ? current : true));
           return;
         }
 
@@ -717,6 +721,7 @@ export function TaskDetailPage({
           const nextShown = pendingScrollIntent === "up";
           pendingScrollIntent = null;
           setCompactHeaderShown((current) => (current === nextShown ? current : nextShown));
+          setTabDockShown((current) => (current === nextShown ? current : nextShown));
         }
       });
     };
@@ -727,7 +732,7 @@ export function TaskDetailPage({
       const delta = scrollPosition - lastScrollPosition;
       lastScrollPosition = scrollPosition;
 
-      if (Math.abs(delta) >= COMPACT_HEADER_SCROLL_EPSILON) {
+      if (Math.abs(delta) >= FLOATING_CHROME_SCROLL_EPSILON) {
         const nextDirection = delta > 0 ? "down" : "up";
         if (accumulatedDirection !== nextDirection) {
           accumulatedDirection = nextDirection;
@@ -736,7 +741,7 @@ export function TaskDetailPage({
           accumulatedDistance += Math.abs(delta);
         }
 
-        if (accumulatedDistance >= COMPACT_HEADER_DIRECTION_THRESHOLD) {
+        if (accumulatedDistance >= FLOATING_CHROME_DIRECTION_THRESHOLD) {
           pendingScrollIntent = nextDirection;
           accumulatedDistance = 0;
         }
@@ -2141,7 +2146,13 @@ export function TaskDetailPage({
       ) : null}
 
       {stickyChromeStyle ? (
-        <div className="task-detail-tab-dock" data-role="task-detail-tab-dock" ref={tabDockRef} style={stickyChromeStyle}>
+        <div
+          className={`task-detail-tab-dock${tabDockShown ? "" : " task-detail-tab-dock--hidden"}`}
+          data-role="task-detail-tab-dock"
+          data-scroll-state={tabDockShown ? "visible" : "hidden"}
+          ref={tabDockRef}
+          style={stickyChromeStyle}
+        >
           <label className="task-detail-section-select" data-role="task-detail-section-select-mobile">
             <span className="task-detail-section-select__label">Section</span>
             <select

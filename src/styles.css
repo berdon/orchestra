@@ -4151,6 +4151,31 @@ strong {
   bottom: 16px;
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
   border-radius: 14px;
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+  transition:
+    transform 180ms ease,
+    opacity 160ms ease,
+    visibility 0s linear 0s;
+}
+
+.task-detail-tab-dock--hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(calc(100% + 12px));
+  visibility: hidden;
+  transition:
+    transform 180ms ease,
+    opacity 160ms ease,
+    visibility 0s linear 180ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-detail-tab-dock,
+  .task-detail-tab-dock--hidden {
+    transition: none;
+  }
 }
 
 .task-detail-mobile-primary-action {
