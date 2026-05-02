@@ -31,7 +31,7 @@ function createHostedWebSecretsApiMock() {
   };
 
   const bootstrap = {
-    contractVersion: "2026-04-23",
+    contractVersion: "2026-05-02",
     bootstrappedAt: "2026-04-23T00:00:00.000Z",
     hostKind: "remote_api",
     authMode: "same_origin_cookie",

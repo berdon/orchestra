@@ -26,7 +26,7 @@ class FakeWebSocket {
     this.onclose?.({} as CloseEvent);
   }
 
-  emitConnected(contractVersion = "2026-04-23") {
+  emitConnected(contractVersion = "2026-05-02") {
     this.onmessage?.({ data: JSON.stringify({ type: "connected", contractVersion }) } as MessageEvent);
   }
 
@@ -50,7 +50,7 @@ class FakeWebSocket {
 
 function createBootstrap(authMode: OrchestraClientBootstrap["authMode"] = "same_origin_cookie"): OrchestraClientBootstrap {
   return {
-    contractVersion: "2026-04-23",
+    contractVersion: "2026-05-02",
     bootstrappedAt: "2026-04-23T00:00:00.000Z",
     hostKind: "remote_api",
     authMode,
