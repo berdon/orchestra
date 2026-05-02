@@ -125,6 +125,7 @@ describe("HarnessPanel package diagnostics", () => {
   test("renders Bun status and concrete package source details", () => {
     const markup = renderHarnessPanel(createSetupState());
 
+    expect(markup).toContain("harness-detail-tab-dock");
     expect(markup).toContain("harness-subnav-general");
     expect(markup).toContain("harness-subnav-models");
     expect(markup).toContain("Package source + Bun status");

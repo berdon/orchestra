@@ -3924,11 +3924,13 @@ strong {
   margin-bottom: 4px;
 }
 
-.project-detail-tab-dock {
+.project-detail-tab-dock,
+.harness-detail-tab-dock {
   z-index: 19;
 }
 
-.project-detail-tab-dock .task-detail-tabs--dock {
+.project-detail-tab-dock .task-detail-tabs--dock,
+.harness-detail-tab-dock .task-detail-tabs--dock {
   display: flex;
 }
 
@@ -6275,7 +6277,7 @@ strong {
     padding-inline: 14px;
   }
 
-  .task-detail-tab-dock:not(.project-detail-tab-dock) .task-detail-tabs--dock {
+  .task-detail-tab-dock:not(.project-detail-tab-dock):not(.harness-detail-tab-dock) .task-detail-tabs--dock {
     display: none;
   }
 

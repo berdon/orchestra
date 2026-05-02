@@ -654,7 +654,7 @@ export function HarnessPanel({
           <p className="muted-copy">Manage Orchestra-owned runtime, provider auth, and model-governance settings.</p>
         </div>
       </div>
-      <div className="task-detail-tab-dock">
+      <div className="task-detail-tab-dock harness-detail-tab-dock" data-role="harness-detail-tab-dock">
         <div className="task-detail-tabs task-detail-tabs--dock" role="tablist" aria-label="Harness sections">
           <button
             className={selectedSection === "general" ? "task-detail-tab task-detail-tab--active" : "task-detail-tab"}
