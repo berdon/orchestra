@@ -1,6 +1,7 @@
 import type { ComponentProps } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import { PiPanel } from "./PiPanel";
 import type {
   HarnessModelLimitPolicy,
@@ -25,7 +26,6 @@ type HarnessPanelProps = Omit<ComponentProps<typeof PiPanel>, "mode"> & {
   onImportLegacyPiConfiguration: (input: { importAuth: boolean; importModels: boolean }) => void;
 };
 
-type HarnessSection = "general" | "models";
 type PolicyRowDraft = {
   id: string;
   persisted: boolean;
@@ -181,7 +181,6 @@ export function HarnessPanel({
 }: HarnessPanelProps) {
   const packageDiagnostics = piPanelProps.piSetupState?.packageDiagnostics ?? null;
   const availableModels = piPanelProps.piSetupState?.availableModels ?? [];
-  const [selectedSection, setSelectedSection] = useState<HarnessSection>("general");
   const [piExtensionsDraft, setPiExtensionsDraft] = useState("");
   const [defaultCompactionWindowDraft, setDefaultCompactionWindowDraft] = useState("10%");
   const [policyRows, setPolicyRows] = useState<PolicyRowDraft[]>([]);
@@ -311,13 +310,13 @@ export function HarnessPanel({
     }
   };
 
-  const generalDetail = (
+  const runtimeDetail = (
     <div className="task-detail-stack">
       <section className="task-section task-section--compact" data-role="pi-runtime-settings-panel">
         <div className="task-section__header">
           <div>
             <p className="eyebrow">Harness configuration</p>
-            <h3>Harness settings</h3>
+            <h4>Runtime defaults</h4>
             <p className="supporting-copy">Extra extensions apply to new harness sessions only. Existing sessions keep their current extension set.</p>
           </div>
           <div className="action-cluster action-cluster--wrap">
@@ -438,10 +437,10 @@ export function HarnessPanel({
         </label>
         <p className="muted-copy">Last updated: {formatDateTime(piRuntimeSettings?.updatedAt)}</p>
       </section>
-
-      <PiPanel mode="setup" {...piPanelProps} />
     </div>
   );
+
+  const setupDetail = <PiPanel mode="setup" {...piPanelProps} />;
 
   const modelsDetail = (
     <div className="task-detail-stack">
@@ -646,41 +645,37 @@ export function HarnessPanel({
   );
 
   return (
-    <section className="panel task-detail-tabs-panel">
-      <div className="panel__header panel__header--stacked">
-        <div>
-          <p className="eyebrow">Settings</p>
-          <h3>Harness</h3>
-          <p className="muted-copy">Manage Orchestra-owned runtime, provider auth, and model-governance settings.</p>
+    <SettingsSectionTabs
+      className="panel general-panel"
+      ariaLabel="Harness settings sections"
+      dataRolePrefix="harness-detail"
+      initialTabId="runtime"
+      header={(
+        <div className="panel__header panel__header--stacked">
+          <div>
+            <p className="eyebrow">Settings</p>
+            <h3>Harness settings</h3>
+            <p className="muted-copy">Manage Orchestra-owned runtime, provider auth, and model-governance settings.</p>
+          </div>
         </div>
-      </div>
-      <div className="task-detail-tab-dock harness-detail-tab-dock" data-role="harness-detail-tab-dock">
-        <div className="task-detail-tabs task-detail-tabs--dock" role="tablist" aria-label="Harness sections">
-          <button
-            className={selectedSection === "general" ? "task-detail-tab task-detail-tab--active" : "task-detail-tab"}
-            data-role="harness-subnav-general"
-            role="tab"
-            aria-selected={selectedSection === "general"}
-            type="button"
-            onClick={() => setSelectedSection("general")}
-          >
-            General
-          </button>
-          <button
-            className={selectedSection === "models" ? "task-detail-tab task-detail-tab--active" : "task-detail-tab"}
-            data-role="harness-subnav-models"
-            role="tab"
-            aria-selected={selectedSection === "models"}
-            type="button"
-            onClick={() => setSelectedSection("models")}
-          >
-            Models
-          </button>
-        </div>
-      </div>
-      <div className="task-detail-tabs__body">
-        {selectedSection === "general" ? generalDetail : modelsDetail}
-      </div>
-    </section>
+      )}
+      tabs={[
+        {
+          id: "runtime",
+          label: "Runtime",
+          panel: runtimeDetail,
+        },
+        {
+          id: "setup",
+          label: "Setup",
+          panel: setupDetail,
+        },
+        {
+          id: "models",
+          label: "Models",
+          panel: modelsDetail,
+        },
+      ]}
+    />
   );
 }

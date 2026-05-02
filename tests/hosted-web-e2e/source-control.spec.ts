@@ -14,7 +14,6 @@ test("hosted-web settings load and save global source-control defaults through t
   const userNameTemplate = page.locator('[data-role="source-control-git-user-name-template"]');
   const emailTemplate = page.locator('[data-role="source-control-git-email-template"]');
   await expect(userNameTemplate).toBeVisible();
-  await expect(page.locator('[data-role="source-control-preview-table"]')).toBeVisible();
 
   await userNameTemplate.click();
   await userNameTemplate.pressSequentially("Hosted Web {role}");
@@ -29,5 +28,6 @@ test("hosted-web settings load and save global source-control defaults through t
 
   await expect(userNameTemplate).toHaveValue("Hosted Web {role}");
   await expect(emailTemplate).toHaveValue("hosted-web+{agent}@example.test");
+  await page.locator('[data-role="source-control-detail-tab-preview"]').click();
   await expect(page.locator('[data-role="source-control-preview-table"]')).toContainText("Hosted Web");
 });

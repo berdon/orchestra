@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AccessEditor } from "../components/access/AccessEditor";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import { buildEffectivePermissions, getPolicyLabel } from "../lib/access";
 import { getPolicy, listPolicies } from "../lib/policies";
 import { archiveRole, createRole, getRole, listRoles, updateRole, validateRole } from "../lib/roles";
@@ -409,257 +410,282 @@ export function RolesPanel({ selectionRequest = null, piSetupState = null, onOpe
       detail={(
       <>
         {selectedRoleSummary || isCreatingRole ? (
-          <div className="workflow-editor-grid">
-            <div className="panel__header panel__header--stacked">
-              <div>
-                <p className="eyebrow">Role definition</p>
-                <h3>{isCreatingRole ? "Create role" : roleDraft.name.trim() || "Untitled role"}</h3>
-              </div>
-              <div className="action-cluster">
-                {loadedRoleArchived ? <span className="status-badge status-badge--neutral">Archived</span> : null}
-                {attachedPolicyNames.map((name) => (
-                  <span className="status-badge status-badge--accent" key={name}>
-                    {name}
-                  </span>
-                ))}
-                {!isCreatingRole && loadedRoleId ? (
-                  <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleArchiveRole()} disabled={savingRole || loadedRoleArchived}>
-                    Archive role
+          <SettingsSectionTabs
+            className="workflow-editor-grid"
+            ariaLabel="Role settings sections"
+            dataRolePrefix="role-detail"
+            initialTabId="configuration"
+            header={(
+              <div className="panel__header panel__header--stacked">
+                <div>
+                  <p className="eyebrow">Role definition</p>
+                  <h3>{isCreatingRole ? "Create role" : roleDraft.name.trim() || "Untitled role"}</h3>
+                </div>
+                <div className="action-cluster">
+                  {loadedRoleArchived ? <span className="status-badge status-badge--neutral">Archived</span> : null}
+                  {attachedPolicyNames.map((name) => (
+                    <span className="status-badge status-badge--accent" key={name}>
+                      {name}
+                    </span>
+                  ))}
+                  {!isCreatingRole && loadedRoleId ? (
+                    <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleArchiveRole()} disabled={savingRole || loadedRoleArchived}>
+                      Archive role
+                    </button>
+                  ) : null}
+                  <button className="primary-button" data-role="save-role" type="button" onClick={() => void handleSaveRole()} disabled={savingRole || loadingRoleDetail}>
+                    {savingRole ? "Saving…" : isCreatingRole ? "Create role" : "Save changes"}
                   </button>
-                ) : null}
-                <button className="primary-button" data-role="save-role" type="button" onClick={() => void handleSaveRole()} disabled={savingRole || loadingRoleDetail}>
-                  {savingRole ? "Saving…" : isCreatingRole ? "Create role" : "Save changes"}
-                </button>
-              </div>
-            </div>
-
-            {loadingRoleDetail ? <p className="muted-copy">Loading role…</p> : null}
-
-            <section className="workflow-section">
-              <div>
-                <p className="eyebrow">Execution defaults</p>
-                <h3>Configuration</h3>
-              </div>
-
-              <div className="workflow-form-grid">
-                <label className="field-group">
-                  <span className="field-group__label">Role name</span>
-                  <input
-                    className="text-input"
-                    data-role="role-name"
-                    type="text"
-                    value={roleDraft.name}
-                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, name: event.target.value }))}
-                  />
-                  {getRoleValidationForPath(roleValidation, "name").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <label className="field-group">
-                  <span className="field-group__label">Capacity</span>
-                  <input
-                    className="text-input"
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={roleDraft.capacity}
-                    onChange={(event) =>
-                      updateRoleDraft((draft) => ({
-                        ...draft,
-                        capacity: Number.parseInt(event.target.value, 10) || 0,
-                      }))
-                    }
-                  />
-                  {getRoleValidationForPath(roleValidation, "capacity").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <label className="field-group">
-                  <span className="field-group__label">Provider</span>
-                  <select
-                    className="select-input"
-                    value={roleDraft.provider ?? ""}
-                    disabled={loadingModelOptions || piSetupState?.status !== "ready"}
-                    onChange={(event) =>
-                      updateRoleDraft((draft) => ({
-                        ...draft,
-                        provider: event.target.value,
-                        model: draft.provider === event.target.value ? draft.model : "",
-                      }))
-                    }
-                  >
-                    <option value="">{loadingModelOptions ? "Loading providers…" : "Select a provider"}</option>
-                    {providerOptions.map((provider) => (
-                      <option key={provider} value={provider}>
-                        {provider}
-                      </option>
-                    ))}
-                  </select>
-                  {getRoleValidationForPath(roleValidation, "provider").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <label className="field-group">
-                  <span className="field-group__label">Model</span>
-                  <select
-                    className="select-input"
-                    value={roleDraft.model ?? ""}
-                    disabled={loadingModelOptions || piSetupState?.status !== "ready" || !(roleDraft.provider ?? "")}
-                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, model: event.target.value }))}
-                  >
-                    <option value="">
-                      {loadingModelOptions ? "Loading models…" : roleDraft.provider ? "Select a model" : "Select a provider first"}
-                    </option>
-                    {filteredModelOptions.map((model) => (
-                      <option key={`${model.provider}/${model.id}`} value={model.id}>
-                        {model.name}
-                      </option>
-                    ))}
-                  </select>
-                  {getRoleValidationForPath(roleValidation, "model").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <label className="field-group">
-                  <span className="field-group__label">Thinking</span>
-                  <select
-                    className="select-input"
-                    value={roleDraft.thinkingLevel ?? "off"}
-                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, thinkingLevel: event.target.value }))}
-                  >
-                    <option value="off">Off</option>
-                    <option value="minimal">Minimal</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="xhigh">XHigh</option>
-                  </select>
-                  {getRoleValidationForPath(roleValidation, "thinkingLevel").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <label className="field-group">
-                  <span className="field-group__label">Compaction window override</span>
-                  <input
-                    className="text-input"
-                    data-role="role-compaction-window"
-                    type="text"
-                    placeholder="Inherit global default"
-                    value={roleDraft.compactionWindow ?? ""}
-                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, compactionWindow: event.target.value }))}
-                  />
-                  <span className="field-group__hint">Optional. Use `10%`, a token reserve like `16000`, `off`, or leave blank to inherit.</span>
-                  {getRoleValidationForPath(roleValidation, "compactionWindow").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <div className="workflow-form-grid__full muted-copy" data-role="role-pi-executable-diagnostic">
-                  Pi runtime: {formatPiRuntimeDiagnostic(piExecutableDiagnostic)}
                 </div>
-
-                {piSetupState?.status && piSetupState.status !== "ready" ? (
-                  <div className="workflow-form-grid__full session-readonly-banner">
-                    <div>
-                      <strong>Pi setup required.</strong> {piSetupState.issues[0]?.message ?? piSetupState.warnings[0]?.message ?? "Connect a provider in Settings → Harness before assigning Pi-backed role models."}
-                    </div>
-                    {onOpenPiSettings ? (
-                      <button className="secondary-button" type="button" onClick={onOpenPiSettings}>
-                        Open Settings → Harness
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                <label className="field-group workflow-form-grid__full">
-                  <span className="field-group__label">Description</span>
-                  <textarea
-                    className="text-area"
-                    rows={3}
-                    value={roleDraft.description ?? ""}
-                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, description: event.target.value }))}
-                  />
-                </label>
-
-                <label className="field-group workflow-form-grid__full">
-                  <span className="field-group__label">System prompt</span>
-                  <textarea
-                    className="text-area"
-                    rows={8}
-                    value={roleDraft.systemPrompt ?? ""}
-                    onChange={(event) => updateRoleDraft((draft) => ({ ...draft, systemPrompt: event.target.value }))}
-                  />
-                </label>
               </div>
-            </section>
-
-            <AccessEditor
-              actorLabel="role"
-              dataRolePrefix="role"
-              policyIds={roleDraft.policyIds ?? []}
-              directPermissions={roleDraft.directPermissions ?? []}
-              attachedPolicies={attachedPolicies}
-              effectivePermissions={effectiveAccess.permissions}
-              grantsFullAccess={effectiveAccess.grantsFullAccess}
-              onPolicyIdsChange={(policyIds) => updateRoleDraft((draft) => ({ ...draft, policyIds }))}
-              onDirectPermissionsChange={(directPermissions) => updateRoleDraft((draft) => ({ ...draft, directPermissions }))}
-            />
-
-            <p className="muted-copy">Permissions assigned here are inherited by role instances spawned from this role.</p>
-
-            {canReadSkills ? (
-              <section className="workflow-section">
-                <div>
-                  <p className="eyebrow">Managed skills</p>
-                  <h3>Linked skills</h3>
-                </div>
-                {skillLinks?.skills.length ? (
-                  <div className="skills-binding-chip-list">
-                    {skillLinks.skills.map((skill) => (
-                      onOpenSkill ? (
-                        <button className="task-tag-chip task-tag-chip--interactive" data-role={`role-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
-                          <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                        </button>
-                      ) : (
-                        <span className="task-tag-chip" data-role={`role-linked-skill-${skill.skillId}`} key={skill.bindingId}>
-                          <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                        </span>
-                      )
-                    ))}
-                  </div>
-                ) : (
-                  <p className="muted-copy">No skills are directly bound to this role. Edit assignments in Settings → Skills.</p>
-                )}
-              </section>
-            ) : (
-              <section className="workflow-section">
-                <div>
-                  <p className="eyebrow">Managed skills</p>
-                  <h3>Linked skills</h3>
-                </div>
-                <p className="muted-copy">Managed skill links are unavailable with the current permissions.</p>
-              </section>
             )}
+            leadingContent={loadingRoleDetail ? <p className="muted-copy">Loading role…</p> : null}
+            tabs={[
+              {
+                id: "configuration",
+                label: "Configuration",
+                panel: (
+                  <section className="workflow-section">
+                    <div>
+                      <p className="eyebrow">Execution defaults</p>
+                      <h3>Configuration</h3>
+                    </div>
 
-            {validationSummary.length > 0 ? (
-              <section className="workflow-section">
-                <div>
-                  <p className="eyebrow">Validation</p>
-                  <h3>Resolve these issues before saving</h3>
-                </div>
-                <ul className="workflow-validation-list">
-                  {validationSummary.map((entry) => (
-                    <li key={entry}>{entry}</li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
-          </div>
+                    <div className="workflow-form-grid">
+                      <label className="field-group">
+                        <span className="field-group__label">Role name</span>
+                        <input
+                          className="text-input"
+                          data-role="role-name"
+                          type="text"
+                          value={roleDraft.name}
+                          onChange={(event) => updateRoleDraft((draft) => ({ ...draft, name: event.target.value }))}
+                        />
+                        {getRoleValidationForPath(roleValidation, "name").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group">
+                        <span className="field-group__label">Capacity</span>
+                        <input
+                          className="text-input"
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={roleDraft.capacity}
+                          onChange={(event) =>
+                            updateRoleDraft((draft) => ({
+                              ...draft,
+                              capacity: Number.parseInt(event.target.value, 10) || 0,
+                            }))
+                          }
+                        />
+                        {getRoleValidationForPath(roleValidation, "capacity").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group">
+                        <span className="field-group__label">Provider</span>
+                        <select
+                          className="select-input"
+                          value={roleDraft.provider ?? ""}
+                          disabled={loadingModelOptions || piSetupState?.status !== "ready"}
+                          onChange={(event) =>
+                            updateRoleDraft((draft) => ({
+                              ...draft,
+                              provider: event.target.value,
+                              model: draft.provider === event.target.value ? draft.model : "",
+                            }))
+                          }
+                        >
+                          <option value="">{loadingModelOptions ? "Loading providers…" : "Select a provider"}</option>
+                          {providerOptions.map((provider) => (
+                            <option key={provider} value={provider}>
+                              {provider}
+                            </option>
+                          ))}
+                        </select>
+                        {getRoleValidationForPath(roleValidation, "provider").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group">
+                        <span className="field-group__label">Model</span>
+                        <select
+                          className="select-input"
+                          value={roleDraft.model ?? ""}
+                          disabled={loadingModelOptions || piSetupState?.status !== "ready" || !(roleDraft.provider ?? "")}
+                          onChange={(event) => updateRoleDraft((draft) => ({ ...draft, model: event.target.value }))}
+                        >
+                          <option value="">
+                            {loadingModelOptions ? "Loading models…" : roleDraft.provider ? "Select a model" : "Select a provider first"}
+                          </option>
+                          {filteredModelOptions.map((model) => (
+                            <option key={`${model.provider}/${model.id}`} value={model.id}>
+                              {model.name}
+                            </option>
+                          ))}
+                        </select>
+                        {getRoleValidationForPath(roleValidation, "model").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group">
+                        <span className="field-group__label">Thinking</span>
+                        <select
+                          className="select-input"
+                          value={roleDraft.thinkingLevel ?? "off"}
+                          onChange={(event) => updateRoleDraft((draft) => ({ ...draft, thinkingLevel: event.target.value }))}
+                        >
+                          <option value="off">Off</option>
+                          <option value="minimal">Minimal</option>
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                          <option value="xhigh">XHigh</option>
+                        </select>
+                        {getRoleValidationForPath(roleValidation, "thinkingLevel").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group">
+                        <span className="field-group__label">Compaction window override</span>
+                        <input
+                          className="text-input"
+                          data-role="role-compaction-window"
+                          type="text"
+                          placeholder="Inherit global default"
+                          value={roleDraft.compactionWindow ?? ""}
+                          onChange={(event) => updateRoleDraft((draft) => ({ ...draft, compactionWindow: event.target.value }))}
+                        />
+                        <span className="field-group__hint">Optional. Use `10%`, a token reserve like `16000`, `off`, or leave blank to inherit.</span>
+                        {getRoleValidationForPath(roleValidation, "compactionWindow").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <div className="workflow-form-grid__full muted-copy" data-role="role-pi-executable-diagnostic">
+                        Pi runtime: {formatPiRuntimeDiagnostic(piExecutableDiagnostic)}
+                      </div>
+
+                      {piSetupState?.status && piSetupState.status !== "ready" ? (
+                        <div className="workflow-form-grid__full session-readonly-banner">
+                          <div>
+                            <strong>Pi setup required.</strong> {piSetupState.issues[0]?.message ?? piSetupState.warnings[0]?.message ?? "Connect a provider in Settings → Harness before assigning Pi-backed role models."}
+                          </div>
+                          {onOpenPiSettings ? (
+                            <button className="secondary-button" type="button" onClick={onOpenPiSettings}>
+                              Open Settings → Harness
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      <label className="field-group workflow-form-grid__full">
+                        <span className="field-group__label">Description</span>
+                        <textarea
+                          className="text-area"
+                          rows={3}
+                          value={roleDraft.description ?? ""}
+                          onChange={(event) => updateRoleDraft((draft) => ({ ...draft, description: event.target.value }))}
+                        />
+                      </label>
+
+                      <label className="field-group workflow-form-grid__full">
+                        <span className="field-group__label">System prompt</span>
+                        <textarea
+                          className="text-area"
+                          rows={8}
+                          value={roleDraft.systemPrompt ?? ""}
+                          onChange={(event) => updateRoleDraft((draft) => ({ ...draft, systemPrompt: event.target.value }))}
+                        />
+                      </label>
+                    </div>
+                  </section>
+                ),
+              },
+              {
+                id: "access",
+                label: "Access",
+                panel: (
+                  <>
+                    <AccessEditor
+                      actorLabel="role"
+                      dataRolePrefix="role"
+                      policyIds={roleDraft.policyIds ?? []}
+                      directPermissions={roleDraft.directPermissions ?? []}
+                      attachedPolicies={attachedPolicies}
+                      effectivePermissions={effectiveAccess.permissions}
+                      grantsFullAccess={effectiveAccess.grantsFullAccess}
+                      onPolicyIdsChange={(policyIds) => updateRoleDraft((draft) => ({ ...draft, policyIds }))}
+                      onDirectPermissionsChange={(directPermissions) => updateRoleDraft((draft) => ({ ...draft, directPermissions }))}
+                    />
+                    <p className="muted-copy">Permissions assigned here are inherited by role instances spawned from this role.</p>
+                  </>
+                ),
+              },
+              {
+                id: "skills",
+                label: "Skills",
+                panel: canReadSkills ? (
+                  <section className="workflow-section">
+                    <div>
+                      <p className="eyebrow">Managed skills</p>
+                      <h3>Linked skills</h3>
+                    </div>
+                    {skillLinks?.skills.length ? (
+                      <div className="skills-binding-chip-list">
+                        {skillLinks.skills.map((skill) => (
+                          onOpenSkill ? (
+                            <button className="task-tag-chip task-tag-chip--interactive" data-role={`role-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                              <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                            </button>
+                          ) : (
+                            <span className="task-tag-chip" data-role={`role-linked-skill-${skill.skillId}`} key={skill.bindingId}>
+                              <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                            </span>
+                          )
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="muted-copy">No skills are directly bound to this role. Edit assignments in Settings → Skills.</p>
+                    )}
+                  </section>
+                ) : (
+                  <section className="workflow-section">
+                    <div>
+                      <p className="eyebrow">Managed skills</p>
+                      <h3>Linked skills</h3>
+                    </div>
+                    <p className="muted-copy">Managed skill links are unavailable with the current permissions.</p>
+                  </section>
+                ),
+              },
+              {
+                id: "validation",
+                label: "Validation",
+                hidden: validationSummary.length === 0,
+                panel: validationSummary.length > 0 ? (
+                  <section className="workflow-section">
+                    <div>
+                      <p className="eyebrow">Validation</p>
+                      <h3>Resolve these issues before saving</h3>
+                    </div>
+                    <ul className="workflow-validation-list">
+                      {validationSummary.map((entry) => (
+                        <li key={entry}>{entry}</li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null,
+              },
+            ]}
+          />
         ) : (
           <div className="empty-state">
             <p className="eyebrow">No role selected</p>

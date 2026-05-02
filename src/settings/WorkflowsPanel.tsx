@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import { listAgents } from "../lib/agents";
 import { listRoles } from "../lib/roles";
 import { getWorkflowSkillLinks } from "../lib/skills";
@@ -636,479 +637,503 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
 
           {loadingWorkflowDetail ? <p className="muted-copy">Loading workflow…</p> : null}
 
-          <div className="workflow-editor-grid">
-            <section className="workflow-section workflow-section--compact">
-              <div className="workflow-section__header">
-                <div>
-                  <p className="eyebrow">Workflow metadata</p>
-                  <h4>Basics</h4>
-                </div>
-              </div>
-
-              <div className="workflow-form-grid workflow-form-grid--compact">
-                <label className="field-group">
-                  <span className="field-group__label">Workflow name</span>
-                  <input
-                    className="text-input"
-                    type="text"
-                    value={workflowDraft.name}
-                    onChange={(event) => updateWorkflowDraft((draft) => ({ ...draft, name: event.target.value }))}
-                  />
-                  {getWorkflowValidationForPath(workflowValidation, "name").map((error) => (
-
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <label className="field-group workflow-form-grid__full">
-                  <span className="field-group__label">Description</span>
-                  <textarea
-                    className="text-area text-area--compact"
-                    rows={2}
-                    value={workflowDraft.description ?? ""}
-                    onChange={(event) => updateWorkflowDraft((draft) => ({ ...draft, description: event.target.value }))}
-                  />
-                </label>
-              </div>
-            </section>
-
-            {canReadSkills ? (
-              <section className="workflow-section workflow-section--compact">
-                <div>
-                  <p className="eyebrow">Managed skills</p>
-                  <h4>Workflow-linked skills</h4>
-                </div>
-                {skillLinks?.workflowSkills.length ? (
-                  <div className="skills-binding-chip-list">
-                    {skillLinks.workflowSkills.map((skill) => (
-                      onOpenSkill ? (
-                        <button className="task-tag-chip task-tag-chip--interactive" data-role={`workflow-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
-                          <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                        </button>
-                      ) : (
-                        <span className="task-tag-chip" data-role={`workflow-linked-skill-${skill.skillId}`} key={skill.bindingId}>
-                          <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                        </span>
-                      )
-                    ))}
-                  </div>
-                ) : (
-                  <p className="muted-copy">No workflow-scoped skills are linked here. Edit assignments in Settings → Skills.</p>
-                )}
-              </section>
-            ) : (
-              <section className="workflow-section workflow-section--compact">
-                <div>
-                  <p className="eyebrow">Managed skills</p>
-                  <h4>Workflow-linked skills</h4>
-                </div>
-                <p className="muted-copy">Managed skill links are unavailable with the current permissions.</p>
-              </section>
-            )}
-
-            {selectedLane ? (
-              <section className="workflow-section">
-                <div className="workflow-section__header">
-                  <div>
-                    <p className="eyebrow">Selected lane</p>
-                    <h4>{formatLaneLabel(selectedLane, selectedLaneIndex >= 0 ? selectedLaneIndex : 0)}</h4>
-                  </div>
-                  <div className="action-cluster">
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={(selectedLaneIndex < 0 ? 0 : selectedLaneIndex) === 0}
-                      onClick={() =>
-                        updateWorkflowDraft((draft) => {
-                          const index = draft.lanes.findIndex((lane) => lane.id === selectedLane.id);
-                          if (index <= 0) {
-                            return draft;
-                          }
-                          const lanes = [...draft.lanes];
-                          [lanes[index - 1], lanes[index]] = [lanes[index]!, lanes[index - 1]!];
-                          return { ...draft, lanes };
-                        })
-                      }
-                    >
-                      Move left
-                    </button>
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={selectedLaneIndex < 0 || selectedLaneIndex === workflowDraft.lanes.length - 1}
-                      onClick={() =>
-                        updateWorkflowDraft((draft) => {
-                          const index = draft.lanes.findIndex((lane) => lane.id === selectedLane.id);
-                          if (index < 0 || index === draft.lanes.length - 1) {
-                            return draft;
-                          }
-                          const lanes = [...draft.lanes];
-                          [lanes[index], lanes[index + 1]] = [lanes[index + 1]!, lanes[index]!];
-                          return { ...draft, lanes };
-                        })
-                      }
-                    >
-                      Move right
-                    </button>
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={workflowDraft.lanes.length <= 1}
-                      onClick={() =>
-                        updateWorkflowDraft((draft) => {
-                          const lanes = draft.lanes.filter((lane) => lane.id !== selectedLane.id);
-                          return { ...draft, lanes };
-                        })
-                      }
-                    >
-                      Remove lane
-                    </button>
-                  </div>
-                </div>
-
-                {canReadSkills ? (
-                  selectedLaneSkillLinks?.skills.length ? (
-                    <div className="skills-binding-chip-list">
-                      {selectedLaneSkillLinks.skills.map((skill) => (
-                        onOpenSkill ? (
-                          <button className="task-tag-chip task-tag-chip--interactive" data-role={`lane-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
-                            <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                          </button>
-                        ) : (
-                          <span className="task-tag-chip" data-role={`lane-linked-skill-${skill.skillId}`} key={skill.bindingId}>
-                            <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                          </span>
-                        )
-                      ))}
+          <SettingsSectionTabs
+            className="workflow-editor-grid"
+            ariaLabel="Workflow settings sections"
+            dataRolePrefix="workflow-detail"
+            initialTabId="basics"
+            leadingContent={loadingWorkflowDetail ? <p className="muted-copy">Loading workflow…</p> : null}
+            tabs={[
+              {
+                id: "basics",
+                label: "Basics",
+                panel: (
+                  <section className="workflow-section workflow-section--compact">
+                    <div className="workflow-section__header">
+                      <div>
+                        <p className="eyebrow">Workflow metadata</p>
+                        <h4>Basics</h4>
+                      </div>
                     </div>
-                  ) : (
-                    <p className="muted-copy">No lane-scoped skills are linked to this lane. Edit assignments in Settings → Skills.</p>
-                  )
+
+                    <div className="workflow-form-grid workflow-form-grid--compact">
+                      <label className="field-group">
+                        <span className="field-group__label">Workflow name</span>
+                        <input
+                          className="text-input"
+                          type="text"
+                          value={workflowDraft.name}
+                          onChange={(event) => updateWorkflowDraft((draft) => ({ ...draft, name: event.target.value }))}
+                        />
+                        {getWorkflowValidationForPath(workflowValidation, "name").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group workflow-form-grid__full">
+                        <span className="field-group__label">Description</span>
+                        <textarea
+                          className="text-area text-area--compact"
+                          rows={2}
+                          value={workflowDraft.description ?? ""}
+                          onChange={(event) => updateWorkflowDraft((draft) => ({ ...draft, description: event.target.value }))}
+                        />
+                      </label>
+                    </div>
+                  </section>
+                ),
+              },
+              {
+                id: "skills",
+                label: "Skills",
+                panel: canReadSkills ? (
+                  <section className="workflow-section workflow-section--compact">
+                    <div>
+                      <p className="eyebrow">Managed skills</p>
+                      <h4>Workflow-linked skills</h4>
+                    </div>
+                    {skillLinks?.workflowSkills.length ? (
+                      <div className="skills-binding-chip-list">
+                        {skillLinks.workflowSkills.map((skill) => (
+                          onOpenSkill ? (
+                            <button className="task-tag-chip task-tag-chip--interactive" data-role={`workflow-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                              <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                            </button>
+                          ) : (
+                            <span className="task-tag-chip" data-role={`workflow-linked-skill-${skill.skillId}`} key={skill.bindingId}>
+                              <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                            </span>
+                          )
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="muted-copy">No workflow-scoped skills are linked here. Edit assignments in Settings → Skills.</p>
+                    )}
+                  </section>
                 ) : (
-                  <p className="muted-copy">Managed skill links are unavailable with the current permissions.</p>
-                )}
+                  <section className="workflow-section workflow-section--compact">
+                    <div>
+                      <p className="eyebrow">Managed skills</p>
+                      <h4>Workflow-linked skills</h4>
+                    </div>
+                    <p className="muted-copy">Managed skill links are unavailable with the current permissions.</p>
+                  </section>
+                ),
+              },
+              {
+                id: "lane",
+                label: "Lane",
+                hidden: !selectedLane,
+                panel: selectedLane ? (
+                  <section className="workflow-section">
+                    <div className="workflow-section__header">
+                      <div>
+                        <p className="eyebrow">Selected lane</p>
+                        <h4>{formatLaneLabel(selectedLane, selectedLaneIndex >= 0 ? selectedLaneIndex : 0)}</h4>
+                      </div>
+                      <div className="action-cluster">
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={(selectedLaneIndex < 0 ? 0 : selectedLaneIndex) === 0}
+                          onClick={() =>
+                            updateWorkflowDraft((draft) => {
+                              const index = draft.lanes.findIndex((lane) => lane.id === selectedLane.id);
+                              if (index <= 0) {
+                                return draft;
+                              }
+                              const lanes = [...draft.lanes];
+                              [lanes[index - 1], lanes[index]] = [lanes[index]!, lanes[index - 1]!];
+                              return { ...draft, lanes };
+                            })
+                          }
+                        >
+                          Move left
+                        </button>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={selectedLaneIndex < 0 || selectedLaneIndex === workflowDraft.lanes.length - 1}
+                          onClick={() =>
+                            updateWorkflowDraft((draft) => {
+                              const index = draft.lanes.findIndex((lane) => lane.id === selectedLane.id);
+                              if (index < 0 || index === draft.lanes.length - 1) {
+                                return draft;
+                              }
+                              const lanes = [...draft.lanes];
+                              [lanes[index], lanes[index + 1]] = [lanes[index + 1]!, lanes[index]!];
+                              return { ...draft, lanes };
+                            })
+                          }
+                        >
+                          Move right
+                        </button>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={workflowDraft.lanes.length <= 1}
+                          onClick={() =>
+                            updateWorkflowDraft((draft) => {
+                              const lanes = draft.lanes.filter((lane) => lane.id !== selectedLane.id);
+                              return { ...draft, lanes };
+                            })
+                          }
+                        >
+                          Remove lane
+                        </button>
+                      </div>
+                    </div>
 
-                <div className="workflow-form-grid">
-                  <label className="field-group">
-                    <span className="field-group__label">Lane name</span>
-                    <input
-                      className="text-input"
-                      type="text"
-                      value={selectedLane.name}
-                      onChange={(event) =>
-                        updateWorkflowDraft((draft) => ({
-                          ...draft,
-                          lanes: draft.lanes.map((entry) =>
-                            entry.id === selectedLane.id ? { ...entry, name: event.target.value } : entry,
-                          ),
-                        }))
-                      }
-                    />
-                    {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].name`).map((error) => (
-                      <span className="field-error" key={error.message}>{error.message}</span>
-                    ))}
-                  </label>
-
-                  <label className="field-group">
-                    <span className="field-group__label">Lane key</span>
-                    <input
-                      className="text-input"
-                      type="text"
-                      value={selectedLane.key}
-                      onChange={(event) =>
-                        updateWorkflowDraft((draft) => ({
-                          ...draft,
-                          lanes: draft.lanes.map((entry) =>
-                            entry.id === selectedLane.id ? { ...entry, key: event.target.value } : entry,
-                          ),
-                        }))
-                      }
-                    />
-                    {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].key`).map((error) => (
-                      <span className="field-error" key={error.message}>{error.message}</span>
-                    ))}
-                  </label>
-
-                  <label className="field-group">
-                    <span className="field-group__label">Owner type</span>
-                    <select
-                      className="select-input"
-                      data-role="lane-owner-type"
-                      value={selectedLane.assignedEntityType}
-                      onChange={(event) =>
-                        updateWorkflowDraft((draft) => ({
-                          ...draft,
-                          lanes: draft.lanes.map((entry) => {
-                            if (entry.id !== selectedLane.id) {
-                              return entry;
-                            }
-
-                            if (event.target.value === "user") {
-                              return {
-                                ...entry,
-                                assignedEntityType: "user",
-                                assignedEntityId: "",
-                                useSeparateWorktree: false,
-                                requireUserApprovalOnSuccess: false,
-                              };
-                            }
-
-                            if (event.target.value === "agent") {
-                              return {
-                                ...entry,
-                                assignedEntityType: "agent",
-                                assignedEntityId: entry.assignedEntityType === "agent" ? entry.assignedEntityId : (agentOptions[0]?.value ?? ""),
-                              };
-                            }
-
-                            return {
-                              ...entry,
-                              assignedEntityType: "role",
-                              assignedEntityId: entry.assignedEntityType === "role" ? entry.assignedEntityId : (roleOptions[0]?.value ?? ""),
-                            };
-                          }),
-                        }))
-                      }
-                    >
-                      <option value="user">User</option>
-                      <option value="agent">Agent</option>
-                      <option value="role">Role</option>
-                    </select>
-                    {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].assignedEntityType`).map((error) => (
-                      <span className="field-error" key={error.message}>{error.message}</span>
-                    ))}
-                  </label>
-
-                  <label className="field-group">
-                    <span className="field-group__label">Owner reference</span>
-                    {selectedLane.assignedEntityType === "user" ? (
-                      <input className="text-input" type="text" placeholder="Not used for user lanes" value="" disabled />
-                    ) : selectedLane.assignedEntityType === "agent" ? (
-                      <select
-                        className="select-input"
-                        data-role="lane-owner-reference"
-                        value={selectedLane.assignedEntityId ?? ""}
-                        onChange={(event) =>
-                          updateWorkflowDraft((draft) => ({
-                            ...draft,
-                            lanes: draft.lanes.map((entry) =>
-                              entry.id === selectedLane.id ? { ...entry, assignedEntityId: event.target.value } : entry,
-                            ),
-                          }))
-                        }
-                      >
-                        <option value="">{agentOptions.length === 0 ? "No active agents available" : "Select an agent"}</option>
-                        {agentOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                        {selectedLane.assignedEntityId && !agentOptions.some((option) => option.value === selectedLane.assignedEntityId) ? (
-                          <option value={selectedLane.assignedEntityId}>Missing agent: {selectedLane.assignedEntityId}</option>
-                        ) : null}
-                      </select>
+                    {canReadSkills ? (
+                      selectedLaneSkillLinks?.skills.length ? (
+                        <div className="skills-binding-chip-list">
+                          {selectedLaneSkillLinks.skills.map((skill) => (
+                            onOpenSkill ? (
+                              <button className="task-tag-chip task-tag-chip--interactive" data-role={`lane-linked-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                                <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                              </button>
+                            ) : (
+                              <span className="task-tag-chip" data-role={`lane-linked-skill-${skill.skillId}`} key={skill.bindingId}>
+                                <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                              </span>
+                            )
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="muted-copy">No lane-scoped skills are linked to this lane. Edit assignments in Settings → Skills.</p>
+                      )
                     ) : (
-                      <select
-                        className="select-input"
-                        data-role="lane-owner-reference"
-                        value={selectedLane.assignedEntityId ?? ""}
-                        onChange={(event) =>
-                          updateWorkflowDraft((draft) => ({
-                            ...draft,
-                            lanes: draft.lanes.map((entry) =>
-                              entry.id === selectedLane.id ? { ...entry, assignedEntityId: event.target.value } : entry,
-                            ),
-                          }))
-                        }
-                      >
-                        <option value="">{roleOptions.length === 0 ? "No active roles available" : "Select a role"}</option>
-                        {roleOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
+                      <p className="muted-copy">Managed skill links are unavailable with the current permissions.</p>
+                    )}
+
+                    <div className="workflow-form-grid">
+                      <label className="field-group">
+                        <span className="field-group__label">Lane name</span>
+                        <input
+                          className="text-input"
+                          type="text"
+                          value={selectedLane.name}
+                          onChange={(event) =>
+                            updateWorkflowDraft((draft) => ({
+                              ...draft,
+                              lanes: draft.lanes.map((entry) =>
+                                entry.id === selectedLane.id ? { ...entry, name: event.target.value } : entry,
+                              ),
+                            }))
+                          }
+                        />
+                        {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].name`).map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
                         ))}
-                        {selectedLane.assignedEntityId && !roleOptions.some((option) => option.value === selectedLane.assignedEntityId) ? (
-                          <option value={selectedLane.assignedEntityId}>Missing role: {selectedLane.assignedEntityId}</option>
-                        ) : null}
-                      </select>
-                    )}
-                    {selectedLane.assignedEntityType === "role" && roleOptions.length === 0 ? (
-                      <span className="muted-copy">Create a role in Settings → Roles before assigning this lane.</span>
-                    ) : null}
-                    {selectedLane.assignedEntityType === "agent" && agentOptions.length === 0 ? (
-                      <span className="muted-copy">No active agents are available to own this lane yet.</span>
-                    ) : null}
-                    {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].assignedEntityId`).map((error) => (
-                      <span className="field-error" key={error.message}>{error.message}</span>
-                    ))}
-                  </label>
+                      </label>
 
-                  <label className="field-group workflow-form-grid__full">
-                    <span className="field-group__label">Entry prompt template</span>
-                    <textarea
-                      className="text-area"
-                      rows={3}
-                      value={selectedLane.entryPromptTemplate ?? ""}
-                      onChange={(event) =>
-                        updateWorkflowDraft((draft) => ({
-                          ...draft,
-                          lanes: draft.lanes.map((entry) =>
-                            entry.id === selectedLane.id ? { ...entry, entryPromptTemplate: event.target.value } : entry,
-                          ),
-                        }))
-                      }
-                    />
-                  </label>
+                      <label className="field-group">
+                        <span className="field-group__label">Lane key</span>
+                        <input
+                          className="text-input"
+                          type="text"
+                          value={selectedLane.key}
+                          onChange={(event) =>
+                            updateWorkflowDraft((draft) => ({
+                              ...draft,
+                              lanes: draft.lanes.map((entry) =>
+                                entry.id === selectedLane.id ? { ...entry, key: event.target.value } : entry,
+                              ),
+                            }))
+                          }
+                        />
+                        {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].key`).map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
 
-                  <div className="field-group workflow-form-grid__full">
-                    <span className="field-group__label">Workspace</span>
-                    <label className="checkbox-row">
-                      <input
-                        data-role="lane-use-separate-worktree"
-                        type="checkbox"
-                        checked={selectedLane.useSeparateWorktree ?? false}
-                        disabled={selectedLane.assignedEntityType === "user"}
-                        onChange={(event) =>
-                          updateWorkflowDraft((draft) => ({
-                            ...draft,
-                            lanes: draft.lanes.map((entry) =>
-                              entry.id === selectedLane.id
-                                ? { ...entry, useSeparateWorktree: event.target.checked }
-                                : entry,
-                            ),
-                          }))
-                        }
-                      />
-                      <span>Use a separate worker-specific worktree instead of the shared task worktree.</span>
-                    </label>
-                    {selectedLane.assignedEntityType === "user" ? (
-                      <span className="muted-copy">User-owned lanes always operate without a dedicated worker worktree.</span>
-                    ) : (
-                      <span className="muted-copy">When off, agent and role lanes share the task worktree by default.</span>
-                    )}
-                  </div>
-
-                  <div className="field-group workflow-form-grid__full">
-                    <span className="field-group__label">Success review</span>
-                    <label className="checkbox-row">
-                      <input
-                        data-role="lane-success-review-required"
-                        type="checkbox"
-                        checked={selectedLane.requireUserApprovalOnSuccess ?? false}
-                        disabled={selectedLane.assignedEntityType === "user"}
-                        onChange={(event) =>
-                          updateWorkflowDraft((draft) => ({
-                            ...draft,
-                            lanes: draft.lanes.map((entry) =>
-                              entry.id === selectedLane.id
-                                ? { ...entry, requireUserApprovalOnSuccess: event.target.checked }
-                                : entry,
-                            ),
-                          }))
-                        }
-                      />
-                      <span>Require user approval after success before the workflow continues.</span>
-                    </label>
-                    {selectedLane.assignedEntityType === "user" ? (
-                      <span className="muted-copy">User-owned lanes do not support an extra approval gate.</span>
-                    ) : null}
-                    {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].requireUserApprovalOnSuccess`).map((error) => (
-                      <span className="field-error" key={error.message}>{error.message}</span>
-                    ))}
-                  </div>
-
-                  <div className="workflow-flow-note workflow-form-grid__full">
-                    <p className="eyebrow">On success</p>
-                    <strong>
-                      {selectedLaneIndex >= 0 && workflowDraft.lanes[selectedLaneIndex + 1]
-                        ? `Automatically continues to ${formatLaneLabel(workflowDraft.lanes[selectedLaneIndex + 1]!, selectedLaneIndex + 1)}`
-                        : "Ends the workflow"}
-                    </strong>
-                    <p className="muted-copy">
-                      The frontend keeps success aligned to the next lane in board order. Reorder the board to change the success path.
-                    </p>
-                  </div>
-
-                  <label className="field-group">
-                    <span className="field-group__label">On failure</span>
-                    <select
-                      className="select-input"
-                      value={selectedLane.failureTransitionType}
-                      onChange={(event) =>
-                        updateWorkflowDraft((draft) => ({
-                          ...draft,
-                          lanes: draft.lanes.map((entry) =>
-                            entry.id === selectedLane.id
-                              ? {
-                                  ...entry,
-                                  failureTransitionType: event.target.value,
-                                  failureTargetLaneId: event.target.value === "lane" ? entry.failureTargetLaneId : "",
+                      <label className="field-group">
+                        <span className="field-group__label">Owner type</span>
+                        <select
+                          className="select-input"
+                          data-role="lane-owner-type"
+                          value={selectedLane.assignedEntityType}
+                          onChange={(event) =>
+                            updateWorkflowDraft((draft) => ({
+                              ...draft,
+                              lanes: draft.lanes.map((entry) => {
+                                if (entry.id !== selectedLane.id) {
+                                  return entry;
                                 }
-                              : entry,
-                          ),
-                        }))
-                      }
-                    >
-                      <option value="end">End workflow</option>
-                      <option value="lane">Go to lane</option>
-                      <option value="user_intervention">Require user intervention</option>
-                    </select>
-                    {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].failureTransitionType`).map((error) => (
-                      <span className="field-error" key={error.message}>{error.message}</span>
-                    ))}
-                  </label>
 
-                  <label className="field-group">
-                    <span className="field-group__label">Failure target lane</span>
-                    <select
-                      className="select-input"
-                      value={selectedLane.failureTargetLaneId ?? ""}
-                      disabled={selectedLane.failureTransitionType !== "lane"}
-                      onChange={(event) =>
-                        updateWorkflowDraft((draft) => ({
-                          ...draft,
-                          lanes: draft.lanes.map((entry) =>
-                            entry.id === selectedLane.id ? { ...entry, failureTargetLaneId: event.target.value } : entry,
-                          ),
-                        }))
-                      }
-                    >
-                      <option value="">Choose lane</option>
-                      {laneIdOptions
-                        .filter((option) => option.id !== selectedLane.id)
-                        .map((option) => (
-                          <option key={option.id} value={option.id}>
-                            {option.label}
-                          </option>
+                                if (event.target.value === "user") {
+                                  return {
+                                    ...entry,
+                                    assignedEntityType: "user",
+                                    assignedEntityId: "",
+                                    useSeparateWorktree: false,
+                                    requireUserApprovalOnSuccess: false,
+                                  };
+                                }
+
+                                if (event.target.value === "agent") {
+                                  return {
+                                    ...entry,
+                                    assignedEntityType: "agent",
+                                    assignedEntityId: entry.assignedEntityType === "agent" ? entry.assignedEntityId : (agentOptions[0]?.value ?? ""),
+                                  };
+                                }
+
+                                return {
+                                  ...entry,
+                                  assignedEntityType: "role",
+                                  assignedEntityId: entry.assignedEntityType === "role" ? entry.assignedEntityId : (roleOptions[0]?.value ?? ""),
+                                };
+                              }),
+                            }))
+                          }
+                        >
+                          <option value="user">User</option>
+                          <option value="agent">Agent</option>
+                          <option value="role">Role</option>
+                        </select>
+                        {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].assignedEntityType`).map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
                         ))}
-                    </select>
-                    {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].failureTargetLaneId`).map((error) => (
-                      <span className="field-error" key={error.message}>{error.message}</span>
-                    ))}
-                  </label>
-                </div>
-              </section>
-            ) : null}
+                      </label>
 
-            <section className="workflow-section">
-              <div className="workflow-section__header">
-                <div>
-                  <p className="eyebrow">Validation</p>
-                  <h4>Save readiness</h4>
-                </div>
-              </div>
+                      <label className="field-group">
+                        <span className="field-group__label">Owner reference</span>
+                        {selectedLane.assignedEntityType === "user" ? (
+                          <input className="text-input" type="text" placeholder="Not used for user lanes" value="" disabled />
+                        ) : selectedLane.assignedEntityType === "agent" ? (
+                          <select
+                            className="select-input"
+                            data-role="lane-owner-reference"
+                            value={selectedLane.assignedEntityId ?? ""}
+                            onChange={(event) =>
+                              updateWorkflowDraft((draft) => ({
+                                ...draft,
+                                lanes: draft.lanes.map((entry) =>
+                                  entry.id === selectedLane.id ? { ...entry, assignedEntityId: event.target.value } : entry,
+                                ),
+                              }))
+                            }
+                          >
+                            <option value="">{agentOptions.length === 0 ? "No active agents available" : "Select an agent"}</option>
+                            {agentOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                            {selectedLane.assignedEntityId && !agentOptions.some((option) => option.value === selectedLane.assignedEntityId) ? (
+                              <option value={selectedLane.assignedEntityId}>Missing agent: {selectedLane.assignedEntityId}</option>
+                            ) : null}
+                          </select>
+                        ) : (
+                          <select
+                            className="select-input"
+                            data-role="lane-owner-reference"
+                            value={selectedLane.assignedEntityId ?? ""}
+                            onChange={(event) =>
+                              updateWorkflowDraft((draft) => ({
+                                ...draft,
+                                lanes: draft.lanes.map((entry) =>
+                                  entry.id === selectedLane.id ? { ...entry, assignedEntityId: event.target.value } : entry,
+                                ),
+                              }))
+                            }
+                          >
+                            <option value="">{roleOptions.length === 0 ? "No active roles available" : "Select a role"}</option>
+                            {roleOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                            {selectedLane.assignedEntityId && !roleOptions.some((option) => option.value === selectedLane.assignedEntityId) ? (
+                              <option value={selectedLane.assignedEntityId}>Missing role: {selectedLane.assignedEntityId}</option>
+                            ) : null}
+                          </select>
+                        )}
+                        {selectedLane.assignedEntityType === "role" && roleOptions.length === 0 ? (
+                          <span className="muted-copy">Create a role in Settings → Roles before assigning this lane.</span>
+                        ) : null}
+                        {selectedLane.assignedEntityType === "agent" && agentOptions.length === 0 ? (
+                          <span className="muted-copy">No active agents are available to own this lane yet.</span>
+                        ) : null}
+                        {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].assignedEntityId`).map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
 
-              {validationSummary.length ? (
-                <ul className="workflow-validation-list">
-                  {validationSummary.map((message) => (
-                    <li key={message}>{message}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="muted-copy">No validation issues right now.</p>
-              )}
-            </section>
-          </div>
+                      <label className="field-group workflow-form-grid__full">
+                        <span className="field-group__label">Entry prompt template</span>
+                        <textarea
+                          className="text-area"
+                          rows={3}
+                          value={selectedLane.entryPromptTemplate ?? ""}
+                          onChange={(event) =>
+                            updateWorkflowDraft((draft) => ({
+                              ...draft,
+                              lanes: draft.lanes.map((entry) =>
+                                entry.id === selectedLane.id ? { ...entry, entryPromptTemplate: event.target.value } : entry,
+                              ),
+                            }))
+                          }
+                        />
+                      </label>
+
+                      <div className="field-group workflow-form-grid__full">
+                        <span className="field-group__label">Workspace</span>
+                        <label className="checkbox-row">
+                          <input
+                            data-role="lane-use-separate-worktree"
+                            type="checkbox"
+                            checked={selectedLane.useSeparateWorktree ?? false}
+                            disabled={selectedLane.assignedEntityType === "user"}
+                            onChange={(event) =>
+                              updateWorkflowDraft((draft) => ({
+                                ...draft,
+                                lanes: draft.lanes.map((entry) =>
+                                  entry.id === selectedLane.id
+                                    ? { ...entry, useSeparateWorktree: event.target.checked }
+                                    : entry,
+                                ),
+                              }))
+                            }
+                          />
+                          <span>Use a separate worker-specific worktree instead of the shared task worktree.</span>
+                        </label>
+                        {selectedLane.assignedEntityType === "user" ? (
+                          <span className="muted-copy">User-owned lanes always operate without a dedicated worker worktree.</span>
+                        ) : (
+                          <span className="muted-copy">When off, agent and role lanes share the task worktree by default.</span>
+                        )}
+                      </div>
+
+                      <div className="field-group workflow-form-grid__full">
+                        <span className="field-group__label">Success review</span>
+                        <label className="checkbox-row">
+                          <input
+                            data-role="lane-success-review-required"
+                            type="checkbox"
+                            checked={selectedLane.requireUserApprovalOnSuccess ?? false}
+                            disabled={selectedLane.assignedEntityType === "user"}
+                            onChange={(event) =>
+                              updateWorkflowDraft((draft) => ({
+                                ...draft,
+                                lanes: draft.lanes.map((entry) =>
+                                  entry.id === selectedLane.id
+                                    ? { ...entry, requireUserApprovalOnSuccess: event.target.checked }
+                                    : entry,
+                                ),
+                              }))
+                            }
+                          />
+                          <span>Require user approval after success before the workflow continues.</span>
+                        </label>
+                        {selectedLane.assignedEntityType === "user" ? (
+                          <span className="muted-copy">User-owned lanes do not support an extra approval gate.</span>
+                        ) : null}
+                        {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].requireUserApprovalOnSuccess`).map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </div>
+
+                      <div className="workflow-flow-note workflow-form-grid__full">
+                        <p className="eyebrow">On success</p>
+                        <strong>
+                          {selectedLaneIndex >= 0 && workflowDraft.lanes[selectedLaneIndex + 1]
+                            ? `Automatically continues to ${formatLaneLabel(workflowDraft.lanes[selectedLaneIndex + 1]!, selectedLaneIndex + 1)}`
+                            : "Ends the workflow"}
+                        </strong>
+                        <p className="muted-copy">
+                          The frontend keeps success aligned to the next lane in board order. Reorder the board to change the success path.
+                        </p>
+                      </div>
+
+                      <label className="field-group">
+                        <span className="field-group__label">On failure</span>
+                        <select
+                          className="select-input"
+                          value={selectedLane.failureTransitionType}
+                          onChange={(event) =>
+                            updateWorkflowDraft((draft) => ({
+                              ...draft,
+                              lanes: draft.lanes.map((entry) =>
+                                entry.id === selectedLane.id
+                                  ? {
+                                      ...entry,
+                                      failureTransitionType: event.target.value,
+                                      failureTargetLaneId: event.target.value === "lane" ? entry.failureTargetLaneId : "",
+                                    }
+                                  : entry,
+                              ),
+                            }))
+                          }
+                        >
+                          <option value="end">End workflow</option>
+                          <option value="lane">Go to lane</option>
+                          <option value="user_intervention">Require user intervention</option>
+                        </select>
+                        {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].failureTransitionType`).map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group">
+                        <span className="field-group__label">Failure target lane</span>
+                        <select
+                          className="select-input"
+                          value={selectedLane.failureTargetLaneId ?? ""}
+                          disabled={selectedLane.failureTransitionType !== "lane"}
+                          onChange={(event) =>
+                            updateWorkflowDraft((draft) => ({
+                              ...draft,
+                              lanes: draft.lanes.map((entry) =>
+                                entry.id === selectedLane.id ? { ...entry, failureTargetLaneId: event.target.value } : entry,
+                              ),
+                            }))
+                          }
+                        >
+                          <option value="">Choose lane</option>
+                          {laneIdOptions
+                            .filter((option) => option.id !== selectedLane.id)
+                            .map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                        </select>
+                        {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].failureTargetLaneId`).map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+                    </div>
+                  </section>
+                ) : null,
+              },
+              {
+                id: "validation",
+                label: "Validation",
+                panel: (
+                  <section className="workflow-section">
+                    <div className="workflow-section__header">
+                      <div>
+                        <p className="eyebrow">Validation</p>
+                        <h4>Save readiness</h4>
+                      </div>
+                    </div>
+
+                    {validationSummary.length ? (
+                      <ul className="workflow-validation-list">
+                        {validationSummary.map((message) => (
+                          <li key={message}>{message}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="muted-copy">No validation issues right now.</p>
+                    )}
+                  </section>
+                ),
+              },
+            ]}
+          />
         </>
         )}
       />

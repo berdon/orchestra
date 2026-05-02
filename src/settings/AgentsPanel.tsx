@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AccessEditor } from "../components/access/AccessEditor";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import type { InheritedAccessSummary } from "../components/access/AccessSummary";
 import { buildEffectivePermissions, getPolicyLabel } from "../lib/access";
 import {
@@ -542,349 +543,384 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
       detail={(
       <>
         {selectedAgentSummary || isCreatingAgent ? (
-          <div className="workflow-editor-grid">
-            <div className="panel__header panel__header--stacked">
-              <div>
-                <p className="eyebrow">Agent definition</p>
-                <h3>{isCreatingAgent ? "Create agent" : agentDraft.name.trim() || "Untitled agent"}</h3>
-              </div>
-              <div className="action-cluster">
-                {agentMemoryInfo ? <span className="status-badge status-badge--accent">{agentMemoryInfo.slug}</span> : null}
-                {loadedAgentProtected ? <span className="status-badge status-badge--warning" data-role="agent-protected-badge">Protected</span> : null}
-                <span className="status-badge status-badge--neutral" data-role="agent-scope-badge">{loadedAgentProtected && !isCreatingAgent ? "Global" : agentDraft.scope === "project" ? "Project specific" : "Global"}</span>
-                {loadedAgentArchived ? <span className="status-badge status-badge--neutral">Archived</span> : null}
-                {!isCreatingAgent && loadedAgentId && !loadedAgentProtected ? (
-                  <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleArchiveAgent()} disabled={savingAgent || loadedAgentArchived}>
-                    Archive agent
-                  </button>
-                ) : null}
-                <button className="primary-button" data-role="save-agent" type="button" onClick={() => void handleSaveAgent()} disabled={savingAgent || loadingAgentDetail}>
-                  {savingAgent ? "Saving…" : isCreatingAgent ? "Create agent" : "Save changes"}
-                </button>
-              </div>
-            </div>
-
-            {loadingAgentDetail ? <p className="muted-copy">Loading agent…</p> : null}
-
-            <section className="workflow-section">
-              <div>
-                <p className="eyebrow">Execution defaults</p>
-                <h3>Configuration</h3>
-              </div>
-
-              <div className="workflow-form-grid">
-                <label className="field-group">
-                  <span className="field-group__label">Scope</span>
-                  <select
-                    className="select-input"
-                    data-role="agent-scope"
-                    value={loadedAgentProtected && !isCreatingAgent ? "global" : agentDraft.scope ?? "global"}
-                    disabled={loadedAgentProtected && !isCreatingAgent}
-                    onChange={(event) =>
-                      updateAgentDraft((draft) => ({
-                        ...draft,
-                        scope: event.target.value === "project" ? "project" : "global",
-                        projectId: event.target.value === "project" ? activeProjectId ?? draft.projectId ?? null : null,
-                      }))
-                    }
-                  >
-                    <option value="global">Global</option>
-                    <option value="project" disabled={!activeProjectId}>Project specific</option>
-                  </select>
-                  {getAgentValidationForPath(agentValidation, "scope").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <label className="field-group">
-                  <span className="field-group__label">Owning project</span>
-                  <input
-                    className="text-input"
-                    data-role="agent-project-scope"
-                    type="text"
-                    value={agentDraft.scope === "project" ? activeProjectId ?? agentDraft.projectId ?? "" : "All projects"}
-                    disabled
-                  />
-                  {getAgentValidationForPath(agentValidation, "projectId").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <label className="field-group">
-                  <span className="field-group__label">Agent name</span>
-                  <input
-                    className="text-input"
-                    data-role="agent-name"
-                    type="text"
-                    value={agentDraft.name}
-                    disabled={loadedAgentProtected && !isCreatingAgent}
-                    onChange={(event) => updateAgentDraft((draft) => ({ ...draft, name: event.target.value }))}
-                  />
-                  {getAgentValidationForPath(agentValidation, "name").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <label className="field-group">
-                  <span className="field-group__label">Provider</span>
-                  <select
-                    className="select-input"
-                    data-role="agent-provider"
-                    value={agentDraft.provider ?? ""}
-                    disabled={loadingModelOptions || piSetupState?.status !== "ready"}
-                    onChange={(event) =>
-                      updateAgentDraft((draft) => ({
-                        ...draft,
-                        provider: event.target.value,
-                        model: draft.provider === event.target.value ? draft.model : "",
-                      }))
-                    }
-                  >
-                    <option value="">{loadingModelOptions ? "Loading providers…" : "Select a provider"}</option>
-                    {providerOptions.map((provider) => (
-                      <option key={provider} value={provider}>
-                        {provider}
-                      </option>
-                    ))}
-                  </select>
-                  {getAgentValidationForPath(agentValidation, "provider").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <label className="field-group">
-                  <span className="field-group__label">Model</span>
-                  <select
-                    className="select-input"
-                    data-role="agent-model"
-                    value={agentDraft.model ?? ""}
-                    disabled={loadingModelOptions || piSetupState?.status !== "ready" || !(agentDraft.provider ?? "")}
-                    onChange={(event) => updateAgentDraft((draft) => ({ ...draft, model: event.target.value }))}
-                  >
-                    <option value="">
-                      {loadingModelOptions ? "Loading models…" : agentDraft.provider ? "Select a model" : "Select a provider first"}
-                    </option>
-                    {filteredModelOptions.map((model) => (
-                      <option key={`${model.provider}/${model.id}`} value={model.id}>
-                        {model.name}
-                      </option>
-                    ))}
-                  </select>
-                  {getAgentValidationForPath(agentValidation, "model").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <label className="field-group">
-                  <span className="field-group__label">Thinking</span>
-                  <select
-                    className="select-input"
-                    data-role="agent-thinking"
-                    value={agentDraft.thinkingLevel ?? "off"}
-                    onChange={(event) => updateAgentDraft((draft) => ({ ...draft, thinkingLevel: event.target.value }))}
-                  >
-                    <option value="off">Off</option>
-                    <option value="minimal">Minimal</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="xhigh">XHigh</option>
-                  </select>
-                  {getAgentValidationForPath(agentValidation, "thinkingLevel").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <label className="field-group">
-                  <span className="field-group__label">Compaction window override</span>
-                  <input
-                    className="text-input"
-                    data-role="agent-compaction-window"
-                    type="text"
-                    placeholder="Inherit global/role default"
-                    value={agentDraft.compactionWindow ?? ""}
-                    onChange={(event) => updateAgentDraft((draft) => ({ ...draft, compactionWindow: event.target.value }))}
-                  />
-                  <span className="field-group__hint">Optional. Use `10%`, a token reserve like `16000`, `off`, or leave blank to inherit.</span>
-                  {getAgentValidationForPath(agentValidation, "compactionWindow").map((error) => (
-                    <span className="field-error" key={error.message}>{error.message}</span>
-                  ))}
-                </label>
-
-                <div className="workflow-form-grid__full muted-copy" data-role="agent-pi-executable-diagnostic">
-                  Pi runtime: {formatPiRuntimeDiagnostic(piExecutableDiagnostic)}
-                </div>
-
-                {piSetupState?.status && piSetupState.status !== "ready" ? (
-                  <div className="workflow-form-grid__full session-readonly-banner">
-                    <div>
-                      <strong>Pi setup required.</strong> {piSetupState.issues[0]?.message ?? piSetupState.warnings[0]?.message ?? "Connect a provider in Settings → Harness before assigning Pi-backed agent models."}
-                    </div>
-                    {onOpenPiSettings ? (
-                      <button className="secondary-button" type="button" onClick={onOpenPiSettings}>
-                        Open Settings → Harness
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                <label className="field-group workflow-form-grid__full">
-                  <span className="field-group__label">Description</span>
-                  <textarea
-                    className="text-area"
-                    rows={3}
-                    value={agentDraft.description ?? ""}
-                    onChange={(event) => updateAgentDraft((draft) => ({ ...draft, description: event.target.value }))}
-                  />
-                </label>
-
-                <label className="field-group workflow-form-grid__full">
-                  <span className="field-group__label">System prompt</span>
-                  <textarea
-                    className="text-area"
-                    rows={8}
-                    value={agentDraft.systemPrompt ?? ""}
-                    disabled={loadedAgentProtected && !isCreatingAgent}
-                    onChange={(event) => updateAgentDraft((draft) => ({ ...draft, systemPrompt: event.target.value }))}
-                  />
-                </label>
-              </div>
-            </section>
-
-            <AccessEditor
-              actorLabel="agent"
-              dataRolePrefix="agent"
-              policyIds={agentDraft.policyIds ?? []}
-              directPermissions={agentDraft.directPermissions ?? []}
-              attachedPolicies={attachedPolicies}
-              effectivePermissions={effectiveAccess.permissions}
-              grantsFullAccess={effectiveAccess.grantsFullAccess}
-              inheritedAccess={inheritedAccess}
-              locked={loadedAgentProtected && !isCreatingAgent}
-              onPolicyIdsChange={(policyIds) => updateAgentDraft((draft) => ({ ...draft, policyIds }))}
-              onDirectPermissionsChange={(directPermissions) => updateAgentDraft((draft) => ({ ...draft, directPermissions }))}
-            />
-
-            {canReadSkills ? (
-              <section className="workflow-section">
+          <SettingsSectionTabs
+            className="workflow-editor-grid"
+            ariaLabel="Agent settings sections"
+            dataRolePrefix="agent-detail"
+            initialTabId="configuration"
+            header={(
+              <div className="panel__header panel__header--stacked">
                 <div>
-                  <p className="eyebrow">Managed skills</p>
-                  <h3>Linked skills</h3>
+                  <p className="eyebrow">Agent definition</p>
+                  <h3>{isCreatingAgent ? "Create agent" : agentDraft.name.trim() || "Untitled agent"}</h3>
                 </div>
-                <div className="skills-linked-surface-grid">
-                  <div>
-                    <strong>Direct</strong>
-                    {skillLinks?.directSkills.length ? (
-                      <div className="skills-binding-chip-list">
-                        {skillLinks.directSkills.map((skill) => (
-                          onOpenSkill ? (
-                            <button className="task-tag-chip task-tag-chip--interactive" data-role={`agent-direct-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
-                              <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                            </button>
-                          ) : (
-                            <span className="task-tag-chip" data-role={`agent-direct-skill-${skill.skillId}`} key={skill.bindingId}>
-                              <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                            </span>
-                          )
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="muted-copy">No direct agent bindings.</p>
-                    )}
-                  </div>
-                  {skillLinks?.inheritedRoleId ? (
-                    <div>
-                      <strong>Inherited from role{skillLinks.inheritedRoleName ? ` · ${skillLinks.inheritedRoleName}` : ""}</strong>
-                      {skillLinks.inheritedRoleSkills.length ? (
-                        <div className="skills-binding-chip-list">
-                          {skillLinks.inheritedRoleSkills.map((skill) => (
-                            onOpenSkill ? (
-                              <button className="task-tag-chip task-tag-chip--interactive" data-role={`agent-inherited-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
-                                <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                              </button>
-                            ) : (
-                              <span className="task-tag-chip" data-role={`agent-inherited-skill-${skill.skillId}`} key={skill.bindingId}>
-                                <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
-                              </span>
-                            )
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="muted-copy">No inherited role bindings.</p>
-                      )}
-                    </div>
+                <div className="action-cluster">
+                  {agentMemoryInfo ? <span className="status-badge status-badge--accent">{agentMemoryInfo.slug}</span> : null}
+                  {loadedAgentProtected ? <span className="status-badge status-badge--warning" data-role="agent-protected-badge">Protected</span> : null}
+                  <span className="status-badge status-badge--neutral" data-role="agent-scope-badge">{loadedAgentProtected && !isCreatingAgent ? "Global" : agentDraft.scope === "project" ? "Project specific" : "Global"}</span>
+                  {loadedAgentArchived ? <span className="status-badge status-badge--neutral">Archived</span> : null}
+                  {!isCreatingAgent && loadedAgentId && !loadedAgentProtected ? (
+                    <button className="secondary-button secondary-button--danger" type="button" onClick={() => void handleArchiveAgent()} disabled={savingAgent || loadedAgentArchived}>
+                      Archive agent
+                    </button>
                   ) : null}
-                </div>
-                <p className="muted-copy">Assignments remain editable only in Settings → Skills.</p>
-              </section>
-            ) : (
-              <section className="workflow-section">
-                <div>
-                  <p className="eyebrow">Managed skills</p>
-                  <h3>Linked skills</h3>
-                </div>
-                <p className="muted-copy">Managed skill links are unavailable with the current permissions.</p>
-              </section>
-            )}
-
-            {agentMemoryInfo ? (
-              <section className="workflow-section">
-                <div>
-                  <p className="eyebrow">Persistent files</p>
-                  <h3>Memory bootstrap</h3>
-                </div>
-                <ul className="workflow-validation-list">
-                  <li data-role="agent-memory-root">Root: {agentMemoryInfo.rootDir}</li>
-                  <li>AGENTS.md: {agentMemoryInfo.agentsPath}</li>
-                  <li>IDENTITY.md: {agentMemoryInfo.identityPath}</li>
-                  <li>SOUL.md: {agentMemoryInfo.soulPath}</li>
-                  <li>MEMORY.md: {agentMemoryInfo.memoryPath}</li>
-                  <li>TOOLS.md: {agentMemoryInfo.toolsPath}</li>
-                  <li>Daily logs: {agentMemoryInfo.dailyMemoryDir}</li>
-                </ul>
-              </section>
-            ) : null}
-
-            {projectOverlay ? (
-              <section className="workflow-section">
-                <div className="workflow-section__header">
-                  <div>
-                    <p className="eyebrow">Project overlay</p>
-                    <h3>{projectOverlay.projectSlug}</h3>
-                  </div>
-                  <button className="primary-button" data-role="save-agent-overlay" type="button" onClick={() => void handleSaveOverlay()} disabled={savingOverlay}>
-                    {savingOverlay ? "Saving…" : "Save overlay"}
+                  <button className="primary-button" data-role="save-agent" type="button" onClick={() => void handleSaveAgent()} disabled={savingAgent || loadingAgentDetail}>
+                    {savingAgent ? "Saving…" : isCreatingAgent ? "Create agent" : "Save changes"}
                   </button>
                 </div>
-                <label className="field-group workflow-form-grid__full">
-                  <span className="field-group__label">Project prompt additions</span>
-                  <textarea
-                    className="text-area"
-                    data-role="agent-overlay-prompt"
-                    rows={5}
-                    value={overlayDraft}
-                    onChange={(event) => setOverlayDraft(event.target.value)}
-                  />
-                </label>
-                {loadedAgentProtected ? <p className="muted-copy">Supervisor identity fields are locked. Provider, model, thinking, and project overlay remain editable.</p> : null}
-                {projectOverlay.updatedAt ? <p className="muted-copy">Last updated {projectOverlay.updatedAt}</p> : null}
-              </section>
-            ) : null}
+              </div>
+            )}
+            leadingContent={loadingAgentDetail ? <p className="muted-copy">Loading agent…</p> : null}
+            tabs={[
+              {
+                id: "configuration",
+                label: "Configuration",
+                panel: (
+                  <section className="workflow-section">
+                    <div>
+                      <p className="eyebrow">Execution defaults</p>
+                      <h3>Configuration</h3>
+                    </div>
 
-            {validationSummary.length > 0 ? (
-              <section className="workflow-section">
-                <div>
-                  <p className="eyebrow">Validation</p>
-                  <h3>Resolve these issues before saving</h3>
-                </div>
-                <ul className="workflow-validation-list">
-                  {validationSummary.map((entry) => (
-                    <li key={entry}>{entry}</li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
-          </div>
+                    <div className="workflow-form-grid">
+                      <label className="field-group">
+                        <span className="field-group__label">Scope</span>
+                        <select
+                          className="select-input"
+                          data-role="agent-scope"
+                          value={loadedAgentProtected && !isCreatingAgent ? "global" : agentDraft.scope ?? "global"}
+                          disabled={loadedAgentProtected && !isCreatingAgent}
+                          onChange={(event) =>
+                            updateAgentDraft((draft) => ({
+                              ...draft,
+                              scope: event.target.value === "project" ? "project" : "global",
+                              projectId: event.target.value === "project" ? activeProjectId ?? draft.projectId ?? null : null,
+                            }))
+                          }
+                        >
+                          <option value="global">Global</option>
+                          <option value="project" disabled={!activeProjectId}>Project specific</option>
+                        </select>
+                        {getAgentValidationForPath(agentValidation, "scope").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group">
+                        <span className="field-group__label">Owning project</span>
+                        <input
+                          className="text-input"
+                          data-role="agent-project-scope"
+                          type="text"
+                          value={agentDraft.scope === "project" ? activeProjectId ?? agentDraft.projectId ?? "" : "All projects"}
+                          disabled
+                        />
+                        {getAgentValidationForPath(agentValidation, "projectId").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group">
+                        <span className="field-group__label">Agent name</span>
+                        <input
+                          className="text-input"
+                          data-role="agent-name"
+                          type="text"
+                          value={agentDraft.name}
+                          disabled={loadedAgentProtected && !isCreatingAgent}
+                          onChange={(event) => updateAgentDraft((draft) => ({ ...draft, name: event.target.value }))}
+                        />
+                        {getAgentValidationForPath(agentValidation, "name").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group">
+                        <span className="field-group__label">Provider</span>
+                        <select
+                          className="select-input"
+                          data-role="agent-provider"
+                          value={agentDraft.provider ?? ""}
+                          disabled={loadingModelOptions || piSetupState?.status !== "ready"}
+                          onChange={(event) =>
+                            updateAgentDraft((draft) => ({
+                              ...draft,
+                              provider: event.target.value,
+                              model: draft.provider === event.target.value ? draft.model : "",
+                            }))
+                          }
+                        >
+                          <option value="">{loadingModelOptions ? "Loading providers…" : "Select a provider"}</option>
+                          {providerOptions.map((provider) => (
+                            <option key={provider} value={provider}>
+                              {provider}
+                            </option>
+                          ))}
+                        </select>
+                        {getAgentValidationForPath(agentValidation, "provider").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group">
+                        <span className="field-group__label">Model</span>
+                        <select
+                          className="select-input"
+                          data-role="agent-model"
+                          value={agentDraft.model ?? ""}
+                          disabled={loadingModelOptions || piSetupState?.status !== "ready" || !(agentDraft.provider ?? "")}
+                          onChange={(event) => updateAgentDraft((draft) => ({ ...draft, model: event.target.value }))}
+                        >
+                          <option value="">
+                            {loadingModelOptions ? "Loading models…" : agentDraft.provider ? "Select a model" : "Select a provider first"}
+                          </option>
+                          {filteredModelOptions.map((model) => (
+                            <option key={`${model.provider}/${model.id}`} value={model.id}>
+                              {model.name}
+                            </option>
+                          ))}
+                        </select>
+                        {getAgentValidationForPath(agentValidation, "model").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group">
+                        <span className="field-group__label">Thinking</span>
+                        <select
+                          className="select-input"
+                          data-role="agent-thinking"
+                          value={agentDraft.thinkingLevel ?? "off"}
+                          onChange={(event) => updateAgentDraft((draft) => ({ ...draft, thinkingLevel: event.target.value }))}
+                        >
+                          <option value="off">Off</option>
+                          <option value="minimal">Minimal</option>
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                          <option value="xhigh">XHigh</option>
+                        </select>
+                        {getAgentValidationForPath(agentValidation, "thinkingLevel").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <label className="field-group">
+                        <span className="field-group__label">Compaction window override</span>
+                        <input
+                          className="text-input"
+                          data-role="agent-compaction-window"
+                          type="text"
+                          placeholder="Inherit global/role default"
+                          value={agentDraft.compactionWindow ?? ""}
+                          onChange={(event) => updateAgentDraft((draft) => ({ ...draft, compactionWindow: event.target.value }))}
+                        />
+                        <span className="field-group__hint">Optional. Use `10%`, a token reserve like `16000`, `off`, or leave blank to inherit.</span>
+                        {getAgentValidationForPath(agentValidation, "compactionWindow").map((error) => (
+                          <span className="field-error" key={error.message}>{error.message}</span>
+                        ))}
+                      </label>
+
+                      <div className="workflow-form-grid__full muted-copy" data-role="agent-pi-executable-diagnostic">
+                        Pi runtime: {formatPiRuntimeDiagnostic(piExecutableDiagnostic)}
+                      </div>
+
+                      {piSetupState?.status && piSetupState.status !== "ready" ? (
+                        <div className="workflow-form-grid__full session-readonly-banner">
+                          <div>
+                            <strong>Pi setup required.</strong> {piSetupState.issues[0]?.message ?? piSetupState.warnings[0]?.message ?? "Connect a provider in Settings → Harness before assigning Pi-backed agent models."}
+                          </div>
+                          {onOpenPiSettings ? (
+                            <button className="secondary-button" type="button" onClick={onOpenPiSettings}>
+                              Open Settings → Harness
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      <label className="field-group workflow-form-grid__full">
+                        <span className="field-group__label">Description</span>
+                        <textarea
+                          className="text-area"
+                          rows={3}
+                          value={agentDraft.description ?? ""}
+                          onChange={(event) => updateAgentDraft((draft) => ({ ...draft, description: event.target.value }))}
+                        />
+                      </label>
+
+                      <label className="field-group workflow-form-grid__full">
+                        <span className="field-group__label">System prompt</span>
+                        <textarea
+                          className="text-area"
+                          rows={8}
+                          value={agentDraft.systemPrompt ?? ""}
+                          disabled={loadedAgentProtected && !isCreatingAgent}
+                          onChange={(event) => updateAgentDraft((draft) => ({ ...draft, systemPrompt: event.target.value }))}
+                        />
+                      </label>
+                    </div>
+                  </section>
+                ),
+              },
+              {
+                id: "access",
+                label: "Access",
+                panel: (
+                  <>
+                    <AccessEditor
+                      actorLabel="agent"
+                      dataRolePrefix="agent"
+                      policyIds={agentDraft.policyIds ?? []}
+                      directPermissions={agentDraft.directPermissions ?? []}
+                      attachedPolicies={attachedPolicies}
+                      effectivePermissions={effectiveAccess.permissions}
+                      grantsFullAccess={effectiveAccess.grantsFullAccess}
+                      inheritedAccess={inheritedAccess}
+                      locked={loadedAgentProtected && !isCreatingAgent}
+                      onPolicyIdsChange={(policyIds) => updateAgentDraft((draft) => ({ ...draft, policyIds }))}
+                      onDirectPermissionsChange={(directPermissions) => updateAgentDraft((draft) => ({ ...draft, directPermissions }))}
+                    />
+                    <p className="muted-copy">Permissions assigned here are combined with any inherited role access.</p>
+                  </>
+                ),
+              },
+              {
+                id: "skills",
+                label: "Skills",
+                panel: canReadSkills ? (
+                  <section className="workflow-section">
+                    <div>
+                      <p className="eyebrow">Managed skills</p>
+                      <h3>Linked skills</h3>
+                    </div>
+                    <div className="skills-linked-surface-grid">
+                      <div>
+                        <strong>Direct</strong>
+                        {skillLinks?.directSkills.length ? (
+                          <div className="skills-binding-chip-list">
+                            {skillLinks.directSkills.map((skill) => (
+                              onOpenSkill ? (
+                                <button className="task-tag-chip task-tag-chip--interactive" data-role={`agent-direct-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                                  <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                                </button>
+                              ) : (
+                                <span className="task-tag-chip" data-role={`agent-direct-skill-${skill.skillId}`} key={skill.bindingId}>
+                                  <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                                </span>
+                              )
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="muted-copy">No direct agent bindings.</p>
+                        )}
+                      </div>
+                      {skillLinks?.inheritedRoleId ? (
+                        <div>
+                          <strong>Inherited from role{skillLinks.inheritedRoleName ? ` · ${skillLinks.inheritedRoleName}` : ""}</strong>
+                          {skillLinks.inheritedRoleSkills.length ? (
+                            <div className="skills-binding-chip-list">
+                              {skillLinks.inheritedRoleSkills.map((skill) => (
+                                onOpenSkill ? (
+                                  <button className="task-tag-chip task-tag-chip--interactive" data-role={`agent-inherited-skill-${skill.skillId}`} key={skill.bindingId} type="button" onClick={() => onOpenSkill(skill.skillId)}>
+                                    <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                                  </button>
+                                ) : (
+                                  <span className="task-tag-chip" data-role={`agent-inherited-skill-${skill.skillId}`} key={skill.bindingId}>
+                                    <span className="task-tag-chip__action"><span>{skill.skillName}</span></span>
+                                  </span>
+                                )
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="muted-copy">No inherited role bindings.</p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                    <p className="muted-copy">Assignments remain editable only in Settings → Skills.</p>
+                  </section>
+                ) : (
+                  <section className="workflow-section">
+                    <div>
+                      <p className="eyebrow">Managed skills</p>
+                      <h3>Linked skills</h3>
+                    </div>
+                    <p className="muted-copy">Managed skill links are unavailable with the current permissions.</p>
+                  </section>
+                ),
+              },
+              {
+                id: "memory",
+                label: "Memory",
+                hidden: !agentMemoryInfo,
+                panel: agentMemoryInfo ? (
+                  <section className="workflow-section">
+                    <div>
+                      <p className="eyebrow">Persistent files</p>
+                      <h3>Memory bootstrap</h3>
+                    </div>
+                    <ul className="workflow-validation-list">
+                      <li data-role="agent-memory-root">Root: {agentMemoryInfo.rootDir}</li>
+                      <li>AGENTS.md: {agentMemoryInfo.agentsPath}</li>
+                      <li>IDENTITY.md: {agentMemoryInfo.identityPath}</li>
+                      <li>SOUL.md: {agentMemoryInfo.soulPath}</li>
+                      <li>MEMORY.md: {agentMemoryInfo.memoryPath}</li>
+                      <li>TOOLS.md: {agentMemoryInfo.toolsPath}</li>
+                      <li>Daily logs: {agentMemoryInfo.dailyMemoryDir}</li>
+                    </ul>
+                  </section>
+                ) : null,
+              },
+              {
+                id: "overlay",
+                label: "Overlay",
+                hidden: !projectOverlay,
+                panel: projectOverlay ? (
+                  <section className="workflow-section">
+                    <div className="workflow-section__header">
+                      <div>
+                        <p className="eyebrow">Project overlay</p>
+                        <h3>{projectOverlay.projectSlug}</h3>
+                      </div>
+                      <button className="primary-button" data-role="save-agent-overlay" type="button" onClick={() => void handleSaveOverlay()} disabled={savingOverlay}>
+                        {savingOverlay ? "Saving…" : "Save overlay"}
+                      </button>
+                    </div>
+                    <label className="field-group workflow-form-grid__full">
+                      <span className="field-group__label">Project prompt additions</span>
+                      <textarea
+                        className="text-area"
+                        data-role="agent-overlay-prompt"
+                        rows={5}
+                        value={overlayDraft}
+                        onChange={(event) => setOverlayDraft(event.target.value)}
+                      />
+                    </label>
+                    {loadedAgentProtected ? <p className="muted-copy">Supervisor identity fields are locked. Provider, model, thinking, and project overlay remain editable.</p> : null}
+                    {projectOverlay.updatedAt ? <p className="muted-copy">Last updated {projectOverlay.updatedAt}</p> : null}
+                  </section>
+                ) : null,
+              },
+              {
+                id: "validation",
+                label: "Validation",
+                hidden: validationSummary.length === 0,
+                panel: validationSummary.length > 0 ? (
+                  <section className="workflow-section">
+                    <div>
+                      <p className="eyebrow">Validation</p>
+                      <h3>Resolve these issues before saving</h3>
+                    </div>
+                    <ul className="workflow-validation-list">
+                      {validationSummary.map((entry) => (
+                        <li key={entry}>{entry}</li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null,
+              },
+            ]}
+          />
         ) : (
           <div className="empty-state">
             <p className="eyebrow">No agent selected</p>

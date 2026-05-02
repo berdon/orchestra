@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import {
   attachRepositoryRemote,
   createProject,
@@ -124,8 +125,6 @@ export function ProjectsPanel() {
   const [secretsLoadedProjectSlug, setSecretsLoadedProjectSlug] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const projectDetailPanelRef = useRef<HTMLElement | null>(null);
-  const [projectDetailTabDockLayout, setProjectDetailTabDockLayout] = useState<{ left: number; right: number } | null>(null);
 
   const selectedProject = useMemo(
     () => (isCreatingProject ? null : projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? null),
@@ -317,57 +316,6 @@ export function ProjectsPanel() {
     secretsLoadedProjectSlug,
     sourceControlLoadedProjectSlug,
   ]);
-
-  useEffect(() => {
-    const panel = projectDetailPanelRef.current;
-    if (!panel || typeof window === "undefined" || projectDetailTabs.length < 2) {
-      setProjectDetailTabDockLayout(null);
-      return;
-    }
-
-    let frameId: number | null = null;
-    const updateDockLayout = () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
-      frameId = window.requestAnimationFrame(() => {
-        const rect = panel.getBoundingClientRect();
-        const nextLayout = rect.width > 0
-          ? {
-              left: Math.max(rect.left, 12),
-              right: Math.max(window.innerWidth - rect.right, 12),
-            }
-          : null;
-        setProjectDetailTabDockLayout((current) => {
-          if (!current && !nextLayout) {
-            return current;
-          }
-          if (
-            current
-            && nextLayout
-            && current.left === nextLayout.left
-            && current.right === nextLayout.right
-          ) {
-            return current;
-          }
-          return nextLayout;
-        });
-      });
-    };
-
-    updateDockLayout();
-    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateDockLayout) : null;
-    resizeObserver?.observe(panel);
-    window.addEventListener("resize", updateDockLayout);
-
-    return () => {
-      if (frameId !== null) {
-        window.cancelAnimationFrame(frameId);
-      }
-      resizeObserver?.disconnect();
-      window.removeEventListener("resize", updateDockLayout);
-    };
-  }, [projectDetailTabs.length, selectedProject?.id]);
 
   function handleProjectNameChange(value: string) {
     setProjectDraft((current) => ({
@@ -643,8 +591,8 @@ export function ProjectsPanel() {
     }
   }
 
-  function renderTabPanel() {
-    switch (activeDetailTab) {
+  function renderTabPanel(tabId: ProjectDetailTabId) {
+    switch (tabId) {
       case "general":
         return (
           <section className="task-section" data-role="project-detail-tabpanel-general">
@@ -1001,13 +949,6 @@ export function ProjectsPanel() {
     }
   }
 
-  const projectDetailTabDockStyle = projectDetailTabDockLayout
-    ? {
-        left: `${projectDetailTabDockLayout.left}px`,
-        right: `${projectDetailTabDockLayout.right}px`,
-      }
-    : undefined;
-
   return (
     <ResizableSidebarLayout
       className="task-shell"
@@ -1069,8 +1010,14 @@ export function ProjectsPanel() {
         </>
       )}
       detail={(
-        <>
-          <div className="task-detail-stack">
+        <SettingsSectionTabs
+          className="task-detail-stack"
+          ariaLabel="Project settings sections"
+          dataRolePrefix="project-detail"
+          initialTabId="general"
+          activeTabId={activeDetailTab}
+          onTabChange={(tabId) => handleDetailTabSelect(tabId as ProjectDetailTabId)}
+          header={(
             <div className="panel__header panel__header--session-detail">
               <div>
                 <p className="eyebrow">Project detail</p>
@@ -1108,32 +1055,13 @@ export function ProjectsPanel() {
                 </button>
               </div>
             </div>
-
-            <section ref={projectDetailPanelRef} className="panel task-detail-tabs-panel project-detail-tabs-panel">
-              <div className="task-detail-tabs__body">{renderTabPanel()}</div>
-            </section>
-
-            {projectDetailTabs.length > 1 && projectDetailTabDockStyle ? (
-              <div className="task-detail-tab-dock project-detail-tab-dock" data-role="project-detail-tab-dock" style={projectDetailTabDockStyle}>
-                <div className="task-detail-tabs task-detail-tabs--dock project-detail-tabs" role="tablist" aria-label="Project detail sections">
-                  {projectDetailTabs.map((tab) => (
-                    <button
-                      key={tab.id}
-                      className={activeDetailTab === tab.id ? "task-detail-tab task-detail-tab--active" : "task-detail-tab"}
-                      data-role={`project-detail-tab-${tab.id}`}
-                      role="tab"
-                      aria-selected={activeDetailTab === tab.id}
-                      type="button"
-                      onClick={() => handleDetailTabSelect(tab.id)}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </>
+          )}
+          tabs={projectDetailTabs.map((tab) => ({
+            id: tab.id,
+            label: tab.label,
+            panel: renderTabPanel(tab.id),
+          }))}
+        />
       )}
     />
   );

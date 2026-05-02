@@ -15,14 +15,18 @@ test("settings agents panel creates a global agent definition with access contro
   await page.locator('[data-role="agent-name"]').fill("Architect");
   await page.locator('[data-role="agent-provider"]').selectOption("anthropic");
   await page.locator('[data-role="agent-model"]').selectOption("claude-sonnet-4-20250514");
+  await page.locator('[data-role="agent-detail-tab-access"]').click();
   await page.locator('[data-role="agent-supervisor-toggle"]').check();
   await page.locator('[data-role="agent-permission-roles.dispatch"]').check();
   await page.locator('[data-role="save-agent"]').click();
 
   await expect(page.getByRole("heading", { name: "Architect" })).toBeVisible();
+  await page.locator('[data-role="agent-detail-tab-memory"]').click();
   await expect(page.locator('[data-role="agent-memory-root"]')).toContainText("/mock/agents/architect");
+  await page.locator('[data-role="agent-detail-tab-access"]').click();
   await expect(page.locator('[data-role="agent-effective-access"]')).toContainText("Full access");
 
+  await page.locator('[data-role="agent-detail-tab-overlay"]').click();
   await page.locator('[data-role="agent-overlay-prompt"]').fill("In this project, optimize for small focused commits.");
   await page.locator('[data-role="save-agent-overlay"]').click();
 
@@ -56,9 +60,11 @@ test("protected supervisor keeps access locked while allowing model and overlay 
   await page.getByRole("link", { name: /Supervisor/i }).click();
 
   await expect(page.locator('[data-role="agent-protected-badge"]')).toBeVisible();
+  await page.locator('[data-role="agent-detail-tab-access"]').click();
   await expect(page.locator('[data-role="agent-supervisor-toggle"]')).toBeChecked();
   await expect(page.locator('[data-role="agent-supervisor-toggle"]')).toBeDisabled();
   await expect(page.locator('[data-role="agent-permission-roles.dispatch"]')).toBeDisabled();
+  await page.locator('[data-role="agent-detail-tab-configuration"]').click();
   await expect(page.locator('[data-role="agent-name"]')).toBeDisabled();
   await expect(page.getByRole("button", { name: "Archive agent" })).toHaveCount(0);
 
@@ -67,6 +73,7 @@ test("protected supervisor keeps access locked while allowing model and overlay 
   await page.locator('[data-role="agent-thinking"]').selectOption("high");
   await page.locator('[data-role="save-agent"]').click();
 
+  await page.locator('[data-role="agent-detail-tab-overlay"]').click();
   await page.locator('[data-role="agent-overlay-prompt"]').fill("Use this project as the operational source of truth.");
   await page.locator('[data-role="save-agent-overlay"]').click();
 

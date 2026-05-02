@@ -15,6 +15,7 @@ test("settings roles panel creates a role with supervisor access and direct perm
 
   await page.locator('[data-role="role-name"]').fill("Operator");
   await page.getByLabel("Capacity").fill("2");
+  await page.locator('[data-role="role-detail-tab-access"]').click();
   await page.locator('[data-role="role-supervisor-toggle"]').check();
   await page.locator('[data-role="role-permission-sessions.message"]').check();
   await page.locator('[data-role="save-role"]').click();

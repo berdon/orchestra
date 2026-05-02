@@ -113,6 +113,10 @@ test("settings general, harness, prompting, and source control panels render and
     }, name);
   }
 
+  async function openSettingsDetailTab(prefix: string, id: string) {
+    await page.locator(`[data-role="${prefix}-tab-${id}"]`).click();
+  }
+
   await page.goto("/");
   await page.locator('[data-role="nav-item-settings"]').click();
   await openSettingsTab("General");
@@ -120,6 +124,7 @@ test("settings general, harness, prompting, and source control panels render and
   await expect(page.getByRole("tab", { name: "General" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("tab", { name: "Harness" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Pi" })).toHaveCount(0);
+  await expect(page.locator('[data-role="general-detail-tab-dock"]')).toBeVisible();
 
   await expect(page.locator('[data-role="theme-select"]')).toHaveValue("orchestra-dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "orchestra-dark");
@@ -162,6 +167,7 @@ test("settings general, harness, prompting, and source control panels render and
   await expect(page.locator('[data-role="pi-runtime-settings-panel"]')).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Harness settings" })).toHaveCount(0);
 
+  await openSettingsDetailTab("general-detail", "bridge");
   await expect(page.getByRole("heading", { name: "Bridge diagnostics" })).toBeVisible();
   await expect(page.locator('[data-role="bridge-instance-id"]')).toContainText("bridge-instance-browser");
   await expect(page.locator('[data-role="bridge-active-client-count"]')).toContainText("2");
@@ -171,6 +177,7 @@ test("settings general, harness, prompting, and source control panels render and
   await page.locator('[data-role="cleanup-stale-bridges"]').click();
   await expect(page.locator('[data-role="bridge-cleanup-table"]')).toContainText("cleanup_requested");
 
+  await openSettingsDetailTab("general-detail", "logs");
   await expect(page.locator('[data-role="runtime-log-list"]')).toBeVisible();
   await expect(page.locator('[data-role="runtime-log-level-filter"]')).toHaveValue("info");
   await expect(page.locator('[data-role="runtime-log-list"]')).toContainText("(tool.bridge): Bridge status updated");
@@ -181,6 +188,7 @@ test("settings general, harness, prompting, and source control panels render and
   await expect(page.locator('[data-role="runtime-log-list"]')).toContainText("(sessions.rpc.event): Session session-1 received turn_start");
   await expect(page.locator('[data-role="runtime-log-line"]', { hasText: "(sessions.rpc.event): Session session-1 received turn_start" })).toHaveText(/^\[D\]\s.+\s\(sessions\.rpc\.event\):\sSession session-1 received turn_start$/);
 
+  await openSettingsDetailTab("general-detail", "appearance");
   await page.locator('[data-role="open-prompting-settings"]').click();
   await expect(page.getByRole("heading", { name: "Task session context prompt" })).toBeVisible();
   await expect(page.getByText(/Edit the task-session prompt for the active project/)).toHaveCount(0);
@@ -197,14 +205,18 @@ test("settings general, harness, prompting, and source control panels render and
   await expect(page.getByRole("heading", { name: "Global git identity defaults" })).toBeVisible();
   await expect(page.getByText("Set the default git identity templates used unless a project overrides them.")).toHaveCount(0);
   await expect(page.locator('[data-role="source-control-git-user-name-template"]')).toHaveValue("Orchestra {role}{agent}");
+  await openSettingsDetailTab("source-control-detail", "preview");
   await expect(page.locator('[data-role="source-control-preview-table"]')).toContainText("Orchestra architect");
+  await openSettingsDetailTab("source-control-detail", "defaults");
   await page.locator('[data-role="source-control-git-email-template"]').fill("team+{role}{agent}@example.com");
   await page.locator('[data-role="save-source-control-settings"]').click();
+  await openSettingsDetailTab("source-control-detail", "preview");
   await expect(page.locator('[data-role="source-control-preview-table"]')).toContainText("team+architect@example.com");
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem("orchestra.mock.source-control-settings"))).toContain("team+{role}{agent}@example.com");
 
   await openSettingsTab("Projects");
   await expect(page.getByText("Built-in projects are editable like any other project.")).toHaveCount(0);
+  await openSettingsDetailTab("project-detail", "source-control");
   await expect(page.locator('[data-role="project-source-control-settings"]')).toBeVisible();
   await expect(page.locator('[data-role="project-source-control-preview-table"]')).toContainText("Global default");
   await page.locator('[data-role="project-git-email-template"]').fill("project+{role}{agent}@example.com");
@@ -216,6 +228,7 @@ test("settings general, harness, prompting, and source control panels render and
   await expect(page.getByRole("tab", { name: "Harness" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "Harness settings" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Bridge diagnostics" })).toHaveCount(0);
+  await expect(page.locator('[data-role="harness-detail-tab-dock"]')).toBeVisible();
   await expect(page.locator('[data-role="pi-runtime-default-compaction-window"]')).toHaveValue("10%");
   await expect(page.locator('[data-role="pi-runtime-extensions"]')).toHaveValue("npm:pi-example\n./extensions/local-extra.ts");
   await page.locator('[data-role="pi-runtime-default-compaction-window"]').fill("16000");
@@ -246,6 +259,9 @@ test("mobile navigation exposes usable Harness configuration", async ({ page }) 
 
   await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Harness settings" })).toBeVisible();
+  await expect(page.locator('[data-role="harness-detail-tab-dock"]')).toBeVisible();
+  await expect(page.locator('[data-role="harness-detail-section-select-mobile"]')).toBeHidden();
+  await expect(page.locator('[data-role="harness-detail-tab-runtime"]')).toBeVisible();
   await expect(page.locator('[data-role="pi-runtime-default-compaction-window"]')).toBeVisible();
   await expect(page.locator('[data-role="pi-runtime-extensions"]')).toBeVisible();
   await page.locator('[data-role="pi-runtime-default-compaction-window"]').fill("16000");

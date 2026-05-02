@@ -63,12 +63,16 @@ test("remote settings panel enables remote access, creates pairing codes, and re
   await expect(page.locator('[data-role="remote-endpoint-pairing"]')).toContainText("Pairing API URL");
   await expect(page.locator('[data-role="copy-remote-endpoint-pairing"]')).toBeVisible();
 
+  await page.locator('[data-role="remote-detail-tab-pairing"]').click();
   await page.locator('[data-role="create-remote-pairing-code"]').click();
   await expect(page.locator('[data-role="latest-remote-pairing-code"]')).toBeVisible();
   await expect(page.locator('[data-role="remote-pairing-codes-table"]')).toBeVisible();
 
+  await page.locator('[data-role="remote-detail-tab-devices"]').click();
   await expect(page.locator('[data-role="remote-devices-table"]')).toContainText("iPhone");
   await page.getByRole("button", { name: "Revoke" }).click();
   await expect(page.locator('[data-role="remote-devices-table"]')).toContainText("Revoked");
+
+  await page.locator('[data-role="remote-detail-tab-clients"]').click();
   await expect(page.getByText("No active remote clients.")).toBeVisible();
 });

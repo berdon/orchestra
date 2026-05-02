@@ -13,12 +13,15 @@ test("settings channels panel creates a Telegram channel", async ({ page }) => {
   await page.locator('[data-role="new-channel"]').click();
 
   await page.locator('[data-role="channel-name"]').fill("Telegram Ops");
+  await page.locator('[data-role="channel-detail-tab-bot"]').click();
   await page.locator('[data-role="telegram-bot-token"]').fill("mock-token");
   await page.locator('[data-role="validate-telegram-bot"]').click();
   await expect(page.locator('[data-role="telegram-bot-validation"]')).toContainText("mock_orchestra_bot");
 
+  await page.locator('[data-role="channel-detail-tab-chat"]').click();
   await page.locator('[data-role="detect-telegram-chats"]').click();
   await page.locator('[data-role="telegram-chat-select"]').selectOption({ label: "Mock Telegram Chat" });
+  await page.locator('[data-role="channel-detail-tab-behavior"]').click();
   await expect(page.locator('[data-role="telegram-notification-scope"]')).toHaveValue("all_projects");
   await page.locator('[data-role="telegram-notification-scope"]').selectOption("active_project");
   await page.locator('[data-role="channel-enabled"]').check();

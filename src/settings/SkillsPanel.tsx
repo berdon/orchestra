@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { MarkdownContent } from "../components/MarkdownContent";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import { listAgents } from "../lib/agents";
 import { listProjects } from "../lib/projects";
 import { listRoles } from "../lib/roles";
@@ -1029,96 +1030,215 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
       )}
       detail={(
         isCreatingLocalSkill ? (
-          <div className="workflow-editor-grid" data-role="skill-detail">
-            <div className="panel__header panel__header--stacked">
-              <div>
-                <p className="eyebrow">Local skill</p>
-                <h3>Create skill</h3>
-              </div>
-              <div className="action-cluster action-cluster--wrap">
-                <span className="status-badge status-badge--accent">Local draft</span>
-                <button className="primary-button" data-role="save-skill" type="button" onClick={() => void handleSaveSkill()} disabled={saving || !skillActionState.canSaveLocalSkill} title={!skillActionState.canSaveLocalSkill ? skillActionState.localEditorReason ?? undefined : undefined}>
-                  {saving ? "Creating…" : "Create skill"}
-                </button>
-              </div>
-            </div>
-
-            {skillActionState.localEditorReason ? <p className="muted-copy">{skillActionState.localEditorReason}</p> : null}
-
-            <section className="workflow-section skills-form-section">
-              <div>
-                <p className="eyebrow">Phase 1 editor</p>
-                <h3>Name and markdown</h3>
-              </div>
-
-              <div className="skills-form-grid">
-                <label className="field-group">
-                  <span className="field-group__label">Skill name</span>
-                  <input className="text-input" data-role="skill-name" type="text" value={localDraft.name} onChange={(event) => setLocalDraft((draft) => ({ ...draft, name: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
-                  {localDraftState.validationErrors.name ? <span className="field-error">{localDraftState.validationErrors.name}</span> : null}
-                </label>
-
-                <label className="field-group">
-                  <span className="field-group__label">Slug</span>
-                  <input className="text-input" data-role="skill-slug" type="text" placeholder="Leave blank to derive from the name" value={localDraft.slug ?? ""} onChange={(event) => setLocalDraft((draft) => ({ ...draft, slug: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
-                  <span className="field-group__hint">{localDraftState.normalizedSlug ? `Saved as ${localDraftState.normalizedSlug}` : localDraftState.slugPreview ? `Will derive ${localDraftState.slugPreview}` : "A slug will be derived from the skill name."}</span>
-                  {localDraftState.validationErrors.slug ? <span className="field-error">{localDraftState.validationErrors.slug}</span> : null}
-                </label>
-
-                <label className="field-group skills-form-grid__full">
-                  <span className="field-group__label">Markdown body</span>
-                  <textarea className="text-area skills-markdown-input" data-role="skill-markdown-body" rows={18} value={localDraft.markdownBody} onChange={(event) => setLocalDraft((draft) => ({ ...draft, markdownBody: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
-                  <span className="field-group__hint">The editor stays phase-1 scoped to name, slug, and markdown content only.</span>
-                  {localDraftState.validationErrors.markdownBody ? <span className="field-error">{localDraftState.validationErrors.markdownBody}</span> : null}
-                </label>
-              </div>
-            </section>
-
-            <section className="workflow-section">
-              <div>
-                <p className="eyebrow">Derived preview</p>
-                <h3>Description</h3>
-              </div>
-              <div className="task-history-card skills-derived-preview" data-role="skill-description-preview">
-                <strong>{localDraftState.descriptionPreview ? "First non-empty paragraph" : "No description available yet"}</strong>
-                <p>{localDraftState.descriptionPreview ?? "Add markdown content to preview the derived description that the catalog will store."}</p>
-              </div>
-            </section>
-          </div>
-        ) : currentDetail ? (
-          currentDetail.sourceKind === "local" ? (
-            <div className="workflow-editor-grid" data-role="skill-detail">
+          <SettingsSectionTabs
+            className="workflow-editor-grid"
+            ariaLabel="Skill detail sections"
+            dataRolePrefix="skill-detail"
+            initialTabId="editor"
+            header={(
               <div className="panel__header panel__header--stacked">
                 <div>
                   <p className="eyebrow">Local skill</p>
-                  <h3>{currentDetail.name}</h3>
+                  <h3>Create skill</h3>
                 </div>
                 <div className="action-cluster action-cluster--wrap">
-                  <span className="status-badge status-badge--accent">Local</span>
-                  {currentDetail.archived ? <span className="status-badge status-badge--neutral">Archived</span> : <span className={getSkillStatusBadgeClass(currentDetail.status)}>{getSkillStatusLabel(currentDetail.status)}</span>}
-                  <button className="secondary-button" data-role={currentDetail.archived ? "unarchive-skill" : "archive-skill"} type="button" onClick={() => void handleArchiveToggle(!currentDetail.archived)} disabled={saving || savingBindings || !skillActionState.canArchiveSkill} title={!skillActionState.canArchiveSkill ? "Archiving skills requires skills.archive." : undefined}>
-                    {currentDetail.archived ? "Unarchive" : "Archive"}
-                  </button>
-                  <button
-                    className="secondary-button secondary-button--danger"
-                    data-role="delete-skill"
-                    type="button"
-                    onClick={() => void handleDeleteSkill()}
-                    disabled={saving || savingBindings || selectedLocalSkillHasBindings || !skillActionState.canDeleteSkill}
-                    title={selectedLocalSkillHasBindings ? "Clear all scope bindings before deleting this skill." : (!skillActionState.canDeleteSkill ? "Deleting skills requires skills.delete." : undefined)}
-                  >
-                    {deleteConfirmationRequired ? "Confirm delete" : "Delete"}
-                  </button>
-                  <button className="primary-button" data-role="save-skill" type="button" onClick={() => void handleSaveSkill()} disabled={saving || loadingDetail || savingBindings || !skillActionState.canSaveLocalSkill} title={!skillActionState.canSaveLocalSkill ? skillActionState.localEditorReason ?? undefined : undefined}>
-                    {saving ? "Saving…" : "Save changes"}
+                  <span className="status-badge status-badge--accent">Local draft</span>
+                  <button className="primary-button" data-role="save-skill" type="button" onClick={() => void handleSaveSkill()} disabled={saving || !skillActionState.canSaveLocalSkill} title={!skillActionState.canSaveLocalSkill ? skillActionState.localEditorReason ?? undefined : undefined}>
+                    {saving ? "Creating…" : "Create skill"}
                   </button>
                 </div>
               </div>
+            )}
+            leadingContent={skillActionState.localEditorReason ? <p className="muted-copy">{skillActionState.localEditorReason}</p> : null}
+            tabs={[
+              {
+                id: "editor",
+                label: "Editor",
+                panel: (
+                  <section className="workflow-section skills-form-section">
+                    <div>
+                      <p className="eyebrow">Phase 1 editor</p>
+                      <h3>Name and markdown</h3>
+                    </div>
 
-              {loadingDetail ? <p className="muted-copy">Loading skill…</p> : null}
-              {skillActionState.localEditorReason ? <p className="muted-copy">{skillActionState.localEditorReason}</p> : null}
+                    <div className="skills-form-grid">
+                      <label className="field-group">
+                        <span className="field-group__label">Skill name</span>
+                        <input className="text-input" data-role="skill-name" type="text" value={localDraft.name} onChange={(event) => setLocalDraft((draft) => ({ ...draft, name: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
+                        {localDraftState.validationErrors.name ? <span className="field-error">{localDraftState.validationErrors.name}</span> : null}
+                      </label>
 
-              {detailWarnings.length > 0 ? (
+                      <label className="field-group">
+                        <span className="field-group__label">Slug</span>
+                        <input className="text-input" data-role="skill-slug" type="text" placeholder="Leave blank to derive from the name" value={localDraft.slug ?? ""} onChange={(event) => setLocalDraft((draft) => ({ ...draft, slug: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
+                        <span className="field-group__hint">{localDraftState.normalizedSlug ? `Saved as ${localDraftState.normalizedSlug}` : localDraftState.slugPreview ? `Will derive ${localDraftState.slugPreview}` : "A slug will be derived from the skill name."}</span>
+                        {localDraftState.validationErrors.slug ? <span className="field-error">{localDraftState.validationErrors.slug}</span> : null}
+                      </label>
+
+                      <label className="field-group skills-form-grid__full">
+                        <span className="field-group__label">Markdown body</span>
+                        <textarea className="text-area skills-markdown-input" data-role="skill-markdown-body" rows={18} value={localDraft.markdownBody} onChange={(event) => setLocalDraft((draft) => ({ ...draft, markdownBody: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
+                        <span className="field-group__hint">The editor stays phase-1 scoped to name, slug, and markdown content only.</span>
+                        {localDraftState.validationErrors.markdownBody ? <span className="field-error">{localDraftState.validationErrors.markdownBody}</span> : null}
+                      </label>
+                    </div>
+                  </section>
+                ),
+              },
+              {
+                id: "preview",
+                label: "Preview",
+                panel: (
+                  <section className="workflow-section">
+                    <div>
+                      <p className="eyebrow">Derived preview</p>
+                      <h3>Description</h3>
+                    </div>
+                    <div className="task-history-card skills-derived-preview" data-role="skill-description-preview">
+                      <strong>{localDraftState.descriptionPreview ? "First non-empty paragraph" : "No description available yet"}</strong>
+                      <p>{localDraftState.descriptionPreview ?? "Add markdown content to preview the derived description that the catalog will store."}</p>
+                    </div>
+                  </section>
+                ),
+              },
+            ]}
+          />
+        ) : currentDetail ? (
+          currentDetail.sourceKind === "local" ? (
+            <SettingsSectionTabs
+              className="workflow-editor-grid"
+              ariaLabel="Skill detail sections"
+              dataRolePrefix="skill-detail"
+              initialTabId="editor"
+              header={(
+                <div className="panel__header panel__header--stacked">
+                  <div>
+                    <p className="eyebrow">Local skill</p>
+                    <h3>{currentDetail.name}</h3>
+                  </div>
+                  <div className="action-cluster action-cluster--wrap">
+                    <span className="status-badge status-badge--accent">Local</span>
+                    {currentDetail.archived ? <span className="status-badge status-badge--neutral">Archived</span> : <span className={getSkillStatusBadgeClass(currentDetail.status)}>{getSkillStatusLabel(currentDetail.status)}</span>}
+                    <button className="secondary-button" data-role={currentDetail.archived ? "unarchive-skill" : "archive-skill"} type="button" onClick={() => void handleArchiveToggle(!currentDetail.archived)} disabled={saving || savingBindings || !skillActionState.canArchiveSkill} title={!skillActionState.canArchiveSkill ? "Archiving skills requires skills.archive." : undefined}>
+                      {currentDetail.archived ? "Unarchive" : "Archive"}
+                    </button>
+                    <button
+                      className="secondary-button secondary-button--danger"
+                      data-role="delete-skill"
+                      type="button"
+                      onClick={() => void handleDeleteSkill()}
+                      disabled={saving || savingBindings || selectedLocalSkillHasBindings || !skillActionState.canDeleteSkill}
+                      title={selectedLocalSkillHasBindings ? "Clear all scope bindings before deleting this skill." : (!skillActionState.canDeleteSkill ? "Deleting skills requires skills.delete." : undefined)}
+                    >
+                      {deleteConfirmationRequired ? "Confirm delete" : "Delete"}
+                    </button>
+                    <button className="primary-button" data-role="save-skill" type="button" onClick={() => void handleSaveSkill()} disabled={saving || loadingDetail || savingBindings || !skillActionState.canSaveLocalSkill} title={!skillActionState.canSaveLocalSkill ? skillActionState.localEditorReason ?? undefined : undefined}>
+                      {saving ? "Saving…" : "Save changes"}
+                    </button>
+                  </div>
+                </div>
+              )}
+              leadingContent={(
+                <>
+                  {loadingDetail ? <p className="muted-copy">Loading skill…</p> : null}
+                  {skillActionState.localEditorReason ? <p className="muted-copy">{skillActionState.localEditorReason}</p> : null}
+                  {detailWarnings.length > 0 ? (
+                    <div className="skills-warning-stack">
+                      {detailWarnings.map((warning) => (
+                        <div className={`skills-warning skills-warning--${warning.tone}`} key={`${warning.title}-${warning.message}`}>
+                          <strong>{warning.title}</strong>
+                          <p>{warning.message}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              )}
+              tabs={[
+                {
+                  id: "editor",
+                  label: "Editor",
+                  panel: (
+                    <section className="workflow-section skills-form-section">
+                      <div>
+                        <p className="eyebrow">Phase 1 editor</p>
+                        <h3>Name and markdown</h3>
+                      </div>
+
+                      <div className="skills-form-grid">
+                        <label className="field-group">
+                          <span className="field-group__label">Skill name</span>
+                          <input className="text-input" data-role="skill-name" type="text" value={localDraft.name} onChange={(event) => setLocalDraft((draft) => ({ ...draft, name: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
+                          {localDraftState.validationErrors.name ? <span className="field-error">{localDraftState.validationErrors.name}</span> : null}
+                        </label>
+
+                        <label className="field-group">
+                          <span className="field-group__label">Slug</span>
+                          <input className="text-input" data-role="skill-slug" type="text" placeholder="Leave blank to derive from the name" value={localDraft.slug ?? ""} onChange={(event) => setLocalDraft((draft) => ({ ...draft, slug: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
+                          <span className="field-group__hint">{localDraftState.normalizedSlug ? `Saved as ${localDraftState.normalizedSlug}` : localDraftState.slugPreview ? `Will derive ${localDraftState.slugPreview}` : "A slug will be derived from the skill name."}</span>
+                          {localDraftState.validationErrors.slug ? <span className="field-error">{localDraftState.validationErrors.slug}</span> : null}
+                        </label>
+
+                        <label className="field-group skills-form-grid__full">
+                          <span className="field-group__label">Markdown body</span>
+                          <textarea className="text-area skills-markdown-input" data-role="skill-markdown-body" rows={18} value={localDraft.markdownBody} onChange={(event) => setLocalDraft((draft) => ({ ...draft, markdownBody: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
+                          <span className="field-group__hint">The editor stays phase-1 scoped to name, slug, and markdown content only.</span>
+                          {localDraftState.validationErrors.markdownBody ? <span className="field-error">{localDraftState.validationErrors.markdownBody}</span> : null}
+                        </label>
+                      </div>
+                    </section>
+                  ),
+                },
+                {
+                  id: "preview",
+                  label: "Preview",
+                  panel: (
+                    <section className="workflow-section">
+                      <div>
+                        <p className="eyebrow">Derived preview</p>
+                        <h3>Description</h3>
+                      </div>
+                      <div className="task-history-card skills-derived-preview" data-role="skill-description-preview">
+                        <strong>{localDraftState.descriptionPreview ? "First non-empty paragraph" : "No description available yet"}</strong>
+                        <p>{localDraftState.descriptionPreview ?? "Add markdown content to preview the derived description that the catalog will store."}</p>
+                      </div>
+                    </section>
+                  ),
+                },
+                {
+                  id: "assignments",
+                  label: "Assignments",
+                  panel: (
+                    <>
+                      {renderBindingAssignmentSection(currentDetail)}
+                      {selectedLocalSkillHasBindings ? (
+                        <p className="muted-copy" data-role="skill-delete-blocked-hint">Clear all scope bindings before deleting this skill.</p>
+                      ) : null}
+                    </>
+                  ),
+                },
+              ]}
+            />
+          ) : (
+            <SettingsSectionTabs
+              className="workflow-editor-grid"
+              ariaLabel="Skill detail sections"
+              dataRolePrefix="skill-detail"
+              initialTabId="source"
+              header={(
+                <div className="panel__header panel__header--stacked">
+                  <div>
+                    <p className="eyebrow">External skill</p>
+                    <h3>{currentDetail.name}</h3>
+                  </div>
+                  <div className="action-cluster action-cluster--wrap">
+                    <span className="status-badge status-badge--neutral">External</span>
+                    <span className="status-badge status-badge--neutral">Read-only content</span>
+                    {currentDetail.archived ? <span className="status-badge status-badge--neutral">Archived</span> : <span className={getSkillStatusBadgeClass(currentDetail.status)}>{getSkillStatusLabel(currentDetail.status)}</span>}
+                  </div>
+                </div>
+              )}
+              leadingContent={(
                 <div className="skills-warning-stack">
                   {detailWarnings.map((warning) => (
                     <div className={`skills-warning skills-warning--${warning.tone}`} key={`${warning.title}-${warning.message}`}>
@@ -1127,117 +1247,63 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
                     </div>
                   ))}
                 </div>
-              ) : null}
-
-              <section className="workflow-section skills-form-section">
-                <div>
-                  <p className="eyebrow">Phase 1 editor</p>
-                  <h3>Name and markdown</h3>
-                </div>
-
-                <div className="skills-form-grid">
-                  <label className="field-group">
-                    <span className="field-group__label">Skill name</span>
-                    <input className="text-input" data-role="skill-name" type="text" value={localDraft.name} onChange={(event) => setLocalDraft((draft) => ({ ...draft, name: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
-                    {localDraftState.validationErrors.name ? <span className="field-error">{localDraftState.validationErrors.name}</span> : null}
-                  </label>
-
-                  <label className="field-group">
-                    <span className="field-group__label">Slug</span>
-                    <input className="text-input" data-role="skill-slug" type="text" placeholder="Leave blank to derive from the name" value={localDraft.slug ?? ""} onChange={(event) => setLocalDraft((draft) => ({ ...draft, slug: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
-                    <span className="field-group__hint">{localDraftState.normalizedSlug ? `Saved as ${localDraftState.normalizedSlug}` : localDraftState.slugPreview ? `Will derive ${localDraftState.slugPreview}` : "A slug will be derived from the skill name."}</span>
-                    {localDraftState.validationErrors.slug ? <span className="field-error">{localDraftState.validationErrors.slug}</span> : null}
-                  </label>
-
-                  <label className="field-group skills-form-grid__full">
-                    <span className="field-group__label">Markdown body</span>
-                    <textarea className="text-area skills-markdown-input" data-role="skill-markdown-body" rows={18} value={localDraft.markdownBody} onChange={(event) => setLocalDraft((draft) => ({ ...draft, markdownBody: event.target.value }))} readOnly={skillActionState.localEditorReadOnly} />
-                    <span className="field-group__hint">The editor stays phase-1 scoped to name, slug, and markdown content only.</span>
-                    {localDraftState.validationErrors.markdownBody ? <span className="field-error">{localDraftState.validationErrors.markdownBody}</span> : null}
-                  </label>
-                </div>
-              </section>
-
-              <section className="workflow-section">
-                <div>
-                  <p className="eyebrow">Derived preview</p>
-                  <h3>Description</h3>
-                </div>
-                <div className="task-history-card skills-derived-preview" data-role="skill-description-preview">
-                  <strong>{localDraftState.descriptionPreview ? "First non-empty paragraph" : "No description available yet"}</strong>
-                  <p>{localDraftState.descriptionPreview ?? "Add markdown content to preview the derived description that the catalog will store."}</p>
-                </div>
-              </section>
-
-              {renderBindingAssignmentSection(currentDetail)}
-
-              {selectedLocalSkillHasBindings ? (
-                <p className="muted-copy" data-role="skill-delete-blocked-hint">Clear all scope bindings before deleting this skill.</p>
-              ) : null}
-            </div>
-          ) : (
-            <div className="workflow-editor-grid" data-role="skill-detail">
-              <div className="panel__header panel__header--stacked">
-                <div>
-                  <p className="eyebrow">External skill</p>
-                  <h3>{currentDetail.name}</h3>
-                </div>
-                <div className="action-cluster action-cluster--wrap">
-                  <span className="status-badge status-badge--neutral">External</span>
-                  <span className="status-badge status-badge--neutral">Read-only content</span>
-                  {currentDetail.archived ? <span className="status-badge status-badge--neutral">Archived</span> : <span className={getSkillStatusBadgeClass(currentDetail.status)}>{getSkillStatusLabel(currentDetail.status)}</span>}
-                </div>
-              </div>
-
-              <div className="skills-warning-stack">
-                {detailWarnings.map((warning) => (
-                  <div className={`skills-warning skills-warning--${warning.tone}`} key={`${warning.title}-${warning.message}`}>
-                    <strong>{warning.title}</strong>
-                    <p>{warning.message}</p>
-                  </div>
-                ))}
-              </div>
-
-              <section className="workflow-section">
-                <div>
-                  <p className="eyebrow">Source</p>
-                  <h3>Discovery paths</h3>
-                </div>
-                <dl className="skills-path-list">
-                  <div>
-                    <dt>Relative source</dt>
-                    <dd>{currentDetail.relativeSourcePath ?? "—"}</dd>
-                  </div>
-                  <div>
-                    <dt>Source path</dt>
-                    <dd>{currentDetail.sourcePath}</dd>
-                  </div>
-                  <div>
-                    <dt>Content path</dt>
-                    <dd>{currentDetail.contentPath}</dd>
-                  </div>
-                </dl>
-              </section>
-
-              {renderBindingAssignmentSection(currentDetail)}
-
-              <section className="workflow-section">
-                <div>
-                  <p className="eyebrow">SKILL.md preview</p>
-                  <h3>Read-only markdown</h3>
-                </div>
-                {currentDetail.markdownBody ? (
-                  <div className="task-history-card skills-markdown-preview-shell">
-                    <MarkdownContent dataRole="skill-markdown-preview" message={currentDetail.markdownBody} />
-                  </div>
-                ) : (
-                  <div className="task-history-card skills-markdown-preview-shell" data-role="skill-markdown-preview-empty">
-                    <strong>Markdown preview unavailable</strong>
-                    <p>The SKILL.md file is currently unavailable, so Orchestra cannot render a read-only preview.</p>
-                  </div>
-                )}
-              </section>
-            </div>
+              )}
+              tabs={[
+                {
+                  id: "source",
+                  label: "Source",
+                  panel: (
+                    <section className="workflow-section">
+                      <div>
+                        <p className="eyebrow">Source</p>
+                        <h3>Discovery paths</h3>
+                      </div>
+                      <dl className="skills-path-list">
+                        <div>
+                          <dt>Relative source</dt>
+                          <dd>{currentDetail.relativeSourcePath ?? "—"}</dd>
+                        </div>
+                        <div>
+                          <dt>Source path</dt>
+                          <dd>{currentDetail.sourcePath}</dd>
+                        </div>
+                        <div>
+                          <dt>Content path</dt>
+                          <dd>{currentDetail.contentPath}</dd>
+                        </div>
+                      </dl>
+                    </section>
+                  ),
+                },
+                {
+                  id: "assignments",
+                  label: "Assignments",
+                  panel: renderBindingAssignmentSection(currentDetail),
+                },
+                {
+                  id: "preview",
+                  label: "Preview",
+                  panel: (
+                    <section className="workflow-section">
+                      <div>
+                        <p className="eyebrow">SKILL.md preview</p>
+                        <h3>Read-only markdown</h3>
+                      </div>
+                      {currentDetail.markdownBody ? (
+                        <div className="task-history-card skills-markdown-preview-shell">
+                          <MarkdownContent dataRole="skill-markdown-preview" message={currentDetail.markdownBody} />
+                        </div>
+                      ) : (
+                        <div className="task-history-card skills-markdown-preview-shell" data-role="skill-markdown-preview-empty">
+                          <strong>Markdown preview unavailable</strong>
+                          <p>The SKILL.md file is currently unavailable, so Orchestra cannot render a read-only preview.</p>
+                        </div>
+                      )}
+                    </section>
+                  ),
+                },
+              ]}
+            />
           )
         ) : loadingDetail ? (
           <div className="empty-state" data-role="skill-empty-state">

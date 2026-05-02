@@ -148,7 +148,7 @@ describe("desktop harness model limits", () => {
         `),
         (status) => Boolean(status) && status !== "Refreshing…",
       );
-      await clickSelector(sessionId, '[data-role="harness-subnav-models"]');
+      await clickSelector(sessionId, '[data-role="harness-detail-tab-models"]');
       await waitForText(sessionId, "Structured model policies");
       await waitForText(sessionId, "No model limit rows yet. Add a row to choose a provider/model and set limits.");
       expect(await executeScript<number>(sessionId, `

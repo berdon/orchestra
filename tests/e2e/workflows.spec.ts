@@ -26,6 +26,7 @@ test("workflow lanes persist stable global worker references by slug", async ({ 
 
   await page.getByRole("button", { name: "New workflow" }).click();
   await page.getByLabel("Workflow name").fill("Agent Driven Flow");
+  await page.locator('[data-role="workflow-detail-tab-lane"]').click();
   await page.getByLabel("Lane name").fill("Implement");
   await page.getByLabel("Lane key").fill("implement");
   await page.locator('[data-role="lane-owner-type"]').selectOption("agent");

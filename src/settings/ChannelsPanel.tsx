@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import {
   createChannel,
   deleteChannel,
@@ -308,164 +309,206 @@ export function ChannelsPanel() {
       )}
       detail={(
       <>
-        <div className="task-detail-stack">
-          <div className="panel__header panel__header--session-detail">
-            <div>
-              <p className="eyebrow">Channel detail</p>
-              <h3>{creating ? "New channel" : channelDetail?.name ?? "Select a channel"}</h3>
-              <p className="supporting-copy">Connect Telegram to the supervisor session for chat, commands, and notifications.</p>
-            </div>
-            <div className="row-actions">
-              {selectedChannel?.id && !creating ? (
-                <button className="secondary-button" data-role="delete-channel" type="button" disabled={saving} onClick={() => void handleDeleteChannel()}>
-                  Delete channel
+        <SettingsSectionTabs
+          className="task-detail-stack"
+          ariaLabel="Channel settings sections"
+          dataRolePrefix="channel-detail"
+          initialTabId="basics"
+          header={(
+            <div className="panel__header panel__header--session-detail">
+              <div>
+                <p className="eyebrow">Channel detail</p>
+                <h3>{creating ? "New channel" : channelDetail?.name ?? "Select a channel"}</h3>
+                <p className="supporting-copy">Connect Telegram to the supervisor session for chat, commands, and notifications.</p>
+              </div>
+              <div className="row-actions">
+                {selectedChannel?.id && !creating ? (
+                  <button className="secondary-button" data-role="delete-channel" type="button" disabled={saving} onClick={() => void handleDeleteChannel()}>
+                    Delete channel
+                  </button>
+                ) : null}
+                <button className="primary-button" data-role="save-channel" type="button" disabled={saving} onClick={() => void handleSaveChannel()}>
+                  {saving ? "Saving…" : creating ? "Create channel" : "Save channel"}
                 </button>
-              ) : null}
-              <button className="primary-button" data-role="save-channel" type="button" disabled={saving} onClick={() => void handleSaveChannel()}>
-                {saving ? "Saving…" : creating ? "Create channel" : "Save channel"}
-              </button>
-            </div>
-          </div>
-
-          <section className="task-section task-section--compact">
-            <div className="task-section__header">
-              <div>
-                <p className="eyebrow">Step 1</p>
-                <h4>Choose channel type</h4>
-                <p className="supporting-copy">Telegram is currently the only available channel type.</p>
               </div>
             </div>
-            <div className="filter-chip-row" role="tablist" aria-label="Channel kinds">
-              <button className="filter-chip filter-chip--active" data-role="channel-kind-telegram" type="button">Telegram</button>
-            </div>
-          </section>
-
-          <div className="task-editor-grid">
-            <label className="field-group">
-              <span className="field-group__label">Channel name</span>
-              <input className="text-input" data-role="channel-name" value={draft.name ?? ""} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
-            </label>
-            <div className="field-group" {...getTooltipProps("Choose which project Telegram commands should act on by default.")}>
-              <span className="field-group__label">Active project for commands</span>
-              <select className="text-input" data-role="channel-default-project" value={draft.defaultProjectId ?? ""} onChange={(event) => setDraft((current) => ({ ...current, defaultProjectId: event.target.value || null }))}>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.name}</option>
-                ))}
-              </select>
-              <p className="supporting-copy">Commands like /tasks and /task use this project by default.</p>
-            </div>
-          </div>
-
-          <section className="task-section task-section--compact" data-role="telegram-step-token">
-            <div className="task-section__header">
-              <div>
-                <p className="eyebrow">Step 2</p>
-                <h4>Create your Telegram bot</h4>
-                <p className="supporting-copy">Create a bot with @BotFather, then paste the token here.</p>
-              </div>
-              <button className="secondary-button" data-role="validate-telegram-bot" type="button" disabled={validating} onClick={() => void handleValidateBot()}>
-                {validating ? "Validating…" : "Validate bot"}
-              </button>
-            </div>
-            <div className="task-editor-grid">
-              <label className="field-group task-editor-grid__full">
-                <span className="field-group__label">Bot token</span>
-                <input className="text-input" data-role="telegram-bot-token" type="password" value={draft.telegram?.botToken ?? ""} onChange={(event) => updateTelegramDraft({ botToken: event.target.value })} />
-              </label>
-              <label className="field-group task-editor-grid__full">
-                <span className="field-group__label">API base URL (optional)</span>
-                <input className="text-input" data-role="telegram-api-base-url" value={draft.telegram?.apiBaseUrl ?? ""} onChange={(event) => updateTelegramDraft({ apiBaseUrl: event.target.value })} />
-              </label>
-            </div>
-            {botValidation ? <p className="muted-copy" data-role="telegram-bot-validation">Validated bot: @{botValidation.username}</p> : null}
-          </section>
-
-          <section className="task-section task-section--compact" data-role="telegram-step-chat">
-            <div className="task-section__header">
-              <div>
-                <p className="eyebrow">Step 3</p>
-                <h4>Bind a chat</h4>
-                <p className="supporting-copy">Send /start to your bot, then detect recent chats.</p>
-              </div>
-              <button className="secondary-button" data-role="detect-telegram-chats" type="button" disabled={detectingChats} onClick={() => void handleDetectChats()}>
-                {detectingChats ? "Detecting…" : "Detect chats"}
-              </button>
-            </div>
-            <div className="task-editor-grid">
-              <label className="field-group task-editor-grid__full">
-                <span className="field-group__label">Detected chat</span>
-                <select
-                  className="text-input"
-                  data-role="telegram-chat-select"
-                  value={draft.telegram?.chatId ?? ""}
-                  onChange={(event) => {
-                    const candidate = chatCandidates.find((entry) => entry.chatId === event.target.value) ?? null;
-                    updateTelegramDraft({
-                      chatId: candidate?.chatId ?? "",
-                      chatTitle: candidate?.title ?? "",
-                      chatType: candidate?.chatType ?? "private",
-                    });
-                  }}
-                >
-                  <option value="">Select a chat</option>
-                  {chatCandidates.map((candidate) => (
-                    <option key={candidate.chatId} value={candidate.chatId}>{candidate.title}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </section>
-
-          <section className="task-section task-section--compact">
-            <div className="task-section__header">
-              <div>
-                <p className="eyebrow">Step 4</p>
-                <h4>Enable behavior</h4>
-                <p className="supporting-copy">Choose whether notifications follow all projects or only the command project.</p>
-              </div>
-            </div>
-            <div className="task-editor-grid">
-              <label className="field-group task-editor-grid__full" {...getTooltipProps("Choose whether this channel receives notifications for all projects or only the selected command project.")}>
-                <span className="field-group__label">Notification scope</span>
-                <select className="text-input" data-role="telegram-notification-scope" value={draft.telegram?.notificationScope ?? "all_projects"} onChange={(event) => updateTelegramDraft({ notificationScope: event.target.value as "all_projects" | "active_project" })}>
-                  <option value="all_projects">All projects</option>
-                  <option value="active_project">Active project only</option>
-                </select>
-                <span className="supporting-copy">Select All projects to send task-attention notifications for every project. Select Active project only to limit them to the selected command project.</span>
-              </label>
-              <label className="checkbox-field task-editor-grid__full" {...getTooltipProps("Turn Telegram supervisor commands on or off for this channel.")}>
-                <input data-role="telegram-commands-enabled" type="checkbox" checked={draft.telegram?.commandsEnabled ?? true} onChange={(event) => updateTelegramDraft({ commandsEnabled: event.target.checked })} />
-                <span>Enable Telegram supervisor commands (/help, /status, /projects, /tasks, /task, /approve, /needs-work, /mail, /model, /stop, /resume)</span>
-              </label>
-              <label className="checkbox-field task-editor-grid__full">
-                <input data-role="channel-enabled" type="checkbox" checked={Boolean(draft.enabled)} onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))} />
-                <span>Enable channel runtime</span>
-              </label>
-            </div>
-          </section>
-
-          {channelDetail ? (
-            <section className="task-section task-section--compact">
-              <div className="task-section__header">
-                <div>
-                  <p className="eyebrow">Activity</p>
-                  <h4>Recent channel activity</h4>
-                </div>
-              </div>
-              <div className="task-section-list" data-role="channel-activity-list">
-                {activity.length ? activity.map((entry) => (
-                  <article key={entry.id} className="task-history-card">
-                    <div className="workflow-section__header">
-                      <strong>{entry.direction} · {entry.messageKind}</strong>
-                      <span className="status-badge status-badge--neutral status-badge--compact">{entry.status}</span>
+          )}
+          tabs={[
+            {
+              id: "basics",
+              label: "Basics",
+              panel: (
+                <>
+                  <section className="task-section task-section--compact">
+                    <div className="task-section__header">
+                      <div>
+                        <p className="eyebrow">Step 1</p>
+                        <h4>Choose channel type</h4>
+                        <p className="supporting-copy">Telegram is currently the only available channel type.</p>
+                      </div>
                     </div>
-                    <p className="pre-wrap">{entry.body}</p>
-                  </article>
-                )) : <p className="muted-copy">No activity yet.</p>}
-              </div>
-            </section>
-          ) : null}
-        </div>
+                    <div className="filter-chip-row" role="tablist" aria-label="Channel kinds">
+                      <button className="filter-chip filter-chip--active" data-role="channel-kind-telegram" type="button">Telegram</button>
+                    </div>
+                  </section>
+
+                  <section className="task-section task-section--compact" data-role="channel-basics-panel">
+                    <div className="task-section__header">
+                      <div>
+                        <p className="eyebrow">Basics</p>
+                        <h4>Channel identity</h4>
+                      </div>
+                    </div>
+                    <div className="task-editor-grid">
+                      <label className="field-group">
+                        <span className="field-group__label">Channel name</span>
+                        <input className="text-input" data-role="channel-name" value={draft.name ?? ""} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
+                      </label>
+                      <div className="field-group" {...getTooltipProps("Choose which project Telegram commands should act on by default.")}>
+                        <span className="field-group__label">Active project for commands</span>
+                        <select className="text-input" data-role="channel-default-project" value={draft.defaultProjectId ?? ""} onChange={(event) => setDraft((current) => ({ ...current, defaultProjectId: event.target.value || null }))}>
+                          {projects.map((project) => (
+                            <option key={project.id} value={project.id}>{project.name}</option>
+                          ))}
+                        </select>
+                        <p className="supporting-copy">Commands like /tasks and /task use this project by default.</p>
+                      </div>
+                    </div>
+                  </section>
+                </>
+              ),
+            },
+            {
+              id: "bot",
+              label: "Bot",
+              panel: (
+                <section className="task-section task-section--compact" data-role="telegram-step-token">
+                  <div className="task-section__header">
+                    <div>
+                      <p className="eyebrow">Step 2</p>
+                      <h4>Create your Telegram bot</h4>
+                      <p className="supporting-copy">Create a bot with @BotFather, then paste the token here.</p>
+                    </div>
+                    <button className="secondary-button" data-role="validate-telegram-bot" type="button" disabled={validating} onClick={() => void handleValidateBot()}>
+                      {validating ? "Validating…" : "Validate bot"}
+                    </button>
+                  </div>
+                  <div className="task-editor-grid">
+                    <label className="field-group task-editor-grid__full">
+                      <span className="field-group__label">Bot token</span>
+                      <input className="text-input" data-role="telegram-bot-token" type="password" value={draft.telegram?.botToken ?? ""} onChange={(event) => updateTelegramDraft({ botToken: event.target.value })} />
+                    </label>
+                    <label className="field-group task-editor-grid__full">
+                      <span className="field-group__label">API base URL (optional)</span>
+                      <input className="text-input" data-role="telegram-api-base-url" value={draft.telegram?.apiBaseUrl ?? ""} onChange={(event) => updateTelegramDraft({ apiBaseUrl: event.target.value })} />
+                    </label>
+                  </div>
+                  {botValidation ? <p className="muted-copy" data-role="telegram-bot-validation">Validated bot: @{botValidation.username}</p> : null}
+                </section>
+              ),
+            },
+            {
+              id: "chat",
+              label: "Chat",
+              panel: (
+                <section className="task-section task-section--compact" data-role="telegram-step-chat">
+                  <div className="task-section__header">
+                    <div>
+                      <p className="eyebrow">Step 3</p>
+                      <h4>Bind a chat</h4>
+                      <p className="supporting-copy">Send /start to your bot, then detect recent chats.</p>
+                    </div>
+                    <button className="secondary-button" data-role="detect-telegram-chats" type="button" disabled={detectingChats} onClick={() => void handleDetectChats()}>
+                      {detectingChats ? "Detecting…" : "Detect chats"}
+                    </button>
+                  </div>
+                  <div className="task-editor-grid">
+                    <label className="field-group task-editor-grid__full">
+                      <span className="field-group__label">Detected chat</span>
+                      <select
+                        className="text-input"
+                        data-role="telegram-chat-select"
+                        value={draft.telegram?.chatId ?? ""}
+                        onChange={(event) => {
+                          const candidate = chatCandidates.find((entry) => entry.chatId === event.target.value) ?? null;
+                          updateTelegramDraft({
+                            chatId: candidate?.chatId ?? "",
+                            chatTitle: candidate?.title ?? "",
+                            chatType: candidate?.chatType ?? "private",
+                          });
+                        }}
+                      >
+                        <option value="">Select a chat</option>
+                        {chatCandidates.map((candidate) => (
+                          <option key={candidate.chatId} value={candidate.chatId}>{candidate.title}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </section>
+              ),
+            },
+            {
+              id: "behavior",
+              label: "Behavior",
+              panel: (
+                <section className="task-section task-section--compact">
+                  <div className="task-section__header">
+                    <div>
+                      <p className="eyebrow">Step 4</p>
+                      <h4>Enable behavior</h4>
+                      <p className="supporting-copy">Choose whether notifications follow all projects or only the command project.</p>
+                    </div>
+                  </div>
+                  <div className="task-editor-grid">
+                    <label className="field-group task-editor-grid__full" {...getTooltipProps("Choose whether this channel receives notifications for all projects or only the selected command project.")}>
+                      <span className="field-group__label">Notification scope</span>
+                      <select className="text-input" data-role="telegram-notification-scope" value={draft.telegram?.notificationScope ?? "all_projects"} onChange={(event) => updateTelegramDraft({ notificationScope: event.target.value as "all_projects" | "active_project" })}>
+                        <option value="all_projects">All projects</option>
+                        <option value="active_project">Active project only</option>
+                      </select>
+                      <span className="supporting-copy">Select All projects to send task-attention notifications for every project. Select Active project only to limit them to the selected command project.</span>
+                    </label>
+                    <label className="checkbox-field task-editor-grid__full" {...getTooltipProps("Turn Telegram supervisor commands on or off for this channel.")}>
+                      <input data-role="telegram-commands-enabled" type="checkbox" checked={draft.telegram?.commandsEnabled ?? true} onChange={(event) => updateTelegramDraft({ commandsEnabled: event.target.checked })} />
+                      <span>Enable Telegram supervisor commands (/help, /status, /projects, /tasks, /task, /approve, /needs-work, /mail, /model, /stop, /resume)</span>
+                    </label>
+                    <label className="checkbox-field task-editor-grid__full">
+                      <input data-role="channel-enabled" type="checkbox" checked={Boolean(draft.enabled)} onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))} />
+                      <span>Enable channel runtime</span>
+                    </label>
+                  </div>
+                </section>
+              ),
+            },
+            {
+              id: "activity",
+              label: "Activity",
+              hidden: !channelDetail,
+              panel: channelDetail ? (
+                <section className="task-section task-section--compact">
+                  <div className="task-section__header">
+                    <div>
+                      <p className="eyebrow">Activity</p>
+                      <h4>Recent channel activity</h4>
+                    </div>
+                  </div>
+                  <div className="task-section-list" data-role="channel-activity-list">
+                    {activity.length ? activity.map((entry) => (
+                      <article key={entry.id} className="task-history-card">
+                        <div className="workflow-section__header">
+                          <strong>{entry.direction} · {entry.messageKind}</strong>
+                          <span className="status-badge status-badge--neutral status-badge--compact">{entry.status}</span>
+                        </div>
+                        <p className="pre-wrap">{entry.body}</p>
+                      </article>
+                    )) : <p className="muted-copy">No activity yet.</p>}
+                  </div>
+                </section>
+              ) : null,
+            },
+          ]}
+        />
       </>
       )}
     />

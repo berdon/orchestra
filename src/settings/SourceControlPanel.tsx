@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import {
   buildSourceControlPreviewRows,
   getSourceControlTemplateErrors,
@@ -72,76 +73,110 @@ export function SourceControlPanel() {
   }
 
   return (
-    <section className="panel source-control-panel">
-      <div className="panel__header panel__header--stacked">
-        <div>
-          <p className="eyebrow">Source Control</p>
-          <h3>Global git identity defaults</h3>
-        </div>
-        <div className="action-cluster action-cluster--wrap">
-          <button className="secondary-button" data-role="save-source-control-settings" type="button" disabled={saveDisabled} onClick={() => void handleSave()}>
-            {saving ? "Saving…" : "Save source control settings"}
-          </button>
-        </div>
-      </div>
-
-      {loading ? <p className="muted-copy">Loading source control settings…</p> : null}
-      {error ? <p className="error-copy">{error}</p> : null}
-
-      <div className="task-editor-grid">
-        <label className="field-group">
-          <span className="field-group__label">Default git user.name template</span>
-          <input className="text-input" data-role="source-control-git-user-name-template" value={gitUserNameTemplate} disabled={loading || saving} onChange={(event) => setGitUserNameTemplate(event.target.value)} />
-          <span className="field-group__hint">Examples: <code>Orchestra {"{role}"}</code> or <code>Client reviewer</code>.</span>
-          {templateErrors.gitUserNameTemplate.length ? <span className="error-copy">Unknown variables: {templateErrors.gitUserNameTemplate.join(", ")}</span> : null}
-        </label>
-        <label className="field-group">
-          <span className="field-group__label">Default git user.email template</span>
-          <input className="text-input" data-role="source-control-git-email-template" value={gitEmailTemplate} disabled={loading || saving} onChange={(event) => setGitEmailTemplate(event.target.value)} />
-          <span className="field-group__hint">Examples: <code>orchestra+{"{role}"}{"{agent}"}@example.com</code>.</span>
-          {templateErrors.gitEmailTemplate.length ? <span className="error-copy">Unknown variables: {templateErrors.gitEmailTemplate.join(", ")}</span> : null}
-        </label>
-      </div>
-
-      <section className="task-section task-section--compact">
-        <div className="task-section__header">
+    <SettingsSectionTabs
+      className="panel source-control-panel"
+      ariaLabel="Source control settings sections"
+      dataRolePrefix="source-control-detail"
+      initialTabId="defaults"
+      header={(
+        <div className="panel__header panel__header--stacked">
           <div>
-            <p className="eyebrow">Variables</p>
-            <h4>Supported template variables</h4>
+            <p className="eyebrow">Source Control</p>
+            <h3>Global git identity defaults</h3>
+          </div>
+          <div className="action-cluster action-cluster--wrap">
+            <button className="secondary-button" data-role="save-source-control-settings" type="button" disabled={saveDisabled} onClick={() => void handleSave()}>
+              {saving ? "Saving…" : "Save source control settings"}
+            </button>
           </div>
         </div>
-        <div className="bridge-diagnostics-table-wrap">
-          <table className="task-table" data-role="source-control-variable-table">
-            <thead>
-              <tr>
-                <th>Variable</th>
-                <th>Meaning</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><code>{"{role}"}</code></td>
-                <td>Current role slug in role-owned worker contexts; empty otherwise.</td>
-              </tr>
-              <tr>
-                <td><code>{"{agent}"}</code></td>
-                <td>Current agent slug in agent-owned worker contexts; empty otherwise.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="task-section task-section--compact">
-        <div className="task-section__header">
-          <div>
-            <p className="eyebrow">Preview</p>
-            <h4>Resolved git identity preview</h4>
-          </div>
-        </div>
-        <SourceControlPreviewTable rows={previewRows} dataRole="source-control-preview-table" />
-        <p className="muted-copy">Last updated: {formatDateTime(updatedAt)}</p>
-      </section>
-    </section>
+      )}
+      leadingContent={(
+        <>
+          {loading ? <p className="muted-copy">Loading source control settings…</p> : null}
+          {error ? <p className="error-copy">{error}</p> : null}
+        </>
+      )}
+      tabs={[
+        {
+          id: "defaults",
+          label: "Defaults",
+          panel: (
+            <section className="task-section task-section--compact" data-role="source-control-defaults-panel">
+              <div className="task-section__header">
+                <div>
+                  <p className="eyebrow">Defaults</p>
+                  <h4>Global git identity templates</h4>
+                </div>
+              </div>
+              <div className="task-editor-grid">
+                <label className="field-group">
+                  <span className="field-group__label">Default git user.name template</span>
+                  <input className="text-input" data-role="source-control-git-user-name-template" value={gitUserNameTemplate} disabled={loading || saving} onChange={(event) => setGitUserNameTemplate(event.target.value)} />
+                  <span className="field-group__hint">Examples: <code>Orchestra {"{role}"}</code> or <code>Client reviewer</code>.</span>
+                  {templateErrors.gitUserNameTemplate.length ? <span className="error-copy">Unknown variables: {templateErrors.gitUserNameTemplate.join(", ")}</span> : null}
+                </label>
+                <label className="field-group">
+                  <span className="field-group__label">Default git user.email template</span>
+                  <input className="text-input" data-role="source-control-git-email-template" value={gitEmailTemplate} disabled={loading || saving} onChange={(event) => setGitEmailTemplate(event.target.value)} />
+                  <span className="field-group__hint">Examples: <code>orchestra+{"{role}"}{"{agent}"}@example.com</code>.</span>
+                  {templateErrors.gitEmailTemplate.length ? <span className="error-copy">Unknown variables: {templateErrors.gitEmailTemplate.join(", ")}</span> : null}
+                </label>
+              </div>
+            </section>
+          ),
+        },
+        {
+          id: "variables",
+          label: "Variables",
+          panel: (
+            <section className="task-section task-section--compact">
+              <div className="task-section__header">
+                <div>
+                  <p className="eyebrow">Variables</p>
+                  <h4>Supported template variables</h4>
+                </div>
+              </div>
+              <div className="bridge-diagnostics-table-wrap">
+                <table className="task-table" data-role="source-control-variable-table">
+                  <thead>
+                    <tr>
+                      <th>Variable</th>
+                      <th>Meaning</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>{"{role}"}</code></td>
+                      <td>Current role slug in role-owned worker contexts; empty otherwise.</td>
+                    </tr>
+                    <tr>
+                      <td><code>{"{agent}"}</code></td>
+                      <td>Current agent slug in agent-owned worker contexts; empty otherwise.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ),
+        },
+        {
+          id: "preview",
+          label: "Preview",
+          panel: (
+            <section className="task-section task-section--compact">
+              <div className="task-section__header">
+                <div>
+                  <p className="eyebrow">Preview</p>
+                  <h4>Resolved git identity preview</h4>
+                </div>
+              </div>
+              <SourceControlPreviewTable rows={previewRows} dataRole="source-control-preview-table" />
+              <p className="muted-copy">Last updated: {formatDateTime(updatedAt)}</p>
+            </section>
+          ),
+        },
+      ]}
+    />
   );
 }
