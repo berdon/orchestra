@@ -69,17 +69,34 @@ test("notes page uses the shared mobile sub-navigation header and action menu on
   await page.goto("/?page=notes&projectId=project-notes-1");
 
   const mobileSubnav = page.locator('[data-role="notes-mobile-subnav-shell"]');
-  const floatingSubnav = page.locator('[data-role="notes-mobile-subnav-floating-shell"]');
   const mobileSelect = page.locator('[data-role="notes-mobile-subnav-select-control"]');
 
   await expect(mobileSubnav).toBeVisible();
   await expect(mobileSelect).toBeVisible();
+  await expect(mobileSubnav.locator('.settings-mobile-subnav__label')).toHaveCount(0);
   await expect(page.locator('[data-role="notes-mobile-subnav-menu-trigger"]')).toBeVisible();
   await expect(page.locator('.notes-page__navigation.settings-mobile-subnav-panel')).toBeHidden();
   await expect(page.locator('.notes-page__nav-tree.settings-mobile-subnav-list')).toBeHidden();
 
   await mobileSelect.selectOption({ label: "Project · Note · planning/roadmap.md" });
   await expect(page.locator('[data-role="notes-markdown-editor"]')).toHaveValue(/Project roadmap note body\./);
+
+  const detailMetrics = await page.evaluate(() => {
+    const detail = document.querySelector('.notes-page__detail')?.getBoundingClientRect();
+    const editor = document.querySelector('.notes-markdown-editor')?.getBoundingClientRect();
+    return detail && editor
+      ? {
+          detailLeft: detail.left,
+          detailWidth: detail.width,
+          editorWidth: editor.width,
+          viewportWidth: window.innerWidth,
+        }
+      : null;
+  });
+  expect(detailMetrics).not.toBeNull();
+  expect(detailMetrics?.detailLeft ?? 0).toBeLessThanOrEqual(16);
+  expect(detailMetrics?.detailWidth ?? 0).toBeGreaterThanOrEqual((detailMetrics?.viewportWidth ?? 0) - 32);
+  expect(detailMetrics?.editorWidth ?? 0).toBeGreaterThanOrEqual((detailMetrics?.viewportWidth ?? 0) - 64);
 
   await page.locator('[data-role="notes-mobile-subnav-menu-trigger"]').click();
   const actionMenu = page.locator('.task-action-menu__dropdown');
@@ -98,7 +115,7 @@ test("notes page uses the shared mobile sub-navigation header and action menu on
     window.dispatchEvent(new Event('resize'));
   });
   await page.waitForFunction(() => Boolean(document.querySelector('[data-role="notes-mobile-subnav-floating-shell"]')));
-  await expect(floatingSubnav).toHaveAttribute('data-scroll-state', 'hidden');
+  await page.waitForFunction(() => document.querySelector('[data-role="notes-mobile-subnav-floating-shell"]')?.getAttribute('data-scroll-state') === 'hidden');
 
   await page.evaluate(() => {
     const content = document.querySelector('.content') as HTMLElement | null;
@@ -107,7 +124,7 @@ test("notes page uses the shared mobile sub-navigation header and action menu on
       content.dispatchEvent(new Event('scroll'));
     }
   });
-  await expect(floatingSubnav).toHaveAttribute('data-scroll-state', 'hidden');
+  await page.waitForFunction(() => document.querySelector('[data-role="notes-mobile-subnav-floating-shell"]')?.getAttribute('data-scroll-state') === 'hidden');
 
   await page.evaluate(() => {
     const content = document.querySelector('.content') as HTMLElement | null;
@@ -116,5 +133,5 @@ test("notes page uses the shared mobile sub-navigation header and action menu on
       content.dispatchEvent(new Event('scroll'));
     }
   });
-  await expect(floatingSubnav).toHaveAttribute('data-scroll-state', 'visible');
+  await page.waitForFunction(() => document.querySelector('[data-role="notes-mobile-subnav-floating-shell"]')?.getAttribute('data-scroll-state') === 'visible');
 });

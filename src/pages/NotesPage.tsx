@@ -808,7 +808,7 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
       {projectId ? (
         <SettingsMobileSubnavHeader
           dataRolePrefix="notes"
-          selectLabel="Location"
+          selectLabel={null}
           ariaLabel="Note location"
           value={notesMobileSubnavValue}
           emptyOptionLabel={loading ? "Loading notes…" : tree?.roots.length ? "Select note location" : "No notes available"}

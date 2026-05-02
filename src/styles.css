@@ -6486,6 +6486,10 @@ strong {
   display: none !important;
 }
 
+.app-shell[data-mobile-navigation="true"] .notes-page.resizable-sidebar-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 /* Mobile Harness settings should remain touch-friendly and avoid horizontal overflow. */
 .app-shell[data-mobile-navigation="true"] .panel,
 .app-shell[data-mobile-navigation="true"] .panel-stack,

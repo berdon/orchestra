@@ -13,6 +13,10 @@ describe("NotesPage mobile sub-navigation contract", () => {
     expect(notesPageSource).toContain('className="notes-page__nav-tree settings-mobile-subnav-list"');
   });
 
+  it("uses a compact mobile header for notes so the selector does not spend extra vertical space", () => {
+    expect(notesPageSource).toContain("selectLabel={null}");
+  });
+
   it("marks redundant desktop actions so the mobile header becomes the primary action surface", () => {
     const redundantActionClassCount = notesPageSource.match(/settings-mobile-subnav-redundant-actions/g)?.length ?? 0;
     expect(redundantActionClassCount).toBeGreaterThanOrEqual(2);

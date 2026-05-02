@@ -20,7 +20,7 @@ interface FloatingHeaderLayout {
 
 interface SettingsMobileSubnavHeaderProps {
   dataRolePrefix: string;
-  selectLabel?: string;
+  selectLabel?: string | null;
   ariaLabel: string;
   value: string | null;
   emptyOptionLabel?: string;
@@ -203,7 +203,7 @@ export function SettingsMobileSubnavHeader({
 
   const renderPicker = (floating: boolean) => (
     <div className="settings-mobile-subnav__picker">
-      <span className="settings-mobile-subnav__label">{selectLabel}</span>
+      {selectLabel ? <span className="settings-mobile-subnav__label">{selectLabel}</span> : null}
       <select
         className="select-input settings-mobile-subnav__control"
         data-role={floating ? `${dataRolePrefix}-mobile-subnav-select-control-floating` : `${dataRolePrefix}-mobile-subnav-select-control`}
