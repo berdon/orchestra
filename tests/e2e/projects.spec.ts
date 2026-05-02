@@ -23,6 +23,12 @@ function createHostedWebSecretsApiMock() {
   const repositories: Array<Record<string, unknown>> = [];
   let secretCounter = 1;
   const secrets: Array<Record<string, string | null>> = [];
+  const requestCounts = {
+    taskAutomation: 0,
+    sourceControlGlobal: 0,
+    sourceControlProject: 0,
+    secrets: 0,
+  };
 
   const bootstrap = {
     contractVersion: "2026-04-23",
@@ -162,6 +168,7 @@ function createHostedWebSecretsApiMock() {
 
   return {
     secrets,
+    requestCounts,
     async handle(route: any) {
       const request = route.request();
       const url = new URL(request.url());
@@ -178,27 +185,32 @@ function createHostedWebSecretsApiMock() {
         return fulfillJson(route, { ...project, repositories });
       }
       if (pathname === "/api/v1/project-settings/task-automation" && method === "GET") {
+        requestCounts.taskAutomation += 1;
         return fulfillJson(route, {
           projectSlug: project.slug,
           autoDispatchOnBlockerCompletion: true,
           updatedAt: "2026-05-01T00:00:00.000Z",
         });
       }
+      if (pathname === "/api/v1/settings/source-control" && method === "GET") {
+        requestCounts.sourceControlGlobal += 1;
+        return fulfillJson(route, {
+          gitUserNameTemplate: null,
+          gitEmailTemplate: null,
+          updatedAt: "2026-05-01T00:00:00.000Z",
+        });
+      }
       if (pathname === "/api/v1/project-settings/source-control" && method === "GET") {
-        return fulfillJson(route, url.searchParams.get("projectSlug")
-          ? {
-              projectSlug: project.slug,
-              gitUserNameTemplate: null,
-              gitEmailTemplate: null,
-              updatedAt: "2026-05-01T00:00:00.000Z",
-            }
-          : {
-              gitUserNameTemplate: null,
-              gitEmailTemplate: null,
-              updatedAt: "2026-05-01T00:00:00.000Z",
-            });
+        requestCounts.sourceControlProject += 1;
+        return fulfillJson(route, {
+          projectSlug: project.slug,
+          gitUserNameTemplate: null,
+          gitEmailTemplate: null,
+          updatedAt: "2026-05-01T00:00:00.000Z",
+        });
       }
       if (pathname === "/api/v1/project-settings/secrets" && method === "GET") {
+        requestCounts.secrets += 1;
         return fulfillJson(route, currentSecretsState());
       }
       if (pathname === "/api/v1/project-settings/secrets" && method === "POST") {
@@ -316,6 +328,37 @@ test("project settings detail uses tabs and shows the browser unsupported secret
   await expect(page.locator('[data-role="project-secrets-status"]')).toContainText("Unsupported");
   await expect(page.locator('[data-role="project-secrets-status"]')).toContainText("unavailable in the browser/mock host");
   await expect(page.locator('[data-role="save-project-secret"]')).toBeDisabled();
+});
+
+test("project settings lazily loads tab-specific hosted-web settings data", async ({ page }) => {
+  const api = createHostedWebSecretsApiMock();
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.__ORCHESTRA_HOST_MODE__ = "hosted_web";
+    window.confirm = () => true;
+  });
+  await page.route("**/api/v1/**", (route) => api.handle(route));
+
+  await page.goto("/?page=settings&settingsTab=projects");
+  await expect(page.locator('[data-role="project-detail-tabpanel-general"]')).toBeVisible();
+
+  expect(api.requestCounts.taskAutomation).toBe(0);
+  expect(api.requestCounts.sourceControlGlobal).toBe(0);
+  expect(api.requestCounts.sourceControlProject).toBe(0);
+  expect(api.requestCounts.secrets).toBe(0);
+
+  await page.locator('[data-role="project-detail-tab-automation"]').click();
+  await expect(page.locator('[data-role="project-detail-tabpanel-automation"]')).toBeVisible();
+  await expect.poll(() => api.requestCounts.taskAutomation).toBe(1);
+
+  await page.locator('[data-role="project-detail-tab-source-control"]').click();
+  await expect(page.locator('[data-role="project-detail-tabpanel-source-control"]')).toBeVisible();
+  await expect.poll(() => api.requestCounts.sourceControlGlobal).toBe(1);
+  await expect.poll(() => api.requestCounts.sourceControlProject).toBe(1);
+
+  await page.locator('[data-role="project-detail-tab-secrets"]').click();
+  await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toBeVisible();
+  await expect.poll(() => api.requestCounts.secrets).toBe(1);
 });
 
 test("project settings secrets tab supports hosted-web CRUD and rotation flows without revealing values", async ({ page }) => {

@@ -4080,6 +4080,7 @@ async fn get_global_source_control_settings(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     get_source_control_settings()
+        .await
         .map(Json)
         .map_err(command_api_error)
 }
@@ -4091,6 +4092,7 @@ async fn patch_global_source_control_settings(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     update_source_control_settings(input.git_user_name_template, input.git_email_template)
+        .await
         .map(Json)
         .map_err(command_api_error)
 }
@@ -4102,6 +4104,7 @@ async fn get_project_session_prompt_settings(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     project_setting_commands::get_session_prompt_settings(query.project_slug)
+        .await
         .map(Json)
         .map_err(command_api_error)
 }
@@ -4113,6 +4116,7 @@ async fn patch_project_session_prompt_settings(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     project_setting_commands::update_session_prompt_settings(input.project_slug, input.template)
+        .await
         .map(Json)
         .map_err(command_api_error)
 }
@@ -4124,6 +4128,7 @@ async fn get_project_task_automation_settings(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     project_setting_commands::get_task_automation_settings(query.project_slug)
+        .await
         .map(Json)
         .map_err(command_api_error)
 }
@@ -4138,6 +4143,7 @@ async fn patch_project_task_automation_settings(
         input.project_slug,
         input.auto_dispatch_on_blocker_completion,
     )
+    .await
     .map(Json)
     .map_err(command_api_error)
 }
@@ -4149,6 +4155,7 @@ async fn get_project_source_control_settings(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     project_setting_commands::get_project_source_control_settings(query.project_slug)
+        .await
         .map(Json)
         .map_err(command_api_error)
 }
@@ -4164,6 +4171,7 @@ async fn patch_project_source_control_settings(
         input.git_user_name_template,
         input.git_email_template,
     )
+    .await
     .map(Json)
     .map_err(command_api_error)
 }
@@ -4175,6 +4183,7 @@ async fn get_project_secrets_settings(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     project_setting_commands::get_project_secrets(query.project_slug)
+        .await
         .map(Json)
         .map_err(command_api_error)
 }
@@ -4193,6 +4202,7 @@ async fn post_project_secret_settings(
             value: input.value,
         },
     )
+    .await
     .map(Json)
     .map_err(command_api_error)
 }
@@ -4212,6 +4222,7 @@ async fn patch_project_secret_settings(
             value: input.value,
         },
     )
+    .await
     .map(Json)
     .map_err(command_api_error)
 }
@@ -4224,6 +4235,7 @@ async fn delete_project_secret_settings(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     project_setting_commands::delete_project_secret(query.project_slug, secret_key)
+        .await
         .map(Json)
         .map_err(command_api_error)
 }
@@ -4239,6 +4251,7 @@ async fn get_worker_overlay_settings(
         query.worker_type,
         query.worker_slug,
     )
+    .await
     .map(Json)
     .map_err(command_api_error)
 }
@@ -4255,6 +4268,7 @@ async fn patch_worker_overlay_settings(
         input.worker_slug,
         input.prompt,
     )
+    .await
     .map(Json)
     .map_err(command_api_error)
 }

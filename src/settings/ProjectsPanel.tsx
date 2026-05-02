@@ -116,7 +116,12 @@ export function ProjectsPanel() {
   const [projectTaskPrefixEdited, setProjectTaskPrefixEdited] = useState(false);
   const [deleteProjectConfirmationArmed, setDeleteProjectConfirmationArmed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingAutomation, setLoadingAutomation] = useState(false);
+  const [loadingSourceControl, setLoadingSourceControl] = useState(false);
   const [loadingSecrets, setLoadingSecrets] = useState(false);
+  const [automationLoadedProjectSlug, setAutomationLoadedProjectSlug] = useState<string | null>(null);
+  const [sourceControlLoadedProjectSlug, setSourceControlLoadedProjectSlug] = useState<string | null>(null);
+  const [secretsLoadedProjectSlug, setSecretsLoadedProjectSlug] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -194,28 +199,61 @@ export function ProjectsPanel() {
     setError(null);
     try {
       const detail = await getProject(projectId);
-      const [automationSettings, globalSourceControlSettings, nextProjectSourceControlSettings] = await Promise.all([
-        getTaskAutomationSettings(detail.slug),
-        getSourceControlSettings(),
-        getProjectSourceControlSettings(detail.slug),
-      ]);
       setProjectDetail(detail);
       setProjectDraft({ name: detail.name, description: detail.description ?? "", taskPrefix: detail.taskPrefix });
-      setTaskAutomationSettings(automationSettings);
-      setSourceControlSettings(globalSourceControlSettings);
-      setProjectSourceControlSettings(nextProjectSourceControlSettings);
+      setTaskAutomationSettings(null);
+      setSourceControlSettings(null);
+      setProjectSourceControlSettings(null);
       setProjectSecretsState(null);
+      setAutomationLoadedProjectSlug(null);
+      setSourceControlLoadedProjectSlug(null);
+      setSecretsLoadedProjectSlug(null);
       setSecretDraft(createBlankSecretDraft());
       setEditingSecretKey(null);
       setProjectTaskPrefixEdited(false);
-      setAutoDispatchOnBlockerCompletion(automationSettings.autoDispatchOnBlockerCompletion);
-      setGitUserNameTemplate(nextProjectSourceControlSettings.gitUserNameTemplate ?? "");
-      setGitEmailTemplate(nextProjectSourceControlSettings.gitEmailTemplate ?? "");
+      setAutoDispatchOnBlockerCompletion(false);
+      setGitUserNameTemplate("");
+      setGitEmailTemplate("");
       setIsCreatingProject(false);
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to load project detail.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadAutomationSettings(projectSlug: string) {
+    setLoadingAutomation(true);
+    setError(null);
+    try {
+      const automationSettings = await getTaskAutomationSettings(projectSlug);
+      setTaskAutomationSettings(automationSettings);
+      setAutoDispatchOnBlockerCompletion(automationSettings.autoDispatchOnBlockerCompletion);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to load task automation settings.");
+    } finally {
+      setAutomationLoadedProjectSlug(projectSlug);
+      setLoadingAutomation(false);
+    }
+  }
+
+  async function loadSourceControlTabSettings(projectSlug: string) {
+    setLoadingSourceControl(true);
+    setError(null);
+    try {
+      const [globalSourceControlSettings, nextProjectSourceControlSettings] = await Promise.all([
+        getSourceControlSettings(),
+        getProjectSourceControlSettings(projectSlug),
+      ]);
+      setSourceControlSettings(globalSourceControlSettings);
+      setProjectSourceControlSettings(nextProjectSourceControlSettings);
+      setGitUserNameTemplate(nextProjectSourceControlSettings.gitUserNameTemplate ?? "");
+      setGitEmailTemplate(nextProjectSourceControlSettings.gitEmailTemplate ?? "");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Unable to load project source control settings.");
+    } finally {
+      setSourceControlLoadedProjectSlug(projectSlug);
+      setLoadingSourceControl(false);
     }
   }
 
@@ -227,6 +265,7 @@ export function ProjectsPanel() {
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Unable to load project secrets.");
     } finally {
+      setSecretsLoadedProjectSlug(projectSlug);
       setLoadingSecrets(false);
     }
   }
@@ -249,10 +288,37 @@ export function ProjectsPanel() {
   }, [activeDetailTab, projectDetailTabs]);
 
   useEffect(() => {
-    if (activeDetailTab === "secrets" && projectDetail?.slug && !loadingSecrets && !projectSecretsState) {
+    if (
+      activeDetailTab === "automation"
+      && projectDetail?.slug
+      && !loadingAutomation
+      && automationLoadedProjectSlug !== projectDetail.slug
+    ) {
+      void loadAutomationSettings(projectDetail.slug);
+    }
+  }, [activeDetailTab, automationLoadedProjectSlug, loadingAutomation, projectDetail?.slug]);
+
+  useEffect(() => {
+    if (
+      activeDetailTab === "source-control"
+      && projectDetail?.slug
+      && !loadingSourceControl
+      && sourceControlLoadedProjectSlug !== projectDetail.slug
+    ) {
+      void loadSourceControlTabSettings(projectDetail.slug);
+    }
+  }, [activeDetailTab, loadingSourceControl, projectDetail?.slug, sourceControlLoadedProjectSlug]);
+
+  useEffect(() => {
+    if (
+      activeDetailTab === "secrets"
+      && projectDetail?.slug
+      && !loadingSecrets
+      && secretsLoadedProjectSlug !== projectDetail.slug
+    ) {
       void loadSecrets(projectDetail.slug);
     }
-  }, [activeDetailTab, loadingSecrets, projectDetail?.slug, projectSecretsState]);
+  }, [activeDetailTab, loadingSecrets, projectDetail?.slug, secretsLoadedProjectSlug]);
 
   function handleProjectNameChange(value: string) {
     setProjectDraft((current) => ({
@@ -490,7 +556,13 @@ export function ProjectsPanel() {
       setProjectDetail(null);
       setProjectDraft(createBlankProjectDraft());
       setRepositoryDraft(createBlankRepositoryDraft());
+      setTaskAutomationSettings(null);
+      setSourceControlSettings(null);
+      setProjectSourceControlSettings(null);
       setProjectSecretsState(null);
+      setAutomationLoadedProjectSlug(null);
+      setSourceControlLoadedProjectSlug(null);
+      setSecretsLoadedProjectSlug(null);
       setSelectedProjectId(null);
       setIsCreatingProject(false);
       setDeleteProjectConfirmationArmed(false);
@@ -547,23 +619,28 @@ export function ProjectsPanel() {
                 className="secondary-button"
                 data-role="save-project-automation-settings"
                 type="button"
-                disabled={saving || !selectedProject}
+                disabled={saving || !selectedProject || !taskAutomationSettings}
                 onClick={() => void handleSaveTaskAutomationSettings()}
               >
                 Save automation settings
               </button>
             </div>
-            <label className="field-group task-editor-grid__full" data-role="project-automation-settings" {...getTooltipProps("Automatically dispatch tasks when creation, unblocking, or dependency changes make them ready for work.")}>
-              <span className="field-group__label">Enable auto task dispatching for newly work-ready tasks</span>
-              <input
-                className="checkbox-input"
-                data-role="project-auto-dispatch-on-blocker-completion"
-                type="checkbox"
-                checked={autoDispatchOnBlockerCompletion}
-                onChange={(event) => setAutoDispatchOnBlockerCompletion(event.target.checked)}
-              />
-            </label>
-            <p className="muted-copy">Last updated: {taskAutomationSettings?.updatedAt ? new Date(taskAutomationSettings.updatedAt).toLocaleString() : "—"}</p>
+            {loadingAutomation && !taskAutomationSettings ? <p className="muted-copy">Loading automation settings…</p> : null}
+            {taskAutomationSettings ? (
+              <>
+                <label className="field-group task-editor-grid__full" data-role="project-automation-settings" {...getTooltipProps("Automatically dispatch tasks when creation, unblocking, or dependency changes make them ready for work.")}>
+                  <span className="field-group__label">Enable auto task dispatching for newly work-ready tasks</span>
+                  <input
+                    className="checkbox-input"
+                    data-role="project-auto-dispatch-on-blocker-completion"
+                    type="checkbox"
+                    checked={autoDispatchOnBlockerCompletion}
+                    onChange={(event) => setAutoDispatchOnBlockerCompletion(event.target.checked)}
+                  />
+                </label>
+                <p className="muted-copy">Last updated: {taskAutomationSettings.updatedAt ? new Date(taskAutomationSettings.updatedAt).toLocaleString() : "—"}</p>
+              </>
+            ) : null}
           </section>
         ) : null;
       case "source-control":
@@ -579,26 +656,31 @@ export function ProjectsPanel() {
                 className="secondary-button"
                 data-role="save-project-source-control-settings"
                 type="button"
-                disabled={saving || Boolean(sourceControlTemplateErrors.gitUserNameTemplate.length) || Boolean(sourceControlTemplateErrors.gitEmailTemplate.length) || !selectedProject}
+                disabled={saving || !sourceControlSettings || !projectSourceControlSettings || Boolean(sourceControlTemplateErrors.gitUserNameTemplate.length) || Boolean(sourceControlTemplateErrors.gitEmailTemplate.length) || !selectedProject}
                 onClick={() => void handleSaveProjectSourceControlSettings()}
               >
                 Save source control overrides
               </button>
             </div>
-            <div className="task-editor-grid" data-role="project-source-control-settings">
-              <label className="field-group">
-                <span className="field-group__label">Git user.name override</span>
-                <input className="text-input" data-role="project-git-user-name-template" value={gitUserNameTemplate} onChange={(event) => setGitUserNameTemplate(event.target.value)} />
-                {sourceControlTemplateErrors.gitUserNameTemplate.length ? <span className="error-copy">Unknown variables: {sourceControlTemplateErrors.gitUserNameTemplate.join(", ")}</span> : null}
-              </label>
-              <label className="field-group">
-                <span className="field-group__label">Git user.email override</span>
-                <input className="text-input" data-role="project-git-email-template" value={gitEmailTemplate} onChange={(event) => setGitEmailTemplate(event.target.value)} />
-                {sourceControlTemplateErrors.gitEmailTemplate.length ? <span className="error-copy">Unknown variables: {sourceControlTemplateErrors.gitEmailTemplate.join(", ")}</span> : null}
-              </label>
-            </div>
-            <SourceControlPreviewTable rows={sourceControlPreviewRows} dataRole="project-source-control-preview-table" />
-            <p className="muted-copy">Last updated: {projectSourceControlSettings?.updatedAt ? new Date(projectSourceControlSettings.updatedAt).toLocaleString() : "—"}</p>
+            {loadingSourceControl && (!sourceControlSettings || !projectSourceControlSettings) ? <p className="muted-copy">Loading source control settings…</p> : null}
+            {sourceControlSettings && projectSourceControlSettings ? (
+              <>
+                <div className="task-editor-grid" data-role="project-source-control-settings">
+                  <label className="field-group">
+                    <span className="field-group__label">Git user.name override</span>
+                    <input className="text-input" data-role="project-git-user-name-template" value={gitUserNameTemplate} onChange={(event) => setGitUserNameTemplate(event.target.value)} />
+                    {sourceControlTemplateErrors.gitUserNameTemplate.length ? <span className="error-copy">Unknown variables: {sourceControlTemplateErrors.gitUserNameTemplate.join(", ")}</span> : null}
+                  </label>
+                  <label className="field-group">
+                    <span className="field-group__label">Git user.email override</span>
+                    <input className="text-input" data-role="project-git-email-template" value={gitEmailTemplate} onChange={(event) => setGitEmailTemplate(event.target.value)} />
+                    {sourceControlTemplateErrors.gitEmailTemplate.length ? <span className="error-copy">Unknown variables: {sourceControlTemplateErrors.gitEmailTemplate.join(", ")}</span> : null}
+                  </label>
+                </div>
+                <SourceControlPreviewTable rows={sourceControlPreviewRows} dataRole="project-source-control-preview-table" />
+                <p className="muted-copy">Last updated: {projectSourceControlSettings.updatedAt ? new Date(projectSourceControlSettings.updatedAt).toLocaleString() : "—"}</p>
+              </>
+            ) : null}
           </section>
         ) : null;
       case "repositories":
@@ -734,7 +816,7 @@ export function ProjectsPanel() {
                 <p className="supporting-copy">Define secure project-level secrets once, then let authorized agent sessions load them into environment variables for safe tool use.</p>
               </div>
               {projectDetail?.slug ? (
-                <button className="secondary-button" type="button" disabled={saving} onClick={() => void loadSecrets(projectDetail.slug)}>
+                <button className="secondary-button" type="button" disabled={saving || loadingSecrets} onClick={() => void loadSecrets(projectDetail.slug)}>
                   Refresh secrets
                 </button>
               ) : null}
@@ -873,7 +955,11 @@ export function ProjectsPanel() {
               setAttachRemoteRepositoryId(null);
               setRemoteDraft(createBlankRemoteDraft());
               setTaskAutomationSettings(null);
+              setSourceControlSettings(null);
               setProjectSourceControlSettings(null);
+              setAutomationLoadedProjectSlug(null);
+              setSourceControlLoadedProjectSlug(null);
+              setSecretsLoadedProjectSlug(null);
               setGitUserNameTemplate("");
               setGitEmailTemplate("");
               setAutoDispatchOnBlockerCompletion(false);

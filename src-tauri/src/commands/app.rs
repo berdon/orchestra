@@ -100,16 +100,20 @@ pub async fn get_app_info() -> Result<AppInfo, String> {
 }
 
 #[tauri::command]
-pub fn get_source_control_settings() -> Result<SourceControlSettings, String> {
-    project_settings::get_source_control_settings()
+pub async fn get_source_control_settings() -> Result<SourceControlSettings, String> {
+    spawn_blocking(project_settings::get_source_control_settings)
+        .await
+        .map_err(|error| format!("Unable to load source control settings: {error}"))?
 }
 
 #[tauri::command]
-pub fn update_source_control_settings(
+pub async fn update_source_control_settings(
     git_user_name_template: Option<String>,
     git_email_template: Option<String>,
 ) -> Result<SourceControlSettings, String> {
-    project_settings::update_source_control_settings(git_user_name_template, git_email_template)
+    spawn_blocking(move || project_settings::update_source_control_settings(git_user_name_template, git_email_template))
+        .await
+        .map_err(|error| format!("Unable to update source control settings: {error}"))?
 }
 
 #[tauri::command]
