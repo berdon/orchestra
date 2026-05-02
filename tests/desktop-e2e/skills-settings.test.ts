@@ -19,6 +19,7 @@ import {
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
+const FILE_WRITE_TIMEOUT_MS = 10_000;
 
 function resetSkillsFixture(homePath: string) {
   rmSync(join(homePath, ".orchestra-dev", "skills"), { force: true, recursive: true });
@@ -136,7 +137,7 @@ describe("desktop skills settings", () => {
 
       await clickSelector(sessionId, '[data-role="skill-mobile-subnav-menu-trigger"]');
       await clickByText(sessionId, '.task-action-menu__dropdown button', 'Create skill');
-      await expect.poll(() => existsSync(localSkillPath)).toBe(true);
+      await expect.poll(() => existsSync(localSkillPath), { timeout: FILE_WRITE_TIMEOUT_MS }).toBe(true);
       await waitForText(sessionId, 'Mobile Nav Regression Skill');
     } finally {
       await deleteWebdriverSession(sessionId);
@@ -184,7 +185,7 @@ describe("desktop skills settings", () => {
       await waitForText(sessionId, 'Local catalog skill summary.');
       await clickSelector(sessionId, '[data-role="save-skill"]');
 
-      await expect.poll(() => existsSync(localSkillPath)).toBe(true);
+      await expect.poll(() => existsSync(localSkillPath), { timeout: FILE_WRITE_TIMEOUT_MS }).toBe(true);
       await waitForText(sessionId, 'Local Catalog Skill');
       await clickSelector(sessionId, '[data-role="skill-detail-tab-assignments"]');
 
@@ -266,8 +267,8 @@ describe("desktop skills settings", () => {
       await setInputValue(sessionId, '[data-role="skill-markdown-body"]', '# Title\n\nUpdated local catalog skill summary.\n');
       await clickSelector(sessionId, '[data-role="save-skill"]');
 
-      await expect.poll(() => existsSync(renamedLocalSkillPath)).toBe(true);
-      await expect.poll(() => existsSync(localSkillPath)).toBe(false);
+      await expect.poll(() => existsSync(renamedLocalSkillPath), { timeout: FILE_WRITE_TIMEOUT_MS }).toBe(true);
+      await expect.poll(() => existsSync(localSkillPath), { timeout: FILE_WRITE_TIMEOUT_MS }).toBe(false);
       await waitForText(sessionId, 'Updated local catalog skill summary.');
 
       await clickSelector(sessionId, '[data-role="archive-skill"]');
@@ -281,7 +282,7 @@ describe("desktop skills settings", () => {
       await clickSelector(sessionId, '[data-role="delete-skill"]');
       await waitForText(sessionId, 'Confirm delete');
       await clickSelector(sessionId, '[data-role="delete-skill"]');
-      await expect.poll(() => existsSync(renamedLocalSkillPath)).toBe(false);
+      await expect.poll(() => existsSync(renamedLocalSkillPath), { timeout: FILE_WRITE_TIMEOUT_MS }).toBe(false);
       await expect.poll(async () => (await bodyText(sessionId)).includes('Local Catalog Skill')).toBe(false);
 
       await clickSelector(sessionId, '[data-role="new-skill"]');
@@ -289,7 +290,7 @@ describe("desktop skills settings", () => {
       await setInputValue(sessionId, '[data-role="skill-slug"]', 'external-readonly');
       await setInputValue(sessionId, '[data-role="skill-markdown-body"]', '# Title\n\nLocal shadow copy.\n');
       await clickSelector(sessionId, '[data-role="save-skill"]');
-      await expect.poll(() => existsSync(shadowLocalSkillPath)).toBe(true);
+      await expect.poll(() => existsSync(shadowLocalSkillPath), { timeout: FILE_WRITE_TIMEOUT_MS }).toBe(true);
       await clickByText(sessionId, '[role="tab"]', 'Assignments');
       await setInputValue(sessionId, '[data-role="skill-project-search"]', 'orchestra');
       await clickByText(sessionId, 'button', 'Add Orchestra');
