@@ -138,13 +138,14 @@ test("mobile navigation keeps Settings open long enough to expose settings secti
 
   await openMobileNavigation(page);
   await page.getByRole('button', { name: 'Settings' }).click();
-  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
+  const mobileSheet = page.locator('[data-role="mobile-navigation-sheet"]');
+  await expect(mobileSheet).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
   await expect(page.locator('[data-role="settings-sections-subnav"]')).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Projects' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'General' })).toBeVisible();
+  await expect(mobileSheet.getByRole('tab', { name: 'General' })).toBeVisible();
 
-  await page.getByRole('tab', { name: 'General' }).click();
+  await mobileSheet.getByRole('tab', { name: 'General' }).click();
   await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Theme' })).toBeVisible();
 
