@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    env,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
@@ -10,7 +9,7 @@ use std::{
 };
 
 use serde_json::{json, Value};
-use tauri::{path::BaseDirectory, AppHandle, Manager};
+use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 use crate::{
@@ -57,29 +56,6 @@ fn unsupported_control_capability(reason: &str) -> SessionControlCapability {
 
 pub(crate) fn is_unknown_command_error(error: &str) -> bool {
     error.to_ascii_lowercase().contains("unknown command")
-}
-
-pub(crate) fn resolve_orchestra_extension_path(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Ok(project_root) = env::var("ORCHESTRA_PROJECT_ROOT") {
-        let fallback = Path::new(&project_root).join("extensions/orchestra-tools.ts");
-        if fallback.exists() {
-            return Ok(fallback);
-        }
-    }
-
-    let path = app
-        .path()
-        .resolve("extensions/orchestra-tools.ts", BaseDirectory::Resource)
-        .map_err(|error| format!("Unable to resolve packaged Orchestra extension path: {error}"))?;
-
-    if path.exists() {
-        return Ok(path);
-    }
-
-    Err(format!(
-        "Packaged Orchestra extension path does not exist: {}",
-        path.display()
-    ))
 }
 
 fn build_runtime_pi_args(
@@ -167,7 +143,8 @@ impl SessionRuntime {
             authorization_context.as_ref(),
         )?;
         let bridge_client_id = format!("bridge-client-{}", Uuid::new_v4().simple());
-        let extension_path = resolve_orchestra_extension_path(&app)?;
+        let extension_path =
+            crate::services::orchestra_paths::resolve_orchestra_extension_path(Some(&app))?;
         let extra_extensions = harness_settings::resolve_spawn_extra_extensions(
             harness_settings::get_pi_runtime_settings()?.extra_extensions,
         )?;
@@ -1889,7 +1866,8 @@ pub fn get_session_runtime_details(
 
     let context = crate::services::pi_sessions::find_session_context_for_session(session_id)?;
     let session_path = get_session_path(&context.session_dir, session_id)?;
-    let orchestra_extension_path = resolve_orchestra_extension_path(app)?;
+    let orchestra_extension_path =
+        crate::services::orchestra_paths::resolve_orchestra_extension_path(Some(app))?;
     let configured_settings = harness_settings::get_pi_runtime_settings()?;
     let blocked_extra_extensions =
         harness_settings::blocked_packaged_mode_extensions(&configured_settings.extra_extensions);

@@ -4,7 +4,7 @@ use std::{
     process::{Child, Command, Stdio},
 };
 
-use tauri::{path::BaseDirectory, AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::{
     models::{AuthorizationContext, OrchestraToolDefinition},
@@ -20,48 +20,6 @@ pub struct InteractivePiLaunchSpec {
     pub temp_home_dir: Option<PathBuf>,
 }
 
-pub fn resolve_orchestra_extension_path(app: Option<&AppHandle>) -> Result<PathBuf, String> {
-    if let Some(path) = env::var_os("ORCHESTRA_EXTENSION_PATH") {
-        let path = PathBuf::from(path);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    if let Some(project_root) = env::var_os("ORCHESTRA_PROJECT_ROOT") {
-        let fallback = PathBuf::from(project_root).join("extensions/orchestra-tools.ts");
-        if fallback.exists() {
-            return Ok(fallback);
-        }
-    }
-
-    if let Some(app) = app {
-        let path = app
-            .path()
-            .resolve("extensions/orchestra-tools.ts", BaseDirectory::Resource)
-            .map_err(|error| {
-                format!("Unable to resolve packaged Orchestra extension path: {error}")
-            })?;
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    let fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
-        .join("extensions/orchestra-tools.ts");
-    if fallback.exists() {
-        return Ok(fallback);
-    }
-
-    Err(format!(
-        "Unable to resolve Orchestra extension path. Checked ORCHESTRA_EXTENSION_PATH, ORCHESTRA_PROJECT_ROOT/extensions/orchestra-tools.ts, packaged resources, and {}",
-        fallback.display()
-    ))
-}
-
 pub fn build_interactive_launch_spec(
     project_root: &Path,
     session_dir: &Path,
@@ -74,7 +32,7 @@ pub fn build_interactive_launch_spec(
 ) -> Result<InteractivePiLaunchSpec, String> {
     let runtime = pi_runtime::resolve_pi_runtime(None)?;
     let executable = runtime.executable_path.clone();
-    let extension_path = resolve_orchestra_extension_path(app)?;
+    let extension_path = crate::services::orchestra_paths::resolve_orchestra_extension_path(app)?;
     let extra_extensions = harness_settings::get_pi_runtime_settings()?.extra_extensions;
     let temp_home_dir = prepare_terminal_home_dir(session_id, &executable)?;
 

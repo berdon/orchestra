@@ -1,6 +1,131 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+use tauri::{path::BaseDirectory, AppHandle, Manager};
+
+const ORCHESTRA_EXTENSION_RELATIVE_PATH: &str = "extensions/orchestra-tools.ts";
+
+#[derive(Debug, Clone)]
+struct OrchestraExtensionCandidates {
+    explicit_override: Option<PathBuf>,
+    project_root: Option<PathBuf>,
+    dev_checkout_root: Option<PathBuf>,
+    packaged_resource: Option<PathBuf>,
+    packaged_resource_error: Option<String>,
+    manifest_fallback_path: PathBuf,
+}
+
+fn non_empty_candidate_path(path: Option<PathBuf>) -> Option<PathBuf> {
+    path.filter(|path| !path.as_os_str().is_empty())
+}
+
+fn source_checkout_orchestra_extension_path(root: &Path) -> PathBuf {
+    root.join(ORCHESTRA_EXTENSION_RELATIVE_PATH)
+}
+
+fn manifest_checkout_orchestra_extension_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .join(ORCHESTRA_EXTENSION_RELATIVE_PATH)
+}
+
+fn resolve_orchestra_extension_path_from(
+    candidates: OrchestraExtensionCandidates,
+) -> Result<PathBuf, String> {
+    let OrchestraExtensionCandidates {
+        explicit_override,
+        project_root,
+        dev_checkout_root,
+        packaged_resource,
+        packaged_resource_error,
+        manifest_fallback_path,
+    } = candidates;
+
+    let mut checked_paths = Vec::new();
+
+    if let Some(path) = explicit_override {
+        checked_paths.push(format!("ORCHESTRA_EXTENSION_PATH={}", path.display()));
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    if let Some(project_root) = project_root {
+        let path = source_checkout_orchestra_extension_path(&project_root);
+        checked_paths.push(format!(
+            "ORCHESTRA_PROJECT_ROOT/extensions/orchestra-tools.ts={}",
+            path.display()
+        ));
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    if let Some(dev_checkout_root) = dev_checkout_root {
+        let path = source_checkout_orchestra_extension_path(&dev_checkout_root);
+        checked_paths.push(format!(
+            "dev_checkout/extensions/orchestra-tools.ts={}",
+            path.display()
+        ));
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    if let Some(path) = packaged_resource {
+        checked_paths.push(format!("packaged_resource={}", path.display()));
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    checked_paths.push(format!(
+        "CARGO_MANIFEST_DIR/../extensions/orchestra-tools.ts={}",
+        manifest_fallback_path.display()
+    ));
+    if manifest_fallback_path.exists() {
+        return Ok(manifest_fallback_path);
+    }
+
+    let mut message = format!(
+        "Unable to resolve Orchestra extension path. Checked {}",
+        checked_paths.join(", ")
+    );
+    if let Some(error) = packaged_resource_error {
+        message.push_str(&format!("; packaged resource resolver error: {error}"));
+    }
+    Err(message)
+}
+
+pub fn resolve_packaged_orchestra_extension_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .resolve(ORCHESTRA_EXTENSION_RELATIVE_PATH, BaseDirectory::Resource)
+        .map_err(|error| format!("Unable to resolve packaged Orchestra extension path: {error}"))
+}
+
+pub fn resolve_orchestra_extension_path(app: Option<&AppHandle>) -> Result<PathBuf, String> {
+    let (packaged_resource, packaged_resource_error) = match app {
+        Some(app) => match resolve_packaged_orchestra_extension_path(app) {
+            Ok(path) => (Some(path), None),
+            Err(error) => (None, Some(error)),
+        },
+        None => (None, None),
+    };
+
+    resolve_orchestra_extension_path_from(OrchestraExtensionCandidates {
+        explicit_override: non_empty_candidate_path(
+            env::var_os("ORCHESTRA_EXTENSION_PATH").map(PathBuf::from),
+        ),
+        project_root: configured_project_root(),
+        dev_checkout_root: discover_dev_checkout_root(),
+        packaged_resource,
+        packaged_resource_error,
+        manifest_fallback_path: manifest_checkout_orchestra_extension_path(),
+    })
+}
+
 pub fn configured_checkout_root() -> Option<PathBuf> {
     env::var_os("ORCHESTRA_PROJECT_ROOT")
         .map(PathBuf::from)
@@ -265,6 +390,27 @@ pub fn task_attachments_dir(root: &Path, project_slug: &str, task_id: &str) -> P
 mod tests {
     use super::*;
 
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{}-{}-{}",
+            label,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after epoch")
+                .as_nanos()
+        ))
+    }
+
+    fn write_extension(root: &Path) -> PathBuf {
+        let path = root.join(ORCHESTRA_EXTENSION_RELATIVE_PATH);
+        std::fs::create_dir_all(path.parent().expect("extension path should have parent"))
+            .expect("extension parent should exist");
+        std::fs::write(&path, "export const tools = [];\n")
+            .expect("extension path should be writable");
+        path
+    }
+
     #[test]
     fn sanitizes_project_slugs() {
         assert_eq!(sanitize_slug(" Orchestra App "), "orchestra-app");
@@ -430,6 +576,87 @@ mod tests {
         assert_eq!(discover_dev_checkout_root_from(&nested), Some(root.clone()));
 
         std::fs::remove_dir_all(root).expect("temp checkout should remove");
+    }
+
+    #[test]
+    fn prefers_explicit_extension_override_before_other_candidates() {
+        let root = unique_temp_dir("orchestra-extension-override");
+        let override_root = root.join("override");
+        let project_root = root.join("project");
+        let dev_root = root.join("dev");
+        let packaged_root = root.join("packaged");
+        let manifest_root = root.join("manifest");
+
+        let override_path = write_extension(&override_root);
+        write_extension(&project_root);
+        write_extension(&dev_root);
+        let packaged_path = write_extension(&packaged_root);
+        write_extension(&manifest_root);
+
+        let resolved = resolve_orchestra_extension_path_from(OrchestraExtensionCandidates {
+            explicit_override: Some(override_path.clone()),
+            project_root: Some(project_root),
+            dev_checkout_root: Some(dev_root),
+            packaged_resource: Some(packaged_path),
+            packaged_resource_error: None,
+            manifest_fallback_path: manifest_root.join(ORCHESTRA_EXTENSION_RELATIVE_PATH),
+        })
+        .expect("override path should resolve");
+
+        assert_eq!(resolved, override_path);
+        std::fs::remove_dir_all(root).expect("temp directories should remove");
+    }
+
+    #[test]
+    fn prefers_dev_checkout_when_packaged_resource_is_missing() {
+        let root = unique_temp_dir("orchestra-extension-dev-fallback");
+        let dev_root = root.join("dev");
+        let manifest_root = root.join("manifest");
+        let expected = write_extension(&dev_root);
+        let packaged_path = root.join("target/debug/extensions/orchestra-tools.ts");
+
+        let resolved = resolve_orchestra_extension_path_from(OrchestraExtensionCandidates {
+            explicit_override: None,
+            project_root: None,
+            dev_checkout_root: Some(dev_root),
+            packaged_resource: Some(packaged_path),
+            packaged_resource_error: None,
+            manifest_fallback_path: manifest_root.join(ORCHESTRA_EXTENSION_RELATIVE_PATH),
+        })
+        .expect("dev checkout path should resolve");
+
+        assert_eq!(resolved, expected);
+        std::fs::remove_dir_all(root).expect("temp directories should remove");
+    }
+
+    #[test]
+    fn falls_back_to_packaged_resource_when_it_exists() {
+        let root = unique_temp_dir("orchestra-extension-packaged");
+        let packaged_root = root.join("packaged");
+        let manifest_root = root.join("manifest");
+        let expected = write_extension(&packaged_root);
+
+        let resolved = resolve_orchestra_extension_path_from(OrchestraExtensionCandidates {
+            explicit_override: None,
+            project_root: None,
+            dev_checkout_root: None,
+            packaged_resource: Some(expected.clone()),
+            packaged_resource_error: None,
+            manifest_fallback_path: manifest_root.join(ORCHESTRA_EXTENSION_RELATIVE_PATH),
+        })
+        .expect("packaged resource should resolve");
+
+        assert_eq!(resolved, expected);
+        std::fs::remove_dir_all(root).expect("temp directories should remove");
+    }
+
+    #[test]
+    fn ignores_empty_candidate_paths() {
+        assert_eq!(non_empty_candidate_path(Some(PathBuf::new())), None);
+        assert_eq!(
+            non_empty_candidate_path(Some(PathBuf::from("/tmp/orchestra-tools.ts"))),
+            Some(PathBuf::from("/tmp/orchestra-tools.ts"))
+        );
     }
 
     #[test]
