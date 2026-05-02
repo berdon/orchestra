@@ -72,6 +72,7 @@ function createStubServices(environment: AppInfo["environment"]): OrchestraClien
     policies: {} as OrchestraClientServiceBindings["policies"],
     channels: {} as OrchestraClientServiceBindings["channels"],
     skills: {} as OrchestraClientServiceBindings["skills"],
+    notes: {} as OrchestraClientServiceBindings["notes"],
     tasks: {} as OrchestraClientServiceBindings["tasks"],
     inbox: {} as OrchestraClientServiceBindings["inbox"],
     sessions: {} as OrchestraClientServiceBindings["sessions"],

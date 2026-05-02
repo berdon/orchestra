@@ -1,4 +1,4 @@
-export type PrimaryPage = "tasks" | "inbox" | "agents" | "chat" | "sessions" | "settings";
+export type PrimaryPage = "tasks" | "inbox" | "agents" | "chat" | "sessions" | "notes" | "settings";
 export type SettingsTab = "projects" | "agents" | "roles" | "workflows" | "skills" | "channels" | "remote" | "source_control" | "prompting" | "harness" | "general";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -298,6 +298,41 @@ export interface RepositoryRecord {
   defaultBranch?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type NoteScope = "project" | "repository";
+export type NoteTreeNodeKind = "directory" | "note";
+
+export interface NoteLocation {
+  scope: NoteScope;
+  repositoryId?: string | null;
+  path: string;
+}
+
+export interface NoteTreeNode {
+  kind: NoteTreeNodeKind;
+  name: string;
+  path: string;
+  children?: NoteTreeNode[];
+}
+
+export interface NotesRoot {
+  scope: NoteScope;
+  repositoryId?: string | null;
+  label: string;
+  docsExists: boolean;
+  children: NoteTreeNode[];
+}
+
+export interface NotesTree {
+  projectId: string;
+  roots: NotesRoot[];
+}
+
+export interface NoteDetail {
+  location: NoteLocation;
+  markdown: string;
+  exists: boolean;
 }
 
 export interface ProjectDetail extends ProjectSummary {

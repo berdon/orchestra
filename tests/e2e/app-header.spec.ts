@@ -39,7 +39,7 @@ test("left navigation can collapse into an icon rail and persists across reloads
   await page.locator('[data-role="toggle-sidebar-collapse"]').click();
   await expect(shell).toHaveAttribute('data-sidebar-collapsed', 'true');
 
-  for (const name of ['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Settings'] as const) {
+  for (const name of ['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Notes', 'Settings'] as const) {
     await expect(page.getByRole('button', { name })).toBeVisible();
   }
 
@@ -114,7 +114,7 @@ test("mobile navigation uses a hamburger dialog, ignores desktop collapse state,
   await expect(trigger).toHaveAttribute('aria-expanded', 'true');
 
   const sheet = page.locator('[data-role="mobile-navigation-sheet"]');
-  for (const name of ['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Settings'] as const) {
+  for (const name of ['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Notes', 'Settings'] as const) {
     await expect(sheet.getByRole('button', { name })).toBeVisible();
   }
 

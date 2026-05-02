@@ -150,3 +150,11 @@ export function supportsRemoteAccess(
 export function supportsSkillsSettings(bootstrap: OrchestraClientBootstrap) {
   return isCapabilityAvailable(bootstrap.capabilities.skills.read);
 }
+
+export function supportsNotes(bootstrap: OrchestraClientBootstrap) {
+  return isCapabilityAvailable(bootstrap.capabilities.notes.read);
+}
+
+export function supportsNoteWrites(bootstrap: OrchestraClientBootstrap) {
+  return isCapabilityAvailable(bootstrap.capabilities.notes.write);
+}

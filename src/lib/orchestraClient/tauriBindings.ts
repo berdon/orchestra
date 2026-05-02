@@ -82,6 +82,18 @@ import {
 } from "../channels";
 import { getPiExecutableDiagnostic, listPiModels } from "../tauri";
 import { normalizeTaskTags } from "../taskTags";
+import {
+  copyProjectNote,
+  copyProjectNotesDirectory,
+  createProjectNotesDirectory,
+  deleteProjectNote,
+  deleteProjectNotesDirectory,
+  getProjectNote,
+  listProjectNotes,
+  moveProjectNote,
+  moveProjectNotesDirectory,
+  updateProjectNote,
+} from "../projectNotes";
 import type {
   AgentSkillLinks,
   AgentSummary,
@@ -307,6 +319,18 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
     getRoleSkillLinks: (roleId) => invokeTauri<RoleSkillLinks>("get_role_skill_links", { roleId }),
     getAgentSkillLinks: (agentId) => invokeTauri<AgentSkillLinks>("get_agent_skill_links", { agentId }),
     getWorkflowSkillLinks: (workflowId) => invokeTauri<WorkflowSkillLinks>("get_workflow_skill_links", { workflowId }),
+  },
+  notes: {
+    list: listProjectNotes,
+    get: getProjectNote,
+    update: updateProjectNote,
+    delete: deleteProjectNote,
+    copy: copyProjectNote,
+    move: moveProjectNote,
+    createDirectory: createProjectNotesDirectory,
+    deleteDirectory: deleteProjectNotesDirectory,
+    copyDirectory: copyProjectNotesDirectory,
+    moveDirectory: moveProjectNotesDirectory,
   },
   tasks: {
     list: async (options) => {

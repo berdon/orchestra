@@ -19,6 +19,9 @@ import type {
   LocalSkillUpsertInput,
   MailboxMessage,
   MarkMailboxMessagesReadInput,
+  NoteDetail,
+  NoteLocation,
+  NotesTree,
   PiExecutableDiagnostic,
   PiImportLegacyResult,
   PiOAuthFlowState,
@@ -1034,6 +1037,86 @@ export function createRemoteApiOrchestraClientBinding(
         transport.assertCapability("skills.getWorkflowSkillLinks", bootstrap.capabilities.skills.read);
         return transport.requestJson<WorkflowSkillLinks>("skills.getWorkflowSkillLinks", {
           path: `/api/v1/workflows/${encodeURIComponent(workflowId)}/skills`,
+        });
+      },
+    },
+    notes: {
+      list: (projectId: string) => {
+        transport.assertCapability("notes.list", bootstrap.capabilities.notes.read);
+        return transport.requestJson<NotesTree>("notes.list", {
+          path: `/api/v1/projects/${encodeURIComponent(projectId)}/notes`,
+        });
+      },
+      get: (projectId: string, location: NoteLocation) => {
+        transport.assertCapability("notes.get", bootstrap.capabilities.notes.read);
+        return transport.requestJson<NoteDetail>("notes.get", {
+          method: "POST",
+          path: `/api/v1/projects/${encodeURIComponent(projectId)}/notes/read`,
+          body: { location },
+        });
+      },
+      update: (projectId: string, location: NoteLocation, markdown: string) => {
+        transport.assertCapability("notes.update", bootstrap.capabilities.notes.write);
+        return transport.requestJson<NoteDetail>("notes.update", {
+          method: "POST",
+          path: `/api/v1/projects/${encodeURIComponent(projectId)}/notes/write`,
+          body: { location, markdown },
+        });
+      },
+      delete: (projectId: string, location: NoteLocation) => {
+        transport.assertCapability("notes.delete", bootstrap.capabilities.notes.write);
+        return transport.requestJson<NoteLocation>("notes.delete", {
+          method: "POST",
+          path: `/api/v1/projects/${encodeURIComponent(projectId)}/notes/delete`,
+          body: { location },
+        });
+      },
+      copy: (projectId: string, source: NoteLocation, destination: NoteLocation) => {
+        transport.assertCapability("notes.copy", bootstrap.capabilities.notes.write);
+        return transport.requestJson<NoteDetail>("notes.copy", {
+          method: "POST",
+          path: `/api/v1/projects/${encodeURIComponent(projectId)}/notes/copy`,
+          body: { source, destination },
+        });
+      },
+      move: (projectId: string, source: NoteLocation, destination: NoteLocation) => {
+        transport.assertCapability("notes.move", bootstrap.capabilities.notes.write);
+        return transport.requestJson<NoteDetail>("notes.move", {
+          method: "POST",
+          path: `/api/v1/projects/${encodeURIComponent(projectId)}/notes/move`,
+          body: { source, destination },
+        });
+      },
+      createDirectory: (projectId: string, location: NoteLocation) => {
+        transport.assertCapability("notes.createDirectory", bootstrap.capabilities.notes.write);
+        return transport.requestJson<NoteLocation>("notes.createDirectory", {
+          method: "POST",
+          path: `/api/v1/projects/${encodeURIComponent(projectId)}/notes/directories/create`,
+          body: { location },
+        });
+      },
+      deleteDirectory: (projectId: string, location: NoteLocation) => {
+        transport.assertCapability("notes.deleteDirectory", bootstrap.capabilities.notes.write);
+        return transport.requestJson<NoteLocation>("notes.deleteDirectory", {
+          method: "POST",
+          path: `/api/v1/projects/${encodeURIComponent(projectId)}/notes/directories/delete`,
+          body: { location },
+        });
+      },
+      copyDirectory: (projectId: string, source: NoteLocation, destination: NoteLocation) => {
+        transport.assertCapability("notes.copyDirectory", bootstrap.capabilities.notes.write);
+        return transport.requestJson<NoteLocation>("notes.copyDirectory", {
+          method: "POST",
+          path: `/api/v1/projects/${encodeURIComponent(projectId)}/notes/directories/copy`,
+          body: { source, destination },
+        });
+      },
+      moveDirectory: (projectId: string, source: NoteLocation, destination: NoteLocation) => {
+        transport.assertCapability("notes.moveDirectory", bootstrap.capabilities.notes.write);
+        return transport.requestJson<NoteLocation>("notes.moveDirectory", {
+          method: "POST",
+          path: `/api/v1/projects/${encodeURIComponent(projectId)}/notes/directories/move`,
+          body: { source, destination },
         });
       },
     },

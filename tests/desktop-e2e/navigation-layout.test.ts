@@ -66,8 +66,8 @@ describe("desktop navigation layout", () => {
           };
         `,
       );
-      expect(collapsedRailState.navTitles).toEqual(['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Settings']);
-      expect(collapsedRailState.navAriaLabels).toEqual(['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Settings']);
+      expect(collapsedRailState.navTitles).toEqual(['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Notes', 'Settings']);
+      expect(collapsedRailState.navAriaLabels).toEqual(['Tasks', 'Inbox', 'Agents', 'Chat', 'Sessions', 'Notes', 'Settings']);
       expect(collapsedRailState.iconCount).toBeGreaterThanOrEqual(6);
       expect(collapsedRailState.triggerTooltip).toBe("Switch the active project and refresh the app to that project's data.");
       expect(collapsedRailState.toggleTooltip).toBe('Expand the sidebar so labels and navigation details are visible again.');

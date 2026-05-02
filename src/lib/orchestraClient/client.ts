@@ -19,6 +19,9 @@ import type {
   LocalSkillUpsertInput,
   MailboxMessage,
   MarkMailboxMessagesReadInput,
+  NoteDetail,
+  NoteLocation,
+  NotesTree,
   PiExecutableDiagnostic,
   PolicyDefinition,
   PolicySummary,
@@ -113,6 +116,9 @@ export type {
   LocalSkillUpsertInput,
   MailboxMessage,
   MarkMailboxMessagesReadInput,
+  NoteDetail,
+  NoteLocation,
+  NotesTree,
   PiExecutableDiagnostic,
   PolicyDefinition,
   PolicySummary,
@@ -315,6 +321,19 @@ export interface OrchestraSkillsService {
   getWorkflowSkillLinks(workflowId: string): Promise<WorkflowSkillLinks>;
 }
 
+export interface OrchestraNotesService {
+  list(projectId: string): Promise<NotesTree>;
+  get(projectId: string, location: NoteLocation): Promise<NoteDetail>;
+  update(projectId: string, location: NoteLocation, markdown: string): Promise<NoteDetail>;
+  delete(projectId: string, location: NoteLocation): Promise<NoteLocation>;
+  copy(projectId: string, source: NoteLocation, destination: NoteLocation): Promise<NoteDetail>;
+  move(projectId: string, source: NoteLocation, destination: NoteLocation): Promise<NoteDetail>;
+  createDirectory(projectId: string, location: NoteLocation): Promise<NoteLocation>;
+  deleteDirectory(projectId: string, location: NoteLocation): Promise<NoteLocation>;
+  copyDirectory(projectId: string, source: NoteLocation, destination: NoteLocation): Promise<NoteLocation>;
+  moveDirectory(projectId: string, source: NoteLocation, destination: NoteLocation): Promise<NoteLocation>;
+}
+
 export interface OrchestraTaskService {
   list(options?: TaskListOptions): Promise<TaskSummary[]>;
   get(taskId: string): Promise<TaskDetail>;
@@ -405,6 +424,7 @@ export interface OrchestraClient {
   readonly policies: OrchestraPolicyService;
   readonly channels: OrchestraChannelService;
   readonly skills: OrchestraSkillsService;
+  readonly notes: OrchestraNotesService;
   readonly tasks: OrchestraTaskService;
   readonly inbox: OrchestraInboxService;
   readonly sessions: OrchestraSessionService;

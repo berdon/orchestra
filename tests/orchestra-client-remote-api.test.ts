@@ -64,6 +64,7 @@ function createBootstrap(authMode: OrchestraClientBootstrap["authMode"] = "same_
       sharedInbox: true,
       sharedSessions: true,
       sharedSkills: true,
+      sharedNotes: true,
       taskSchedules: true,
       sessionStreaming: true,
       sessionControls: true,

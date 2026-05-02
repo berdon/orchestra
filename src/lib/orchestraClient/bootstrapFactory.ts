@@ -43,6 +43,7 @@ function resolveFeatureFlags(hostKind: OrchestraClientHostKind): OrchestraClient
     sharedInbox: true,
     sharedSessions: true,
     sharedSkills: hostKind !== "mock",
+    sharedNotes: true,
     taskSchedules: true,
     sessionStreaming: true,
     sessionControls: true,
@@ -89,6 +90,10 @@ function resolveCapabilities(hostKind: OrchestraClientHostKind): OrchestraClient
       archive: skillsCapability,
       delete: skillsCapability,
       assign: skillsCapability,
+    },
+    notes: {
+      read: available,
+      write: available,
     },
     tasks: {
       read: available,

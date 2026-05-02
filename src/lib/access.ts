@@ -40,6 +40,8 @@ export const PERMISSION_OPTIONS: PermissionOption[] = [
   { key: "skills.archive", group: "Skills", label: "Archive skills", description: "Archive or unarchive managed skills.", risk: "sensitive" },
   { key: "skills.delete", group: "Skills", label: "Delete skills", description: "Permanently delete local managed skills.", risk: "sensitive" },
   { key: "skills.assign", group: "Skills", label: "Assign skills", description: "Manage managed-skill scope bindings and assignments." },
+  { key: "notes.read", group: "Notes", label: "View notes", description: "List and read project and repository notes under docs/." },
+  { key: "notes.write", group: "Notes", label: "Edit notes", description: "Create, update, move, copy, and delete notes and note directories under docs/." },
   { key: "projects.read", group: "Projects", label: "View projects", description: "Inspect project configuration and overlays." },
   { key: "projects.create", group: "Projects", label: "Create projects", description: "Create new Orchestra projects." },
   { key: "projects.update", group: "Projects", label: "Edit projects", description: "Update project configuration and worker overlays." },

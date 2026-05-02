@@ -22,15 +22,15 @@ use crate::{
     models::{
         AuthorizationContext, BridgeCleanupEvent, BridgeClientDiagnostics, BridgeDiagnostics,
         BridgeInstanceDiagnostics, BridgeRequestDiagnostics, MarkMailboxMessagesReadInput,
-        MarkTaskCommentsReadInput, OrchestraToolDefinition, RoleQueueEntryInput,
+        MarkTaskCommentsReadInput, NoteLocation, OrchestraToolDefinition, RoleQueueEntryInput,
         SendMailboxMessageInput, TaskAttachmentInput, TaskCommentInput, TaskLaneAssignment,
         TaskTodoInput, TaskUpsertInput,
     },
     services::{
         agents, authorization, command_authorization, database, live_sessions, messages,
-        pi_sessions, policies, project_secrets, project_settings, projects, reminders,
-        role_runtime, roles, session_management, session_ownership, task_attachments,
-        task_file_references, task_runtime, tasks, workflows,
+        pi_sessions, policies, project_notes, project_secrets, project_settings, projects,
+        reminders, role_runtime, roles, session_management, session_ownership,
+        task_attachments, task_file_references, task_runtime, tasks, workflows,
     },
 };
 
@@ -1309,6 +1309,115 @@ fn invoke_bridge_command(
                 &secret_key,
             )?)
             .map_err(|error| format!("Unable to serialize project secrets: {error}"))
+        }
+        "list_notes" => {
+            command_authorization::require_permission(connection, authorization, "notes.read")?;
+            let project_id = projects::require_requested_or_default_project_id(
+                connection,
+                payload.get("projectId").and_then(Value::as_str),
+                "projectId: A project id is required when no default project exists.",
+            )?;
+            serde_json::to_value(project_notes::list_project_notes(connection, &project_id)?)
+                .map_err(|error| format!("Unable to serialize project notes: {error}"))
+        }
+        "get_note" => {
+            command_authorization::require_permission(connection, authorization, "notes.read")?;
+            let project_id = projects::require_requested_or_default_project_id(
+                connection,
+                payload.get("projectId").and_then(Value::as_str),
+                "projectId: A project id is required when no default project exists.",
+            )?;
+            let location: NoteLocation =
+                serde_json::from_value(payload.get("location").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse note location: {error}"))?;
+            serde_json::to_value(project_notes::get_project_note(
+                connection,
+                &project_id,
+                location,
+            )?)
+            .map_err(|error| format!("Unable to serialize project note: {error}"))
+        }
+        "update_note" => {
+            command_authorization::require_permission(connection, authorization, "notes.write")?;
+            let project_id = projects::require_requested_or_default_project_id(
+                connection,
+                payload.get("projectId").and_then(Value::as_str),
+                "projectId: A project id is required when no default project exists.",
+            )?;
+            let location: NoteLocation =
+                serde_json::from_value(payload.get("location").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse note location: {error}"))?;
+            let markdown = require_string(&payload, "markdown")?;
+            serde_json::to_value(project_notes::update_project_note(
+                connection,
+                &project_id,
+                location,
+                markdown,
+            )?)
+            .map_err(|error| format!("Unable to serialize project note: {error}"))
+        }
+        "delete_note" => {
+            command_authorization::require_permission(connection, authorization, "notes.write")?;
+            let project_id = projects::require_requested_or_default_project_id(
+                connection,
+                payload.get("projectId").and_then(Value::as_str),
+                "projectId: A project id is required when no default project exists.",
+            )?;
+            let location: NoteLocation =
+                serde_json::from_value(payload.get("location").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse note location: {error}"))?;
+            serde_json::to_value(project_notes::delete_project_note(
+                connection,
+                &project_id,
+                location,
+            )?)
+            .map_err(|error| format!("Unable to serialize deleted project note: {error}"))
+        }
+        "copy_note" => {
+            command_authorization::require_permission(connection, authorization, "notes.write")?;
+            let project_id = projects::require_requested_or_default_project_id(
+                connection,
+                payload.get("projectId").and_then(Value::as_str),
+                "projectId: A project id is required when no default project exists.",
+            )?;
+            let source: NoteLocation =
+                serde_json::from_value(payload.get("source").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse source note location: {error}"))?;
+            let destination: NoteLocation =
+                serde_json::from_value(payload.get("destination").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| {
+                        format!("Unable to parse destination note location: {error}")
+                    })?;
+            serde_json::to_value(project_notes::copy_project_note(
+                connection,
+                &project_id,
+                source,
+                destination,
+            )?)
+            .map_err(|error| format!("Unable to serialize copied project note: {error}"))
+        }
+        "move_note" => {
+            command_authorization::require_permission(connection, authorization, "notes.write")?;
+            let project_id = projects::require_requested_or_default_project_id(
+                connection,
+                payload.get("projectId").and_then(Value::as_str),
+                "projectId: A project id is required when no default project exists.",
+            )?;
+            let source: NoteLocation =
+                serde_json::from_value(payload.get("source").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse source note location: {error}"))?;
+            let destination: NoteLocation =
+                serde_json::from_value(payload.get("destination").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| {
+                        format!("Unable to parse destination note location: {error}")
+                    })?;
+            serde_json::to_value(project_notes::move_project_note(
+                connection,
+                &project_id,
+                source,
+                destination,
+            )?)
+            .map_err(|error| format!("Unable to serialize moved project note: {error}"))
         }
         "list_sessions" => {
             command_authorization::require_permission(connection, authorization, "sessions.read")?;

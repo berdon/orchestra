@@ -2,6 +2,7 @@ import type {
   OrchestraCatalogService,
   OrchestraChannelService,
   OrchestraInboxService,
+  OrchestraNotesService,
   OrchestraPolicyService,
   OrchestraProjectService,
   OrchestraSessionService,
@@ -27,6 +28,7 @@ export interface OrchestraClientServiceBindings {
   policies: OrchestraPolicyService;
   channels: OrchestraChannelService;
   skills: OrchestraSkillsService;
+  notes: OrchestraNotesService;
   tasks: OrchestraTaskService;
   inbox: OrchestraInboxService;
   sessions: OrchestraSessionService;
@@ -71,6 +73,7 @@ export function withNormalizedBindingErrors(
     policies: wrapServiceMethods("policies", source, bindings.policies),
     channels: wrapServiceMethods("channels", source, bindings.channels),
     skills: wrapServiceMethods("skills", source, bindings.skills),
+    notes: wrapServiceMethods("notes", source, bindings.notes),
     tasks: wrapServiceMethods("tasks", source, bindings.tasks),
     inbox: wrapServiceMethods("inbox", source, bindings.inbox),
     sessions: wrapServiceMethods("sessions", source, bindings.sessions),

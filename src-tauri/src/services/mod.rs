@@ -29,6 +29,7 @@ pub mod pi_runtime;
 pub mod pi_sessions;
 pub mod pi_setup;
 pub mod policies;
+pub mod project_notes;
 pub mod project_secrets;
 pub mod project_settings;
 pub mod projects;

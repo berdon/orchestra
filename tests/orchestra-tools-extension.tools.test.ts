@@ -75,6 +75,36 @@ describe("orchestra tools extension bridge tool setup", () => {
         requiredPermission: "tasks.update",
       },
       {
+        name: "list_notes",
+        description: "List project and repository notes",
+        requiredPermission: "notes.read",
+      },
+      {
+        name: "get_note",
+        description: "Get a note",
+        requiredPermission: "notes.read",
+      },
+      {
+        name: "update_note",
+        description: "Create or update a note",
+        requiredPermission: "notes.write",
+      },
+      {
+        name: "delete_note",
+        description: "Delete a note",
+        requiredPermission: "notes.write",
+      },
+      {
+        name: "copy_note",
+        description: "Copy a note",
+        requiredPermission: "notes.write",
+      },
+      {
+        name: "move_note",
+        description: "Move a note",
+        requiredPermission: "notes.write",
+      },
+      {
         name: "list_tasks",
         description: "List tasks for a project",
         requiredPermission: "tasks.read",
@@ -733,6 +763,89 @@ describe("orchestra tools extension bridge tool setup", () => {
       stopActiveRuntimes: true,
     });
     expect(deleteResult.details.command).toBe("delete_sessions");
+  });
+
+  test("exposes typed project note tools", async () => {
+    const registeredTools: Array<any> = [];
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+      async json() {
+        return {
+          success: true,
+          data: {
+            echoedCommand: JSON.parse(String(init?.body)).command,
+            echoedPayload: JSON.parse(String(init?.body)).payload,
+          },
+        };
+      },
+    }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    orchestraToolsExtension({
+      registerTool(tool: any) {
+        registeredTools.push(tool);
+      },
+      registerCommand() {},
+    } as any);
+
+    const listNotesTool = registeredTools.find((tool) => tool.name === "list_notes");
+    expect(listNotesTool.parameters.properties.projectId).toBeTruthy();
+
+    const getNoteTool = registeredTools.find((tool) => tool.name === "get_note");
+    expect(getNoteTool.parameters.properties.location).toBeTruthy();
+
+    const updateNoteTool = registeredTools.find((tool) => tool.name === "update_note");
+    expect(updateNoteTool.parameters.properties.markdown).toBeTruthy();
+
+    const copyNoteTool = registeredTools.find((tool) => tool.name === "copy_note");
+    expect(copyNoteTool.parameters.properties.source).toBeTruthy();
+    expect(copyNoteTool.parameters.properties.destination).toBeTruthy();
+
+    await listNotesTool.execute("tool-call-list-notes", {
+      projectId: "project-1",
+    });
+    await getNoteTool.execute("tool-call-get-note", {
+      projectId: "project-1",
+      location: {
+        scope: "project",
+        path: "plans/roadmap.md",
+      },
+    });
+    await updateNoteTool.execute("tool-call-update-note", {
+      projectId: "project-1",
+      location: {
+        scope: "repository",
+        repositoryId: "repo-1",
+        path: "docs/guide.md",
+      },
+      markdown: "# Guide\n",
+    });
+    await copyNoteTool.execute("tool-call-copy-note", {
+      projectId: "project-1",
+      source: {
+        scope: "project",
+        path: "plans/roadmap.md",
+      },
+      destination: {
+        scope: "repository",
+        repositoryId: "repo-1",
+        path: "plans/roadmap-copy.md",
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const listRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(listRequest.command).toBe("list_notes");
+    expect(listRequest.payload).toEqual({ projectId: "project-1" });
+    const getRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(getRequest.command).toBe("get_note");
+    expect(getRequest.payload.location.path).toBe("plans/roadmap.md");
+    const updateRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    expect(updateRequest.command).toBe("update_note");
+    expect(updateRequest.payload.markdown).toBe("# Guide\n");
+    const copyRequest = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));
+    expect(copyRequest.command).toBe("copy_note");
+    expect(copyRequest.payload.destination.repositoryId).toBe("repo-1");
   });
 
   test("exposes workflow and lane tools with explicit parameters", async () => {

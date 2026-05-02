@@ -18,6 +18,7 @@ export interface OrchestraClientFeatureFlags {
   sharedInbox: boolean;
   sharedSessions: boolean;
   sharedSkills: boolean;
+  sharedNotes: boolean;
   taskSchedules: boolean;
   sessionStreaming: boolean;
   sessionControls: boolean;
@@ -55,6 +56,10 @@ export interface OrchestraClientCapabilities {
     archive: OrchestraCapabilityDescriptor;
     delete: OrchestraCapabilityDescriptor;
     assign: OrchestraCapabilityDescriptor;
+  };
+  notes: {
+    read: OrchestraCapabilityDescriptor;
+    write: OrchestraCapabilityDescriptor;
   };
   tasks: {
     read: OrchestraCapabilityDescriptor;

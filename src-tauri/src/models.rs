@@ -232,6 +232,7 @@ pub struct OrchestraClientFeatureFlags {
     pub shared_inbox: bool,
     pub shared_sessions: bool,
     pub shared_skills: bool,
+    pub shared_notes: bool,
     pub task_schedules: bool,
     pub session_streaming: bool,
     pub session_controls: bool,
@@ -279,6 +280,13 @@ pub struct OrchestraClientSkillCapabilities {
     pub archive: OrchestraCapabilityDescriptor,
     pub delete: OrchestraCapabilityDescriptor,
     pub assign: OrchestraCapabilityDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestraClientNotesCapabilities {
+    pub read: OrchestraCapabilityDescriptor,
+    pub write: OrchestraCapabilityDescriptor,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -334,6 +342,7 @@ pub struct OrchestraClientCapabilities {
     pub catalog: OrchestraClientCatalogCapabilities,
     pub admin: OrchestraClientAdminCapabilities,
     pub skills: OrchestraClientSkillCapabilities,
+    pub notes: OrchestraClientNotesCapabilities,
     pub tasks: OrchestraClientTaskCapabilities,
     pub inbox: OrchestraClientInboxCapabilities,
     pub sessions: OrchestraClientSessionCapabilities,
@@ -401,6 +410,49 @@ pub struct RepositoryRecord {
     pub default_branch: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteLocation {
+    pub scope: String,
+    pub repository_id: Option<String>,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteTreeNode {
+    pub kind: String,
+    pub name: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub children: Option<Vec<NoteTreeNode>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotesRoot {
+    pub scope: String,
+    pub repository_id: Option<String>,
+    pub label: String,
+    pub docs_exists: bool,
+    pub children: Vec<NoteTreeNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotesTree {
+    pub project_id: String,
+    pub roots: Vec<NotesRoot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteDetail {
+    pub location: NoteLocation,
+    pub markdown: String,
+    pub exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

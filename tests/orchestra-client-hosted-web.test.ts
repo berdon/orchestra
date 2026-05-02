@@ -24,6 +24,8 @@ const bootstrapFixture: OrchestraClientBootstrap = {
     sharedTasks: false,
     sharedInbox: true,
     sharedSessions: true,
+    sharedSkills: false,
+    sharedNotes: false,
     taskSchedules: false,
     sessionStreaming: true,
     sessionControls: true,
@@ -52,6 +54,18 @@ const bootstrapFixture: OrchestraClientBootstrap = {
       channels: { availability: "unavailable", reason: "Not implemented" },
       modelCatalog: { availability: "unavailable", reason: "Not implemented" },
       piExecutableDiagnostic: { availability: "unavailable", reason: "Desktop only" },
+    },
+    skills: {
+      read: { availability: "unavailable", reason: "Not implemented" },
+      create: { availability: "unavailable", reason: "Not implemented" },
+      update: { availability: "unavailable", reason: "Not implemented" },
+      archive: { availability: "unavailable", reason: "Not implemented" },
+      delete: { availability: "unavailable", reason: "Not implemented" },
+      assign: { availability: "unavailable", reason: "Not implemented" },
+    },
+    notes: {
+      read: { availability: "unavailable", reason: "Not implemented" },
+      write: { availability: "unavailable", reason: "Not implemented" },
     },
     tasks: {
       read: { availability: "available" },

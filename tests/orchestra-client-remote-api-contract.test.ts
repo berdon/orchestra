@@ -87,6 +87,7 @@ const bootstrap: OrchestraClientBootstrap = {
     sharedInbox: true,
     sharedSessions: true,
     sharedSkills: true,
+      sharedNotes: true,
     taskSchedules: true,
     sessionStreaming: true,
     sessionControls: true,
@@ -123,6 +124,10 @@ const bootstrap: OrchestraClientBootstrap = {
       archive: { availability: "available" },
       delete: { availability: "available" },
       assign: { availability: "available" },
+    },
+    notes: {
+      read: { availability: "available" },
+      write: { availability: "available" },
     },
     tasks: {
       read: { availability: "available" },

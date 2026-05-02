@@ -152,6 +152,16 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "Inspect skills linked to a workflow",
         "skills.read",
     ),
+    ("list_notes", "List project notes", "notes.read"),
+    ("get_note", "Get a project note", "notes.read"),
+    (
+        "update_note",
+        "Create or update a project note",
+        "notes.write",
+    ),
+    ("delete_note", "Delete a project note", "notes.write"),
+    ("copy_note", "Copy a project note", "notes.write"),
+    ("move_note", "Move a project note", "notes.write"),
     ("list_policies", "List policies", "policies.read"),
     ("get_policy", "Get a policy", "policies.read"),
     (

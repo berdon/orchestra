@@ -32,6 +32,7 @@ export function createOrchestraClient(
     policies: services.policies,
     channels: services.channels,
     skills: services.skills,
+    notes: services.notes,
     tasks: services.tasks,
     inbox: services.inbox,
     sessions: services.sessions,

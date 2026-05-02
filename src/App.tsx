@@ -33,6 +33,8 @@ import {
   supportsBridgeDiagnostics,
   supportsHarnessSettings,
   supportsLogsWindow,
+  supportsNoteWrites,
+  supportsNotes,
   supportsRemoteAccess,
   supportsRuntimeLogs,
   supportsSkillsSettings,
@@ -52,6 +54,7 @@ import { AgentChatPage } from "./pages/AgentChatPage";
 import { AgentTerminalWindowPage } from "./pages/AgentTerminalWindowPage";
 import { shouldApplyChatAgentLoad } from "./pages/chat/chatAgentLoadGuards";
 import { SessionsPage } from "./pages/SessionsPage";
+import { NotesPage } from "./pages/NotesPage";
 import { TasksPage, type TasksMobileHeaderContext } from "./pages/TasksPage";
 import {
   buildTaskOverviewStateForTagNavigation,
@@ -113,6 +116,7 @@ const NAV_ITEMS: Array<{ id: PrimaryPage; label: string }> = [
   { id: "agents", label: "Agents" },
   { id: "chat", label: "Chat" },
   { id: "sessions", label: "Sessions" },
+  { id: "notes", label: "Notes" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -160,6 +164,16 @@ function NavIcon({ pageId, className }: { pageId: PrimaryPage; className?: strin
           <path d="M7 13.75h3.5" />
         </svg>
       );
+    case "notes":
+      return (
+        <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5 3.75h7.25L15.5 7v9.25A1.75 1.75 0 0 1 13.75 18h-8A1.75 1.75 0 0 1 4 16.25v-10.75A1.75 1.75 0 0 1 5.75 3.75Z" />
+          <path d="M12 3.9v3.35h3.35" />
+          <path d="M6.75 10h6.5" />
+          <path d="M6.75 12.75h6.5" />
+          <path d="M6.75 15.5h4.5" />
+        </svg>
+      );
     case "settings":
       return (
         <svg className={className} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -196,7 +210,7 @@ const SETTINGS_TABS = [
 const SUPERVISOR_AGENT_ID = "agent-supervisor";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "orchestra.preferences.sidebar-collapsed";
 const CHAT_SESSION_RECOVERY_GRACE_MS = 60_000;
-const APP_ROUTE_PAGES = new Set<PrimaryPage>(["tasks", "inbox", "agents", "chat", "sessions", "settings"]);
+const APP_ROUTE_PAGES = new Set<PrimaryPage>(["tasks", "inbox", "agents", "chat", "sessions", "notes", "settings"]);
 const APP_ROUTE_SETTINGS_TABS = new Set<SettingsTab>(SETTINGS_TABS.map((tab) => tab.id));
 const MOBILE_NAVIGATION_BREAKPOINT_PX = 900;
 const MOBILE_NAVIGATION_MEDIA_QUERY = `(max-width: ${MOBILE_NAVIGATION_BREAKPOINT_PX}px)`;
@@ -798,6 +812,8 @@ export function App() {
   const canManageBridgeDiagnostics = supportsBridgeDiagnostics(orchestraClient, orchestraBootstrap);
   const canManageHarnessSettings = supportsHarnessSettings(orchestraClient, orchestraBootstrap);
   const canManageSkillsSettings = supportsSkillsSettings(orchestraBootstrap);
+  const canReadNotes = supportsNotes(orchestraBootstrap);
+  const canWriteNotes = supportsNoteWrites(orchestraBootstrap);
   const canManageRemoteAccess = supportsRemoteAccess(orchestraClient, orchestraBootstrap);
   const canReadManagedSkills = canManageSkillsSettings;
   const canManageSystemNotifications = supportsSystemNotifications(orchestraClient);
@@ -927,6 +943,12 @@ export function App() {
   useEffect(() => {
     activePageRef.current = activePage;
   }, [activePage]);
+
+  useEffect(() => {
+    if (activePage === "notes" && !canReadNotes) {
+      setActivePage("tasks");
+    }
+  }, [activePage, canReadNotes]);
 
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
@@ -2864,8 +2886,14 @@ export function App() {
   }, [activePage, displayedEvents.length, handleSessionScrollLockChange, isDetachedWindow, sessionSurfaceKey]);
 
   const activeTheme = useMemo(() => getOrchestraThemeDefinition(themeId), [themeId]);
-  const activeNavItems = useMemo(() => NAV_ITEMS.filter((item) => item.id !== "settings"), []);
-  const mobileNavItems = useMemo(() => NAV_ITEMS, []);
+  const activeNavItems = useMemo(
+    () => NAV_ITEMS.filter((item) => item.id !== "settings" && (item.id !== "notes" || canReadNotes)),
+    [canReadNotes],
+  );
+  const mobileNavItems = useMemo(
+    () => NAV_ITEMS.filter((item) => item.id !== "notes" || canReadNotes),
+    [canReadNotes],
+  );
   const navBadgeByPage: Partial<Record<PrimaryPage, string>> = useMemo(() => ({
     tasks: formatNavigationBadgeCount(activeProjectTaskCommentUnreadCount),
     inbox: formatNavigationBadgeCount(activeProjectUnreadCount),
@@ -3151,6 +3179,7 @@ export function App() {
           supportsLogsWindow: canOpenLogsWindow,
           supportsHarnessSettings: canManageHarnessSettings,
           supportsSkillsSettings: canManageSkillsSettings,
+          supportsNotes: canReadNotes,
           supportsAgentTerminal: canUseAgentTerminal,
           supportsRemoteAccess: canManageRemoteAccess,
         }),
@@ -4022,8 +4051,8 @@ export function App() {
           </aside>
         )}
 
-        <main className={`${activePage === "chat" || activePage === "sessions" ? "content content--fill-page" : "content"}${showMobileSupervisorChatFab ? " content--with-mobile-fab" : ""}`}>
-          <div className={activePage === "chat" || activePage === "sessions" ? "content__body content__body--fill" : "content__body"}>
+        <main className={`${activePage === "chat" || activePage === "sessions" || activePage === "notes" ? "content content--fill-page" : "content"}${showMobileSupervisorChatFab ? " content--with-mobile-fab" : ""}`}>
+          <div className={activePage === "chat" || activePage === "sessions" || activePage === "notes" ? "content__body content__body--fill" : "content__body"}>
           <ConnectionStatusBanner
             connection={connection}
             onRetry={() => {
@@ -4318,6 +4347,8 @@ export function App() {
             onReloadSession={handleSelectedSessionReload}
             onLoadRuntimeDetails={loadSelectedSessionRuntimeDetails}
           />
+        ) : activePage === "notes" ? (
+          <NotesPage projectId={activeProject?.id ?? null} canWrite={canWriteNotes} />
         ) : (
           <TasksPage
             createTaskProjectId={tasksCreateProjectId}

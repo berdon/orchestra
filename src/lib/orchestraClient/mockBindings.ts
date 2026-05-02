@@ -80,6 +80,18 @@ import {
   updateSourceControlSettings,
 } from "../sourceControlSettings";
 import {
+  copyProjectNote,
+  copyProjectNotesDirectory,
+  createProjectNotesDirectory,
+  deleteProjectNote,
+  deleteProjectNotesDirectory,
+  getProjectNote,
+  listProjectNotes,
+  moveProjectNote,
+  moveProjectNotesDirectory,
+  updateProjectNote,
+} from "../projectNotes";
+import {
   addTaskAttachment,
   addTaskDependency,
   addTaskFileReference,
@@ -296,6 +308,18 @@ export const mockOrchestraClientServiceBindings: OrchestraClientServiceBindings 
     getRoleSkillLinks: async () => { throw unsupportedManagedSkillsError(); },
     getAgentSkillLinks: async () => { throw unsupportedManagedSkillsError(); },
     getWorkflowSkillLinks: async () => { throw unsupportedManagedSkillsError(); },
+  },
+  notes: {
+    list: listProjectNotes,
+    get: getProjectNote,
+    update: updateProjectNote,
+    delete: deleteProjectNote,
+    copy: copyProjectNote,
+    move: moveProjectNote,
+    createDirectory: createProjectNotesDirectory,
+    deleteDirectory: deleteProjectNotesDirectory,
+    copyDirectory: copyProjectNotesDirectory,
+    moveDirectory: moveProjectNotesDirectory,
   },
   tasks: {
     list: listTasks,

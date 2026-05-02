@@ -38,26 +38,27 @@ use crate::{
             build_app_info, get_source_control_settings, list_pi_models, report_client_error,
             update_source_control_settings,
         },
-        channels as channel_commands, messages as message_commands, policies as policy_commands,
-        project_settings as project_setting_commands, projects as project_commands,
-        role_dispatch as role_dispatch_commands, role_runtime as role_runtime_commands,
-        roles as role_commands, sessions as session_commands, skills as skill_commands,
+        channels as channel_commands, messages as message_commands, notes as note_commands,
+        policies as policy_commands, project_settings as project_setting_commands,
+        projects as project_commands, role_dispatch as role_dispatch_commands,
+        role_runtime as role_runtime_commands, roles as role_commands,
+        sessions as session_commands, skills as skill_commands,
         task_schedules as task_schedule_commands, tasks as task_commands,
         workflows as workflow_commands,
     },
     models::{
         AgentQueueEntryInput, AgentUpsertInput, AppInfo, ArchiveMailboxMessagesInput,
         AuthorizationContext, ChannelUpsertInput, LocalSkillUpsertInput, MailboxMessage,
-        MarkMailboxMessagesReadInput, OrchestraCapabilityAvailability,
-        OrchestraCapabilityDescriptor, OrchestraClientAdminCapabilities,
-        OrchestraClientAppCapabilities, OrchestraClientAuthMode, OrchestraClientBootstrap,
-        OrchestraClientCapabilities, OrchestraClientCatalogCapabilities,
+        MarkMailboxMessagesReadInput, NoteDetail, NoteLocation, NotesTree,
+        OrchestraCapabilityAvailability, OrchestraCapabilityDescriptor,
+        OrchestraClientAdminCapabilities, OrchestraClientAppCapabilities, OrchestraClientAuthMode,
+        OrchestraClientBootstrap, OrchestraClientCapabilities, OrchestraClientCatalogCapabilities,
         OrchestraClientFeatureFlags, OrchestraClientHostCapabilities, OrchestraClientHostKind,
-        OrchestraClientInboxCapabilities, OrchestraClientSessionCapabilities,
-        OrchestraClientSkillCapabilities, OrchestraClientTaskCapabilities,
-        OrchestraClientTransportUrls, ProjectUpsertInput, QueuedSessionMessage,
-        RemoteAccessSettings, RemoteAccessStatus, RemoteAuthResponse, RemoteDeviceRecord,
-        RemoteEventEnvelope, RemotePairingCompleteInput, RemotePushTokenInput,
+        OrchestraClientInboxCapabilities, OrchestraClientNotesCapabilities,
+        OrchestraClientSessionCapabilities, OrchestraClientSkillCapabilities,
+        OrchestraClientTaskCapabilities, OrchestraClientTransportUrls, ProjectUpsertInput,
+        QueuedSessionMessage, RemoteAccessSettings, RemoteAccessStatus, RemoteAuthResponse,
+        RemoteDeviceRecord, RemoteEventEnvelope, RemotePairingCompleteInput, RemotePushTokenInput,
         RepositoryRemoteInput, RepositoryUpsertInput, RoleQueueEntryInput, RoleUpsertInput,
         SendMailboxMessageInput, SessionRecord, SkillBindingInput, TaskAttachmentInput,
         TaskCommentInput, TaskCommentUpdateInput, TaskDetail, TaskFileReferenceInput,
@@ -177,6 +178,26 @@ struct SessionMessageInput {
 #[serde(rename_all = "camelCase")]
 struct NotesInput {
     notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteLocationInput {
+    location: NoteLocation,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteWriteInput {
+    location: NoteLocation,
+    markdown: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteCopyMoveInput {
+    source: NoteLocation,
+    destination: NoteLocation,
 }
 
 #[derive(Debug, Deserialize)]
@@ -370,7 +391,7 @@ struct WsAuthQuery {
     token: Option<String>,
 }
 
-const ORCHESTRA_CLIENT_CONTRACT_VERSION: &str = "2026-04-23";
+const ORCHESTRA_CLIENT_CONTRACT_VERSION: &str = "2026-05-02";
 const REMOTE_AUTH_COOKIE_NAME: &str = "orchestra_remote_device_token";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1795,6 +1816,46 @@ fn build_remote_api_context(app: AppHandle) -> Router {
         .route(
             "/api/v1/skills/:skill_id/bindings",
             post(post_skill_bindings),
+        )
+        .route(
+            "/api/v1/projects/:project_id/notes",
+            get(get_project_notes_route),
+        )
+        .route(
+            "/api/v1/projects/:project_id/notes/read",
+            post(post_project_note_read),
+        )
+        .route(
+            "/api/v1/projects/:project_id/notes/write",
+            post(post_project_note_write),
+        )
+        .route(
+            "/api/v1/projects/:project_id/notes/delete",
+            post(post_project_note_delete),
+        )
+        .route(
+            "/api/v1/projects/:project_id/notes/copy",
+            post(post_project_note_copy),
+        )
+        .route(
+            "/api/v1/projects/:project_id/notes/move",
+            post(post_project_note_move),
+        )
+        .route(
+            "/api/v1/projects/:project_id/notes/directories/create",
+            post(post_project_notes_directory_create),
+        )
+        .route(
+            "/api/v1/projects/:project_id/notes/directories/delete",
+            post(post_project_notes_directory_delete),
+        )
+        .route(
+            "/api/v1/projects/:project_id/notes/directories/copy",
+            post(post_project_notes_directory_copy),
+        )
+        .route(
+            "/api/v1/projects/:project_id/notes/directories/move",
+            post(post_project_notes_directory_move),
         )
         .route("/api/v1/tasks", get(get_tasks).post(post_task_create))
         .route(
@@ -3507,6 +3568,7 @@ fn build_frontend_feature_flags(authenticated: bool) -> OrchestraClientFeatureFl
         shared_inbox: authenticated,
         shared_sessions: authenticated,
         shared_skills: authenticated,
+        shared_notes: authenticated,
         task_schedules: authenticated,
         session_streaming: authenticated,
         session_controls: authenticated,
@@ -3603,6 +3665,18 @@ fn build_frontend_capabilities(authenticated: bool) -> OrchestraClientCapabiliti
                 authenticated,
                 true,
                 "Remote managed-skills assignment endpoints are unavailable.",
+            ),
+        },
+        notes: OrchestraClientNotesCapabilities {
+            read: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote project-notes read endpoints are unavailable.",
+            ),
+            write: auth_guarded_capability(
+                authenticated,
+                true,
+                "Remote project-notes write endpoints are unavailable.",
             ),
         },
         tasks: OrchestraClientTaskCapabilities {
@@ -5225,6 +5299,180 @@ async fn get_workflow_skill_links_route(
     skill_commands::get_workflow_skill_links(workflow_id, authorization)
         .map(Json)
         .map_err(command_api_error)
+}
+
+async fn get_project_notes_route(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+) -> Result<Json<NotesTree>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    note_commands::list_project_notes(project_id, authorization)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn post_project_note_read(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Json(input): Json<NoteLocationInput>,
+) -> Result<Json<NoteDetail>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    note_commands::get_project_note(project_id, input.location, authorization)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn post_project_note_write(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Json(input): Json<NoteWriteInput>,
+) -> Result<Json<NoteDetail>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    note_commands::update_project_note(
+        context.app.state::<AppState>(),
+        project_id,
+        input.location,
+        input.markdown,
+        authorization,
+    )
+    .map(Json)
+    .map_err(command_api_error)
+}
+
+async fn post_project_note_delete(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Json(input): Json<NoteLocationInput>,
+) -> Result<Json<NoteLocation>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    note_commands::delete_project_note(
+        context.app.state::<AppState>(),
+        project_id,
+        input.location,
+        authorization,
+    )
+    .map(Json)
+    .map_err(command_api_error)
+}
+
+async fn post_project_note_copy(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Json(input): Json<NoteCopyMoveInput>,
+) -> Result<Json<NoteDetail>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    note_commands::copy_project_note(
+        context.app.state::<AppState>(),
+        project_id,
+        input.source,
+        input.destination,
+        authorization,
+    )
+    .map(Json)
+    .map_err(command_api_error)
+}
+
+async fn post_project_note_move(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Json(input): Json<NoteCopyMoveInput>,
+) -> Result<Json<NoteDetail>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    note_commands::move_project_note(
+        context.app.state::<AppState>(),
+        project_id,
+        input.source,
+        input.destination,
+        authorization,
+    )
+    .map(Json)
+    .map_err(command_api_error)
+}
+
+async fn post_project_notes_directory_create(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Json(input): Json<NoteLocationInput>,
+) -> Result<Json<NoteLocation>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    note_commands::create_project_notes_directory(
+        context.app.state::<AppState>(),
+        project_id,
+        input.location,
+        authorization,
+    )
+    .map(Json)
+    .map_err(command_api_error)
+}
+
+async fn post_project_notes_directory_delete(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Json(input): Json<NoteLocationInput>,
+) -> Result<Json<NoteLocation>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    note_commands::delete_project_notes_directory(
+        context.app.state::<AppState>(),
+        project_id,
+        input.location,
+        authorization,
+    )
+    .map(Json)
+    .map_err(command_api_error)
+}
+
+async fn post_project_notes_directory_copy(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Json(input): Json<NoteCopyMoveInput>,
+) -> Result<Json<NoteLocation>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    note_commands::copy_project_notes_directory(
+        context.app.state::<AppState>(),
+        project_id,
+        input.source,
+        input.destination,
+        authorization,
+    )
+    .map(Json)
+    .map_err(command_api_error)
+}
+
+async fn post_project_notes_directory_move(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+    Json(input): Json<NoteCopyMoveInput>,
+) -> Result<Json<NoteLocation>, (StatusCode, Json<ApiError>)> {
+    let device = resolve_remote_auth(&context.app, &headers, None)?;
+    let authorization = remote_authorization_context(&device, &headers)?;
+    note_commands::move_project_notes_directory(
+        context.app.state::<AppState>(),
+        project_id,
+        input.source,
+        input.destination,
+        authorization,
+    )
+    .map(Json)
+    .map_err(command_api_error)
 }
 
 async fn get_projects(

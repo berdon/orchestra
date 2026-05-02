@@ -652,6 +652,16 @@ async function runSafeProjectSecretCommandForUi(command: string, payload: Record
   throw new Error(`Unsupported safe project secret command: ${command}`);
 }
 
+function noteLocationSchema(description: string, pathDescription: string) {
+  return Type.Object({
+    scope: Type.String({ description: 'Note scope: project or repository.' }),
+    repositoryId: Type.Optional(Type.String({ description: 'Required when scope is repository.' })),
+    path: Type.String({ description: pathDescription }),
+  }, {
+    description,
+  });
+}
+
 export function createBridgeTool(tool: OrchestraToolDefinition) {
   if (tool.name === "list_projects") {
     return {
@@ -1277,6 +1287,126 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       }),
       async execute(_toolCallId: string, params: { workflowId: string }) {
         const payload = { workflowId: params.workflowId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "list_notes") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId to list the Project root first and repository note roots after it.`,
+      parameters: Type.Object({
+        projectId: Type.String({ description: "Canonical Orchestra project id, e.g. project-123." }),
+      }),
+      async execute(_toolCallId: string, params: { projectId: string }) {
+        const payload = { projectId: params.projectId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "get_note") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId plus the note location inside docs/.`,
+      parameters: Type.Object({
+        projectId: Type.String({ description: "Canonical Orchestra project id, e.g. project-123." }),
+        location: noteLocationSchema(
+          'Note location relative to docs/.',
+          'Markdown file path relative to docs/, e.g. architecture/plan.md.',
+        ),
+      }),
+      async execute(_toolCallId: string, params: { projectId: string; location: { scope: string; repositoryId?: string; path: string } }) {
+        const payload = { projectId: params.projectId, location: params.location };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "update_note") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId, location, and markdown. This command creates the note if it does not exist yet.`,
+      parameters: Type.Object({
+        projectId: Type.String({ description: "Canonical Orchestra project id, e.g. project-123." }),
+        location: noteLocationSchema(
+          'Destination note location relative to docs/.',
+          'Markdown file path relative to docs/, e.g. architecture/plan.md.',
+        ),
+        markdown: Type.String({ description: 'Full markdown body to write into the note.' }),
+      }),
+      async execute(_toolCallId: string, params: { projectId: string; location: { scope: string; repositoryId?: string; path: string }; markdown: string }) {
+        const payload = { projectId: params.projectId, location: params.location, markdown: params.markdown };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "delete_note") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId plus the note location to remove.`,
+      parameters: Type.Object({
+        projectId: Type.String({ description: "Canonical Orchestra project id, e.g. project-123." }),
+        location: noteLocationSchema(
+          'Note location to delete.',
+          'Markdown file path relative to docs/, e.g. architecture/plan.md.',
+        ),
+      }),
+      async execute(_toolCallId: string, params: { projectId: string; location: { scope: string; repositoryId?: string; path: string } }) {
+        const payload = { projectId: params.projectId, location: params.location };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (["copy_note", "move_note"].includes(tool.name)) {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId plus full source and destination note locations so cross-scope note operations work naturally.`,
+      parameters: Type.Object({
+        projectId: Type.String({ description: "Canonical Orchestra project id, e.g. project-123." }),
+        source: noteLocationSchema(
+          'Source note location relative to docs/.',
+          'Existing markdown file path relative to docs/, e.g. architecture/plan.md.',
+        ),
+        destination: noteLocationSchema(
+          'Destination note location relative to docs/.',
+          'Target markdown file path relative to docs/, e.g. docs/archive/plan-copy.md.',
+        ),
+      }),
+      async execute(_toolCallId: string, params: { projectId: string; source: { scope: string; repositoryId?: string; path: string }; destination: { scope: string; repositoryId?: string; path: string } }) {
+        const payload = {
+          projectId: params.projectId,
+          source: params.source,
+          destination: params.destination,
+        };
         const result = await invokeBridge(tool.name, payload);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],

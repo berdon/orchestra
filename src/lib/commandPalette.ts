@@ -44,6 +44,7 @@ interface BuildCommandPaletteItemsOptions {
   supportsLogsWindow?: boolean;
   supportsHarnessSettings?: boolean;
   supportsSkillsSettings?: boolean;
+  supportsNotes?: boolean;
   supportsAgentTerminal?: boolean;
   supportsRemoteAccess?: boolean;
 }
@@ -66,6 +67,7 @@ export function buildCommandPaletteItems({
   supportsLogsWindow = false,
   supportsHarnessSettings = false,
   supportsSkillsSettings = false,
+  supportsNotes = false,
   supportsAgentTerminal = false,
   supportsRemoteAccess = false,
 }: BuildCommandPaletteItemsOptions): CommandPaletteItem[] {
@@ -102,6 +104,14 @@ export function buildCommandPaletteItems({
       keywords: ["sessions", "debug", "transcript"],
       action: { type: "navigate-page", page: "sessions" },
     }),
+    ...(supportsNotes ? [commandItem({
+      id: "page-notes",
+      title: "Go to Notes",
+      subtitle: "Project and repository markdown notes",
+      group: "Pages",
+      keywords: ["notes", "docs", "markdown", "documentation"],
+      action: { type: "navigate-page", page: "notes" },
+    })] : []),
     commandItem({
       id: "settings-projects",
       title: "Open Settings → Projects",

@@ -4,6 +4,7 @@ pub mod app;
 pub mod channels;
 pub mod dispatcher;
 pub mod messages;
+pub mod notes;
 pub mod policies;
 pub mod project_settings;
 pub mod projects;
