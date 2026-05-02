@@ -4110,7 +4110,7 @@ export function App() {
               onDismissLegacyImport={() => handleDismissPiLegacyImport()}
               onSaveModelsJson={(content) => handleSavePiModelsJson(content)}
               onSavePiRuntimeSettings={(input) => void handleSavePiRuntimeSettings(input)}
-              onSaveHarnessModelLimitPolicy={(input) => void handleSaveHarnessModelLimitPolicy(input)}
+              onSaveHarnessModelLimitPolicy={handleSaveHarnessModelLimitPolicy}
               onImportLegacyPiConfiguration={(input) => void handleImportLegacyPiConfiguration(input)}
             />
           ) : (

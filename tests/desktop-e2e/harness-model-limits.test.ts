@@ -11,7 +11,9 @@ import {
   deleteWebdriverSession,
   ensureReactReady,
   executeScript,
+  getSelectOptions,
   invokeCommand,
+  selectByLabel,
   setInputValue,
   sleep,
   waitForSelector,
@@ -148,23 +150,38 @@ describe("desktop harness model limits", () => {
       );
       await clickSelector(sessionId, '[data-role="harness-subnav-models"]');
       await waitForText(sessionId, "Structured model policies");
-      await waitForText(sessionId, "GLM 4.6");
+      await waitForText(sessionId, "No model limit rows yet. Add a row to choose a provider/model and set limits.");
+      expect(await executeScript<number>(sessionId, `
+        return document.querySelectorAll('[data-role^="harness-model-policy-row-"]').length;
+      `)).toBe(0);
 
-      const setRollingLimit = async () => setInputValue(sessionId, '[data-role="harness-model-rolling-5h-zai-glm-4-6-openai-compatible"]', "90").catch(async () => {
-        await setInputValue(sessionId, '[data-role="harness-model-rolling-5h-zai-glm-4-6-openai-completions"]', "90");
-      });
-      const setWeeklyLimit = async () => setInputValue(sessionId, '[data-role="harness-model-weekly-zai-glm-4-6-openai-compatible"]', "80").catch(async () => {
-        await setInputValue(sessionId, '[data-role="harness-model-weekly-zai-glm-4-6-openai-completions"]', "80");
-      });
-      await setRollingLimit();
-      await setWeeklyLimit();
-      await sleep(1000);
-      await setRollingLimit();
-      await setWeeklyLimit();
+      await clickSelector(sessionId, '[data-role="add-harness-model-policy-row"]');
+      await waitForSelector(sessionId, '[data-role="harness-model-provider-0"]');
+      await selectByLabel(sessionId, '[data-role="harness-model-provider-0"]', "zai");
+
+      const modelOptions = await waitForCondition(
+        () => getSelectOptions(sessionId, '[data-role="harness-model-select-0"]'),
+        (options) => options.some((option) => option.label.includes("GLM 4.6")),
+      );
+      const glmModelOption = modelOptions.find((option) => option.label.includes("GLM 4.6"));
+      expect(glmModelOption).toBeTruthy();
+      await executeScript(sessionId, `
+        const select = document.querySelector(arguments[0]);
+        const value = arguments[1];
+        if (!(select instanceof HTMLSelectElement) || typeof value !== 'string') {
+          return false;
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+        descriptor?.set?.call(select, value);
+        select.dispatchEvent(new Event('input', { bubbles: true }));
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      `, ['[data-role="harness-model-select-0"]', glmModelOption?.value ?? ""]);
+
+      await setInputValue(sessionId, '[data-role="harness-model-rolling-5h-0"]', "90");
+      await setInputValue(sessionId, '[data-role="harness-model-weekly-0"]', "80");
       await sleep(250);
-      await clickSelector(sessionId, '[data-role="save-harness-model-policy-zai-glm-4-6-openai-compatible"]').catch(async () => {
-        await clickSelector(sessionId, '[data-role="save-harness-model-policy-zai-glm-4-6-openai-completions"]');
-      });
+      await clickSelector(sessionId, '[data-role="save-harness-model-policy-0"]');
 
       const savedSnapshot = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_harness_model_limits_snapshot"),
