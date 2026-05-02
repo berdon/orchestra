@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use rusqlite::OptionalExtension;
@@ -900,8 +901,10 @@ pub async fn list_sessions(
     state: State<'_, AppState>,
     project_id: Option<String>,
 ) -> Result<Vec<SessionRecord>, String> {
+    let started_at = Instant::now();
     let subscribed = state.subscribed_session_ids()?;
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
+    let project_id_for_log = project_id.clone();
     let sessions = spawn_blocking(move || {
         let connection = database::open_connection()?;
         match project_id.as_deref() {
@@ -923,6 +926,16 @@ pub async fn list_sessions(
     })
     .await
     .map_err(|error| format!("Unable to join list_sessions task: {error}"))??;
+    state.log(
+        "info",
+        "startup.timing.rpc",
+        &format!(
+            "command=list_sessions duration_ms={:.1} project_id={} session_count={}",
+            started_at.elapsed().as_secs_f64() * 1000.0,
+            project_id_for_log.as_deref().unwrap_or("<all>"),
+            sessions.len(),
+        ),
+    );
 
     sessions
         .into_iter()

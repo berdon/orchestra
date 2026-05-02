@@ -898,6 +898,7 @@ export function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteLoading, setCommandPaletteLoading] = useState(false);
   const [commandPaletteItems, setCommandPaletteItems] = useState<CommandPaletteItem[]>([]);
+  const [startupAuxHydrationReady, setStartupAuxHydrationReady] = useState(false);
   const [supervisorQuickChatOpen, setSupervisorQuickChatOpen] = useState(false);
   const [supervisorSessionId, setSupervisorSessionId] = useState<string | null>(null);
   const [supervisorQuickChatStorageReadyProjectKey, setSupervisorQuickChatStorageReadyProjectKey] = useState<string | null>(null);
@@ -939,6 +940,8 @@ export function App() {
   const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
   const testPinnedSessionIdsRef = useRef<Set<string>>(new Set());
   const commandPaletteRequestIdRef = useRef(0);
+  const startupTimingOriginRef = useRef(typeof performance !== "undefined" ? performance.now() : 0);
+  const startupSessionWarmProjectKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     activePageRef.current = activePage;
@@ -974,9 +977,23 @@ export function App() {
     pendingSessionOpenRequestRef.current = pendingSessionOpenRequest;
   }, [pendingSessionOpenRequest]);
 
+  const logStartupTiming = useCallback((stage: string, startedAt?: number, details?: Record<string, unknown>) => {
+    const now = typeof performance !== "undefined" ? performance.now() : 0;
+    const payload: Record<string, unknown> = {
+      stage,
+      sinceMountMs: Number((now - startupTimingOriginRef.current).toFixed(1)),
+      ...details,
+    };
+    if (typeof startedAt === "number") {
+      payload.durationMs = Number((now - startedAt).toFixed(1));
+    }
+    console.info("[orchestra][startup.timing]", payload);
+  }, []);
+
   useEffect(() => {
     commandPaletteRequestIdRef.current += 1;
     setCommandPaletteLoading(false);
+    startupSessionWarmProjectKeyRef.current = null;
   }, [activeProjectId]);
 
   useLayoutEffect(() => {
@@ -994,6 +1011,39 @@ export function App() {
   useEffect(() => {
     storeLocalNotificationsEnabled(localNotificationsEnabled);
   }, [localNotificationsEnabled]);
+
+  useEffect(() => {
+    logStartupTiming("frontend.app.mounted", undefined, {
+      initialPage: initialRouteState.page,
+      initialProjectId: initialRouteState.projectId,
+    });
+  }, [initialRouteState.page, initialRouteState.projectId, logStartupTiming]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || startupAuxHydrationReady) {
+      return;
+    }
+
+    const markReady = () => {
+      setStartupAuxHydrationReady(true);
+      logStartupTiming("frontend.aux_hydration.ready", undefined, {
+        activePage: activePageRef.current,
+        activeProjectId: activeProjectIdRef.current,
+      });
+    };
+
+    const windowWithIdleCallback = window as Window & {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (typeof windowWithIdleCallback.requestIdleCallback === "function") {
+      const handle = windowWithIdleCallback.requestIdleCallback(() => markReady(), { timeout: 1000 });
+      return () => windowWithIdleCallback.cancelIdleCallback?.(handle);
+    }
+
+    const timeoutId = window.setTimeout(markReady, 250);
+    return () => window.clearTimeout(timeoutId);
+  }, [logStartupTiming, startupAuxHydrationReady]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -1108,16 +1158,21 @@ export function App() {
   }, [isMobileNavigation, isMobileNavigationOpen]);
 
   const isDetachedWindow = isLogsWindow || isAgentTerminalWindow;
-  const { projectUnreadCounts, projectTaskCommentUnreadCounts } = useProjectUnreadCounts(
-    projects,
-    isLogsWindow || isAgentTerminalWindow || isDetachedWindow,
-  );
+  const shouldLoadReferenceData = !isDetachedWindow
+    && Boolean(activeProjectId)
+    && (activePage === "sessions" || activePage === "chat" || supervisorQuickChatOpen || startupAuxHydrationReady);
+  const { projectUnreadCounts, projectTaskCommentUnreadCounts } = useProjectUnreadCounts(projects, {
+    disabled: isDetachedWindow || !startupAuxHydrationReady,
+    timingLabel: startupAuxHydrationReady ? "frontend.project_unread_counts" : null,
+  });
   const {
     referenceTasks,
     referenceAgents,
     referenceRoles,
-    refresh: refreshProjectReferenceData,
-  } = useProjectReferenceData(activeProjectId, isDetachedWindow);
+  } = useProjectReferenceData(activeProjectId, {
+    disabled: !shouldLoadReferenceData,
+    timingLabel: shouldLoadReferenceData ? "frontend.project_reference_data" : null,
+  });
 
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) ?? projects[0] ?? null,
@@ -1687,8 +1742,10 @@ export function App() {
   }, [orchestraBootstrap.appInfo]);
 
   async function loadAppInfo() {
+    const startedAt = typeof performance !== "undefined" ? performance.now() : undefined;
     try {
       setAppInfo(await orchestraClient.app.getInfo());
+      logStartupTiming("frontend.rpc.get_app_info", startedAt);
     } catch (error) {
       setSessionActionError(await reportUiError(orchestraClient, "ui.app.info", error, "Unable to load app info."));
     }
@@ -1955,6 +2012,7 @@ export function App() {
   }
 
   const loadSessions = useCallback(async (options?: { background?: boolean }) => {
+    const startedAt = typeof performance !== "undefined" ? performance.now() : undefined;
     sessionListRefreshCountRef.current += 1;
     if (!options?.background) {
       setLoadingSessions(true);
@@ -2002,6 +2060,11 @@ export function App() {
         const fallbackSessionId = nextSessions[0]?.id ?? null;
         return current === fallbackSessionId ? current : fallbackSessionId;
       });
+      logStartupTiming("frontend.rpc.list_sessions", startedAt, {
+        background: Boolean(options?.background),
+        activeProjectId,
+        sessionCount: listedSessions.length,
+      });
       // Agent chat sessions are tracked independently from the project-scoped
       // session list. Do not clear chat session state here just because the
       // current project list doesn't contain it.
@@ -2012,7 +2075,7 @@ export function App() {
       setRefreshingSessions(false);
       backgroundSessionRefreshInFlightRef.current = false;
     }
-  }, [activePage, activeProjectId, orchestraClient]);
+  }, [activePage, activeProjectId, logStartupTiming, orchestraClient]);
 
   const loadChatAgents = useCallback(async (options?: { background?: boolean }) => {
     const requestId = ++chatAgentLoadRequestIdRef.current;
@@ -2271,6 +2334,7 @@ export function App() {
 
   useEffect(() => {
     const loadProjectCatalog = () => {
+      const startedAt = typeof performance !== "undefined" ? performance.now() : undefined;
       void orchestraClient.catalog.listProjects().then((nextProjects) => {
         const storedActiveProjectId = getActiveProjectId();
         setProjects(nextProjects);
@@ -2287,6 +2351,7 @@ export function App() {
           }
           return fallbackProject?.id ?? null;
         });
+        logStartupTiming("frontend.rpc.list_projects", startedAt, { projectCount: nextProjects.length });
       });
     };
 
@@ -2348,16 +2413,6 @@ export function App() {
     lastKnownChatSessionAgentIdRef.current = null;
     lastKnownChatSessionDraftRef.current = "";
   }, [activeProject?.slug, activeProjectId, pendingSessionOpenRequest]);
-
-  useEffect(() => {
-    if (isDetachedWindow) {
-      return;
-    }
-
-    void refreshProjectReferenceData().catch((error) => {
-      setSessionActionError((current) => current ?? toUiErrorState(error, "Unable to load project references."));
-    });
-  }, [activePage, activeSettingsTab, isDetachedWindow, refreshProjectReferenceData]);
 
   useNotificationController({
     disabled: isDetachedWindow || isLogsWindow || isAgentTerminalWindow,
@@ -2475,6 +2530,10 @@ export function App() {
     };
   }, [requestBackgroundSessionRefresh]);
 
+  const shouldEagerlyLoadSessions = !isLogsWindow
+    && !isAgentTerminalWindow
+    && (activePage === "sessions" || activePage === "chat" || Boolean(pendingSessionOpenRequest) || supervisorQuickChatOpen);
+
   useEffect(() => {
     if (isLogsWindow) {
       void loadLogs();
@@ -2486,10 +2545,34 @@ export function App() {
       };
     }
 
-    if (!isAgentTerminalWindow) {
-      void loadSessions();
+    if (isAgentTerminalWindow) {
+      return;
     }
-  }, [activeProjectId, isLogsWindow, isAgentTerminalWindow]);
+
+    const warmProjectKey = activeProjectId ?? "default";
+    if (shouldEagerlyLoadSessions) {
+      startupSessionWarmProjectKeyRef.current = warmProjectKey;
+      void loadSessions();
+      return;
+    }
+
+    if (!startupAuxHydrationReady || startupSessionWarmProjectKeyRef.current === warmProjectKey) {
+      return;
+    }
+
+    startupSessionWarmProjectKeyRef.current = warmProjectKey;
+    void loadSessions({ background: true });
+  }, [
+    activeProjectId,
+    activePage,
+    isAgentTerminalWindow,
+    isLogsWindow,
+    loadSessions,
+    pendingSessionOpenRequest,
+    shouldEagerlyLoadSessions,
+    startupAuxHydrationReady,
+    supervisorQuickChatOpen,
+  ]);
 
   const refreshSessionsInBackground = useCallback(() => {
     void loadSessions({ background: true });

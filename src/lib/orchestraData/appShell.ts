@@ -15,8 +15,25 @@ function countUnreadTaskComments(tasks: TaskSummary[]) {
   return countVisibleUnreadTaskComments(tasks);
 }
 
-export function useProjectUnreadCounts(projects: ProjectSummary[], disabled = false) {
+function logAppShellTiming(label: string | null | undefined, startedAt: number, details?: Record<string, unknown>) {
+  if (!label || typeof performance === "undefined") {
+    return;
+  }
+
+  console.info("[orchestra][startup.timing]", {
+    stage: label,
+    durationMs: Number((performance.now() - startedAt).toFixed(1)),
+    ...details,
+  });
+}
+
+export function useProjectUnreadCounts(
+  projects: ProjectSummary[],
+  options?: { disabled?: boolean; timingLabel?: string | null },
+) {
   const orchestraClient = useOrchestraClient();
+  const disabled = options?.disabled ?? false;
+  const timingLabel = options?.timingLabel ?? null;
   const [projectUnreadCounts, setProjectUnreadCounts] = useState<Record<string, number>>({});
   const [projectTaskCommentUnreadCounts, setProjectTaskCommentUnreadCounts] = useState<Record<string, number>>({});
 
@@ -27,6 +44,7 @@ export function useProjectUnreadCounts(projects: ProjectSummary[], disabled = fa
       return;
     }
 
+    const startedAt = typeof performance !== "undefined" ? performance.now() : 0;
     const projectUnreadData = await Promise.all(projects.map(async (project) => {
       const [messages, tasks] = await Promise.all([
         orchestraClient.inbox.list(project.id, true),
@@ -41,7 +59,8 @@ export function useProjectUnreadCounts(projects: ProjectSummary[], disabled = fa
 
     setProjectUnreadCounts(Object.fromEntries(projectUnreadData.map((entry) => [entry.projectId, entry.inboxUnreadCount])));
     setProjectTaskCommentUnreadCounts(Object.fromEntries(projectUnreadData.map((entry) => [entry.projectId, entry.taskCommentUnreadCount])));
-  }, [disabled, orchestraClient, projects]);
+    logAppShellTiming(timingLabel, startedAt, { projectCount: projects.length });
+  }, [disabled, orchestraClient, projects, timingLabel]);
 
   useEffect(() => {
     void refresh().catch(() => {
@@ -66,8 +85,13 @@ export function useProjectUnreadCounts(projects: ProjectSummary[], disabled = fa
   };
 }
 
-export function useProjectReferenceData(activeProjectId: string | null, disabled = false) {
+export function useProjectReferenceData(
+  activeProjectId: string | null,
+  options?: { disabled?: boolean; timingLabel?: string | null },
+) {
   const orchestraClient = useOrchestraClient();
+  const disabled = options?.disabled ?? false;
+  const timingLabel = options?.timingLabel ?? null;
   const [referenceTasks, setReferenceTasks] = useState<TaskSummary[]>([]);
   const [referenceAgents, setReferenceAgents] = useState<AgentSummary[]>([]);
   const [referenceRoles, setReferenceRoles] = useState<RoleSummary[]>([]);
@@ -80,6 +104,7 @@ export function useProjectReferenceData(activeProjectId: string | null, disabled
       return;
     }
 
+    const startedAt = typeof performance !== "undefined" ? performance.now() : 0;
     const [tasks, agents, roles] = await Promise.all([
       orchestraClient.tasks.list({ includeArchived: false, projectId: activeProjectId }),
       orchestraClient.catalog.listAgents(false, activeProjectId),
@@ -88,7 +113,8 @@ export function useProjectReferenceData(activeProjectId: string | null, disabled
     setReferenceTasks(tasks);
     setReferenceAgents(agents);
     setReferenceRoles(roles);
-  }, [activeProjectId, disabled, orchestraClient]);
+    logAppShellTiming(timingLabel, startedAt, { activeProjectId, taskCount: tasks.length });
+  }, [activeProjectId, disabled, orchestraClient, timingLabel]);
 
   useEffect(() => {
     void refresh().catch(() => {

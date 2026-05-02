@@ -1,4 +1,7 @@
-use std::{collections::HashSet, time::Duration};
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
 
 use serde_json::json;
 use tauri::{AppHandle, Manager, State};
@@ -155,6 +158,8 @@ pub fn list_tasks(
     sort_by: Option<String>,
     sort_direction: Option<String>,
 ) -> Result<Vec<TaskSummary>, String> {
+    let started_at = Instant::now();
+    let requested_project_id = project_id.clone();
     let connection = database::open_connection()?;
     let Some(project_id) = crate::services::projects::resolve_requested_or_default_project_id(
         &connection,
@@ -170,7 +175,16 @@ pub fn list_tasks(
         sort_by.as_deref(),
         sort_direction.as_deref(),
     )?;
-    tasks::list_tasks_with_query(&connection, &project_id, query)
+    let tasks = tasks::list_tasks_with_query(&connection, &project_id, query)?;
+    tracing::info!(
+        target: "startup.timing.rpc",
+        "command=list_tasks duration_ms={:.1} requested_project_id={} resolved_project_id={} task_count={}",
+        started_at.elapsed().as_secs_f64() * 1000.0,
+        requested_project_id.as_deref().unwrap_or("<default>"),
+        project_id,
+        tasks.len(),
+    );
+    Ok(tasks)
 }
 
 #[tauri::command]

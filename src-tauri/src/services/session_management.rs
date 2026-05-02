@@ -4,7 +4,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
+#[cfg(test)]
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use uuid::Uuid;
@@ -1688,46 +1690,25 @@ pub fn reconcile_sessions(
                     (entry.context.as_ref(), entry.transcript.as_ref())
                 {
                     let stored = pi_sessions::summarize_session_for_catalog(&transcript.path)?;
-                    let transcript_path = transcript.path.display().to_string();
                     let (file_size, file_mtime_ms) = session_file_fingerprint(&transcript.path)?;
-                    connection
-                        .execute(
-                            r#"
-                            INSERT INTO session_catalog (
-                                session_id, project_slug, session_path, created_at, updated_at,
-                                title, status, file_size, file_mtime_ms, last_indexed_at
-                            )
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-                            ON CONFLICT(session_id) DO UPDATE SET
-                                project_slug = excluded.project_slug,
-                                session_path = excluded.session_path,
-                                created_at = excluded.created_at,
-                                updated_at = excluded.updated_at,
-                                title = excluded.title,
-                                status = excluded.status,
-                                file_size = excluded.file_size,
-                                file_mtime_ms = excluded.file_mtime_ms,
-                                last_indexed_at = excluded.last_indexed_at
-                            "#,
-                            params![
-                                summary.session_id,
-                                context.project_slug,
-                                transcript_path,
-                                stored.record.created_at,
-                                stored.record.updated_at,
-                                stored.record.title,
-                                stored.record.status,
-                                file_size as i64,
-                                file_mtime_ms,
-                                crate::state::now_iso(),
-                            ],
+                    pi_sessions::upsert_session_catalog_row(
+                        connection,
+                        &summary.session_id,
+                        &context.project_slug,
+                        &transcript.path,
+                        &stored.record.created_at,
+                        &stored.record.updated_at,
+                        &stored.record.title,
+                        &stored.record.status,
+                        file_size,
+                        file_mtime_ms,
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "Unable to reindex transcript {}: {error}",
+                            summary.session_id
                         )
-                        .map_err(|error| {
-                            format!(
-                                "Unable to reindex transcript {}: {error}",
-                                summary.session_id
-                            )
-                        })?;
+                    })?;
                 }
             }
 
@@ -2492,6 +2473,68 @@ mod tests {
                 .expect("stale run origin should reload");
             assert_eq!(stale_run_count, 0);
             assert!(orphan_path.exists());
+        });
+    }
+
+    #[test]
+    fn reconcile_sessions_reindexes_orphan_transcript_when_stale_row_owns_path() {
+        with_temp_home("session-management-reconcile-path-conflict", || {
+            let connection = open_test_connection("session-management-reconcile-path-conflict");
+            seed_project(&connection);
+            let context = pi_sessions::detect_session_context(Some("orchestra"))
+                .expect("context should resolve");
+            let actual_session_id = "66666666-6666-6666-6666-666666666666";
+            let stale_session_id = "77777777-7777-7777-7777-777777777777";
+            let orphan_path = write_session_file(
+                &context.session_dir,
+                &format!("20260101_{actual_session_id}.jsonl"),
+                actual_session_id,
+                "Conflicting orphan transcript",
+            );
+            let now = crate::state::now_iso();
+            connection
+                .execute(
+                    r#"
+                    INSERT INTO session_catalog (
+                        session_id, project_slug, session_path, created_at, updated_at,
+                        title, status, file_size, file_mtime_ms, last_indexed_at
+                    )
+                    VALUES (?1, 'orchestra', ?2, ?3, ?3, 'Stale owner', 'idle', 0, 0, ?3)
+                    "#,
+                    params![stale_session_id, orphan_path.display().to_string(), now],
+                )
+                .expect("stale path owner should insert");
+
+            let reconciled = reconcile_sessions(
+                &connection,
+                SessionReconcileInput {
+                    dry_run: false,
+                    confirm: true,
+                    query: SessionManagementQuery::default(),
+                },
+            )
+            .expect("reconcile should repair path ownership");
+            assert!(reconciled
+                .changed_session_ids
+                .iter()
+                .any(|session_id| session_id == actual_session_id));
+
+            let actual_catalog_count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM session_catalog WHERE session_id = ?1",
+                    [actual_session_id],
+                    |row| row.get(0),
+                )
+                .expect("actual catalog row should reload");
+            assert_eq!(actual_catalog_count, 1);
+            let stale_catalog_count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM session_catalog WHERE session_id = ?1",
+                    [stale_session_id],
+                    |row| row.get(0),
+                )
+                .expect("stale catalog row should reload");
+            assert_eq!(stale_catalog_count, 0);
         });
     }
 }

@@ -116,7 +116,7 @@ use commands::{
     },
 };
 use state::AppState;
-use std::env;
+use std::{env, time::Instant};
 use tauri::Manager;
 
 pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
@@ -146,8 +146,14 @@ pub fn run() {
         services::startup_options::desktop_tauri_dev_default_enabled(),
     )
     .expect("unable to resolve Orchestra startup storage options");
+    let backend_initialize_started_at = Instant::now();
     let bootstrap = services::backend_bootstrap::initialize_backend()
         .expect("unable to initialize Orchestra backend");
+    tracing::info!(
+        target: "startup.timing.backend",
+        "stage=run_initialize_backend duration_ms={:.1}",
+        backend_initialize_started_at.elapsed().as_secs_f64() * 1000.0,
+    );
     let database_path = bootstrap.database_path;
     let tool_bridge = bootstrap.tool_bridge;
     let supervisor_policy = bootstrap.supervisor_policy;
@@ -194,9 +200,28 @@ pub fn run() {
     let app = builder
         .manage(app_state)
         .setup(|app| {
+            let setup_started_at = Instant::now();
             let state = app.state::<AppState>();
+            let register_app_handle_started_at = Instant::now();
             services::pi_runtime::register_app_handle(app.handle().clone());
+            state.log(
+                "info",
+                "startup.timing.setup",
+                &format!(
+                    "stage=register_app_handle duration_ms={:.1}",
+                    register_app_handle_started_at.elapsed().as_secs_f64() * 1000.0
+                ),
+            );
+            let attach_tool_bridge_started_at = Instant::now();
             state.tool_bridge.attach_app_handle(app.handle().clone());
+            state.log(
+                "info",
+                "startup.timing.setup",
+                &format!(
+                    "stage=attach_tool_bridge duration_ms={:.1}",
+                    attach_tool_bridge_started_at.elapsed().as_secs_f64() * 1000.0
+                ),
+            );
             state.log(
                 "info",
                 "tool.bridge",
@@ -215,10 +240,54 @@ pub fn run() {
                     ),
                 );
             }
+            let channel_sync_started_at = Instant::now();
             services::channels::sync_channel_runtimes(app.handle().clone(), &state)?;
+            state.log(
+                "info",
+                "startup.timing.setup",
+                &format!(
+                    "stage=sync_channel_runtimes duration_ms={:.1}",
+                    channel_sync_started_at.elapsed().as_secs_f64() * 1000.0
+                ),
+            );
+            let startup_resume_started_at = Instant::now();
             services::startup_resume::resume_active_session_work_on_startup(app.handle().clone());
+            state.log(
+                "info",
+                "startup.timing.setup",
+                &format!(
+                    "stage=resume_active_session_work_on_startup duration_ms={:.1}",
+                    startup_resume_started_at.elapsed().as_secs_f64() * 1000.0
+                ),
+            );
+            let remote_api_started_at = Instant::now();
             let _ = services::remote_api::ensure_remote_api_server(app.handle().clone(), &state);
+            state.log(
+                "info",
+                "startup.timing.setup",
+                &format!(
+                    "stage=ensure_remote_api_server duration_ms={:.1}",
+                    remote_api_started_at.elapsed().as_secs_f64() * 1000.0
+                ),
+            );
+            let dispatcher_started_at = Instant::now();
             services::dispatcher::start_dispatcher_loop(app.handle().clone());
+            state.log(
+                "info",
+                "startup.timing.setup",
+                &format!(
+                    "stage=start_dispatcher_loop duration_ms={:.1}",
+                    dispatcher_started_at.elapsed().as_secs_f64() * 1000.0
+                ),
+            );
+            state.log(
+                "info",
+                "startup.timing.setup",
+                &format!(
+                    "stage=tauri_setup_total duration_ms={:.1}",
+                    setup_started_at.elapsed().as_secs_f64() * 1000.0
+                ),
+            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

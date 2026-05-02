@@ -75,6 +75,7 @@ struct SessionCatalogRefreshStats {
     repaired_rows: usize,
     evicted_rows: usize,
 }
+
 fn resolve_context_project_root(project_slug: &str) -> Result<PathBuf, String> {
     if let Some(project_root) = configured_project_root() {
         return Ok(project_root);
@@ -377,51 +378,136 @@ fn load_session_catalog_entries_for_project(
         .map_err(|error| format!("Unable to read session catalog for {project_slug}: {error}"))
 }
 
+pub(crate) fn upsert_session_catalog_row(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+    project_slug: &str,
+    session_path: &Path,
+    created_at: &str,
+    updated_at: &str,
+    title: &str,
+    status: &str,
+    file_size: u64,
+    file_mtime_ms: i64,
+) -> Result<(), String> {
+    let session_path_text = session_path.display().to_string();
+    connection
+        .execute_batch("SAVEPOINT session_catalog_upsert")
+        .map_err(|error| {
+            format!(
+                "Unable to start session catalog upsert savepoint for {}: {error}",
+                session_id
+            )
+        })?;
+
+    let result = (|| {
+        let conflicting_session_id = connection
+            .query_row(
+                "SELECT session_id FROM session_catalog WHERE session_path = ?1 LIMIT 1",
+                [session_path_text.clone()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| {
+                format!(
+                    "Unable to inspect session catalog path owner for {}: {error}",
+                    session_id
+                )
+            })?;
+        if let Some(conflicting_session_id) = conflicting_session_id {
+            if conflicting_session_id != session_id {
+                connection
+                    .execute(
+                        "DELETE FROM session_catalog WHERE session_id = ?1",
+                        [conflicting_session_id.as_str()],
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "Unable to evict stale session catalog owner {} for path {}: {error}",
+                            conflicting_session_id,
+                            session_path.display(),
+                        )
+                    })?;
+            }
+        }
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO session_catalog (
+                    session_id, project_slug, session_path, created_at, updated_at,
+                    title, status, file_size, file_mtime_ms, last_indexed_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    project_slug = excluded.project_slug,
+                    session_path = excluded.session_path,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at,
+                    title = excluded.title,
+                    status = excluded.status,
+                    file_size = excluded.file_size,
+                    file_mtime_ms = excluded.file_mtime_ms,
+                    last_indexed_at = excluded.last_indexed_at
+                "#,
+                params![
+                    session_id,
+                    project_slug,
+                    session_path_text,
+                    created_at,
+                    updated_at,
+                    title,
+                    status,
+                    file_size as i64,
+                    file_mtime_ms,
+                    now_iso(),
+                ],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to upsert session catalog entry {}: {error}",
+                    session_id
+                )
+            })?;
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => connection
+            .execute_batch("RELEASE SAVEPOINT session_catalog_upsert")
+            .map_err(|error| {
+                format!(
+                    "Unable to release session catalog upsert savepoint for {}: {error}",
+                    session_id
+                )
+            }),
+        Err(error) => {
+            let _ = connection.execute_batch(
+                "ROLLBACK TO SAVEPOINT session_catalog_upsert; RELEASE SAVEPOINT session_catalog_upsert",
+            );
+            Err(error)
+        }
+    }
+}
+
 fn upsert_session_catalog_entry(
     connection: &rusqlite::Connection,
     project_slug: &str,
     stored: &StoredSession,
 ) -> Result<(), String> {
     let (file_size, file_mtime_ms) = session_file_fingerprint(&stored.path)?;
-    connection
-        .execute(
-            r#"
-            INSERT INTO session_catalog (
-                session_id, project_slug, session_path, created_at, updated_at,
-                title, status, file_size, file_mtime_ms, last_indexed_at
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-            ON CONFLICT(session_id) DO UPDATE SET
-                project_slug = excluded.project_slug,
-                session_path = excluded.session_path,
-                created_at = excluded.created_at,
-                updated_at = excluded.updated_at,
-                title = excluded.title,
-                status = excluded.status,
-                file_size = excluded.file_size,
-                file_mtime_ms = excluded.file_mtime_ms,
-                last_indexed_at = excluded.last_indexed_at
-            "#,
-            params![
-                stored.record.id,
-                project_slug,
-                stored.path.display().to_string(),
-                stored.record.created_at,
-                stored.record.updated_at,
-                stored.record.title,
-                stored.record.status,
-                file_size as i64,
-                file_mtime_ms,
-                now_iso(),
-            ],
-        )
-        .map_err(|error| {
-            format!(
-                "Unable to upsert session catalog entry {}: {error}",
-                stored.record.id
-            )
-        })?;
-    Ok(())
+    upsert_session_catalog_row(
+        connection,
+        &stored.record.id,
+        project_slug,
+        &stored.path,
+        &stored.record.created_at,
+        &stored.record.updated_at,
+        &stored.record.title,
+        &stored.record.status,
+        file_size,
+        file_mtime_ms,
+    )
 }
 
 fn remove_session_catalog_entry(
@@ -3694,6 +3780,52 @@ process.stdin.on('end', () => process.exit(0));
             .expect_err("stale canonical path should fail fast");
         assert!(error.contains("stale canonical transcript path"));
         assert!(error.contains("explicit session reconciliation"));
+    }
+
+    #[test]
+    fn refresh_session_catalog_replaces_conflicting_path_owner() {
+        let context = make_catalog_test_context("orchestra-session-catalog-path-conflict");
+        let connection = in_memory_session_catalog_connection();
+        let stale_session_id = Uuid::new_v4().to_string();
+        let actual_session_id = Uuid::new_v4().to_string();
+        let session_path = write_catalog_test_session(
+            &context,
+            &format!("2026-03-20T10-00-00Z_{actual_session_id}.jsonl"),
+            &actual_session_id,
+            "Actual session",
+            "2026-03-20T10:00:00Z",
+        );
+
+        connection
+            .execute(
+                r#"
+                INSERT INTO session_catalog (
+                    session_id, project_slug, session_path, created_at, updated_at,
+                    title, status, file_size, file_mtime_ms, last_indexed_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?4, 'Stale owner', 'idle', 0, 0, ?4)
+                "#,
+                params![
+                    stale_session_id,
+                    context.project_slug.clone(),
+                    session_path.display().to_string(),
+                    "2026-03-20T09:00:00Z",
+                ],
+            )
+            .expect("stale path owner should insert");
+
+        let stats = refresh_session_catalog(&connection, &context, &HashSet::new())
+            .expect("refresh should repair the path conflict");
+        assert_eq!(stats.parsed_files, 1);
+
+        let repaired = load_session_catalog_entry(&connection, &actual_session_id)
+            .expect("actual session row should load")
+            .expect("actual session row should exist");
+        assert_eq!(repaired.session_path, session_path);
+
+        let stale = load_session_catalog_entry(&connection, &stale_session_id)
+            .expect("stale session row lookup should succeed");
+        assert!(stale.is_none(), "stale path owner should be evicted");
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::Command,
+    time::Instant,
 };
 
 use chrono::Utc;
@@ -95,9 +96,16 @@ pub fn build_app_info() -> AppInfo {
 
 #[tauri::command]
 pub async fn get_app_info() -> Result<AppInfo, String> {
-    spawn_blocking(build_app_info)
+    let started_at = Instant::now();
+    let app_info = spawn_blocking(build_app_info)
         .await
-        .map_err(|error| format!("Unable to load app info: {error}"))
+        .map_err(|error| format!("Unable to load app info: {error}"))?;
+    tracing::info!(
+        target: "startup.timing.rpc",
+        "command=get_app_info duration_ms={:.1}",
+        started_at.elapsed().as_secs_f64() * 1000.0,
+    );
+    Ok(app_info)
 }
 
 #[tauri::command]
