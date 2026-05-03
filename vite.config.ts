@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
@@ -17,6 +19,14 @@ const VITEST_COVERAGE_INCLUDE = [
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, "index.html"),
+        github: resolve(__dirname, "github.html"),
+      },
+    },
+  },
   server: {
     port: 1420,
     strictPort: true,
