@@ -4484,6 +4484,25 @@ strong {
   justify-content: center;
 }
 
+.task-detail-mobile-action-menu__dropdown {
+  gap: 10px;
+}
+
+.task-detail-mobile-action-menu__divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 2px 0;
+}
+
+.task-detail-mobile-action-menu__back {
+  justify-content: flex-start;
+}
+
+.task-detail-mobile-action-menu__lane-option {
+  justify-items: start;
+  text-align: left;
+}
+
 .task-action-button--pending {
   position: relative;
   opacity: 0.78;

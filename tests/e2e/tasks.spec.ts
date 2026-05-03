@@ -4118,9 +4118,15 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
   await expect(primaryHeader.locator('[data-role="toggle-task-relane"]:visible')).toHaveCount(0);
 
   await primaryMobileActions.getByRole('button', { name: 'Actions' }).click();
-  await expect(primaryMobileActions.getByRole('button', { name: 'Open session' })).toBeVisible();
-  await expect(primaryMobileActions.getByRole('button', { name: 'Move to Review pass' })).toBeVisible();
-  await primaryMobileActions.getByRole('button', { name: 'Actions' }).click();
+  const primaryMobileRootLabels = await primaryMobileActions.locator('.task-action-menu__dropdown > button').evaluateAll((nodes) =>
+    nodes.map((node) => (node.textContent ?? '').trim()).filter(Boolean),
+  );
+  expect(primaryMobileRootLabels).toEqual(['Open session', 'Approve', 'Needs work', 'Move to …', 'Stop', 'Whip']);
+  await expect(primaryMobileActions.locator('.task-detail-mobile-action-menu__divider')).toHaveCount(2);
+  await expect(primaryMobileActions.locator('[data-role="task-relane-option"][data-lane-id="lane-review-pass"]')).toHaveCount(0);
+  await primaryMobileActions.getByRole('button', { name: 'Move to …' }).click();
+  await expect(primaryMobileActions.locator('[data-role="task-relane-option"][data-lane-id="lane-review-pass"]')).toBeVisible();
+  await primaryMobileActions.locator('[data-role="task-relane-mobile-back"]').click();
 
   await page.evaluate(() => {
     const content = document.querySelector('.content') as HTMLElement | null;
@@ -4153,8 +4159,15 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
   await expect(compactHeader.locator('[data-role="task-open-session"]')).toHaveCount(0);
 
   await compactMobileActions.getByRole('button', { name: 'Actions' }).click();
-  await expect(compactMobileActions.getByRole('button', { name: 'Move to Review pass' })).toBeVisible();
-  await compactMobileActions.getByRole('button', { name: 'Move to Review pass' }).click();
+  const compactMobileRootLabels = await compactMobileActions.locator('.task-action-menu__dropdown > button').evaluateAll((nodes) =>
+    nodes.map((node) => (node.textContent ?? '').trim()).filter(Boolean),
+  );
+  expect(compactMobileRootLabels).toEqual(['Approve', 'Needs work', 'Move to …', 'Stop', 'Whip']);
+  await expect(compactMobileActions.locator('.task-detail-mobile-action-menu__divider')).toHaveCount(2);
+  await expect(compactMobileActions.locator('[data-role="task-relane-option"][data-lane-id="lane-review-pass"]')).toHaveCount(0);
+  await compactMobileActions.getByRole('button', { name: 'Move to …' }).click();
+  await expect(compactMobileActions.locator('[data-role="task-relane-option"][data-lane-id="lane-review-pass"]')).toBeVisible();
+  await compactMobileActions.locator('[data-role="task-relane-option"][data-lane-id="lane-review-pass"]').click();
   await expect(page.locator('[data-role="task-relane-confirm-dialog"]')).toBeVisible();
   await page.locator('[data-role="task-relane-notes"]').fill("Redirect this into the review pass lane.");
   await page.locator('[data-role="task-relane-confirm"]').click();

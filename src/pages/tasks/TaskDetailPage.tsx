@@ -31,6 +31,22 @@ interface RelaneTargetOption {
   name: string;
 }
 
+type TaskDetailMobileActionMenuEntry =
+  | ({ kind: "action" } & TaskActionMenuAction)
+  | {
+      kind: "relane";
+      id: string;
+      label: string;
+      lanes: RelaneTargetOption[];
+      onChoose: (lane: RelaneTargetOption) => void;
+      disabled?: boolean;
+      tooltip?: string;
+    }
+  | {
+      kind: "divider";
+      id: string;
+    };
+
 type TaskDetailTab =
   | "runtime"
   | "hierarchy"
@@ -257,6 +273,153 @@ function TaskRelaneMenu({
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function TaskDetailMobileActionMenu({
+  entries,
+  menuLabel = "Actions",
+  pendingActionId = null,
+}: {
+  entries: TaskDetailMobileActionMenuEntry[];
+  menuLabel?: string;
+  pendingActionId?: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeRelaneEntryId, setActiveRelaneEntryId] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const getTooltipProps = useExplanatoryTooltipProps();
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setActiveRelaneEntryId(null);
+      }
+    }
+
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => window.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  useEffect(() => {
+    if (!open) {
+      setActiveRelaneEntryId(null);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (pendingActionId) {
+      setOpen(false);
+      setActiveRelaneEntryId(null);
+    }
+  }, [pendingActionId]);
+
+  const activeRelaneEntry = activeRelaneEntryId
+    ? entries.find((entry): entry is Extract<TaskDetailMobileActionMenuEntry, { kind: "relane" }> => entry.kind === "relane" && entry.id === activeRelaneEntryId) ?? null
+    : null;
+
+  function getActionButtonClass(action: TaskActionMenuAction) {
+    return `${
+      action.variant === "primary"
+        ? "primary-button task-action-menu__dropdown-button"
+        : action.variant === "danger"
+          ? "secondary-button secondary-button--danger task-action-menu__dropdown-button"
+          : "secondary-button task-action-menu__dropdown-button"
+    }${pendingActionId === action.id ? " task-action-button--pending" : ""}`;
+  }
+
+  function renderActionButton(action: TaskActionMenuAction) {
+    return (
+      <button
+        key={action.id}
+        className={getActionButtonClass(action)}
+        data-role={action.dataRole}
+        disabled={Boolean(pendingActionId) || action.disabled}
+        type="button"
+        {...getTooltipProps(action.tooltip)}
+        onClick={() => {
+          setOpen(false);
+          setActiveRelaneEntryId(null);
+          action.onClick();
+        }}
+      >
+        {action.label}
+      </button>
+    );
+  }
+
+  return (
+    <div className="task-action-menu task-detail-mobile-action-menu" ref={rootRef}>
+      <div className="task-action-menu__mobile" data-role="task-action-menu-mobile">
+        <button
+          className="secondary-button task-action-menu__trigger"
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          aria-expanded={open}
+          aria-haspopup="menu"
+        >
+          {menuLabel}
+        </button>
+        {open ? (
+          <div className="task-action-menu__dropdown task-detail-mobile-action-menu__dropdown" role="menu">
+            {activeRelaneEntry ? (
+              <>
+                <button
+                  className="secondary-button task-action-menu__dropdown-button task-detail-mobile-action-menu__back"
+                  data-role="task-relane-mobile-back"
+                  type="button"
+                  onClick={() => setActiveRelaneEntryId(null)}
+                >
+                  ← Back
+                </button>
+                {activeRelaneEntry.lanes.map((lane) => (
+                  <button
+                    key={lane.id}
+                    className="secondary-button task-relane-menu__option task-detail-mobile-action-menu__lane-option"
+                    data-role="task-relane-option"
+                    data-lane-id={lane.id}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setOpen(false);
+                      setActiveRelaneEntryId(null);
+                      activeRelaneEntry.onChoose(lane);
+                    }}
+                  >
+                    <strong>{lane.name}</strong>
+                    <span className="muted-copy">{lane.id}</span>
+                  </button>
+                ))}
+              </>
+            ) : (
+              entries.map((entry) => {
+                switch (entry.kind) {
+                  case "divider":
+                    return <div className="task-detail-mobile-action-menu__divider" key={entry.id} role="separator" />;
+                  case "relane":
+                    return (
+                      <button
+                        key={entry.id}
+                        className="secondary-button task-action-menu__dropdown-button"
+                        data-role="task-relane-mobile-trigger"
+                        disabled={Boolean(pendingActionId) || entry.disabled || !entry.lanes.length}
+                        type="button"
+                        {...getTooltipProps(entry.tooltip)}
+                        onClick={() => setActiveRelaneEntryId(entry.id)}
+                      >
+                        {entry.label}
+                      </button>
+                    );
+                  default:
+                    return renderActionButton(entry);
+                }
+              })
+            )}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1669,37 +1832,75 @@ export function TaskDetailPage({
     : undefined;
   const compactHeaderActionMenuActions = headerActionMenuActions.map((action) => ({ ...action, dataRole: undefined }));
 
-  function buildMobileRelaneActionMenuActions(): TaskActionMenuAction[] {
-    if (!canRelane) {
-      return [];
+  function buildMobileHeaderActionMenuEntries(actions: TaskActionMenuAction[]): TaskDetailMobileActionMenuEntry[] {
+    const actionEntries: TaskDetailMobileActionMenuEntry[] = actions.map((action) => ({ kind: "action", ...action }));
+    if (!canRelane || !availableRelaneTargets.length) {
+      return actionEntries;
     }
-    return availableRelaneTargets.map((lane) => ({
-      id: `relane-${lane.id}`,
-      label: `Move to ${lane.name}`,
-      onClick: () => openRelaneConfirm(lane),
-      variant: "secondary",
-    }));
+
+    const relaneEntry: TaskDetailMobileActionMenuEntry = {
+      kind: "relane",
+      id: "mobile-relane",
+      label: "Move to …",
+      lanes: availableRelaneTargets,
+      onChoose: openRelaneConfirm,
+      disabled: Boolean(pendingActionId),
+      tooltip: "Move this task into a different workflow lane and optionally leave a note about why.",
+    };
+    const dividerBefore: TaskDetailMobileActionMenuEntry = { kind: "divider", id: "mobile-relane-divider-before" };
+    const dividerAfter: TaskDetailMobileActionMenuEntry = { kind: "divider", id: "mobile-relane-divider-after" };
+    const preferredAnchorIds = new Set(["approve-pending", "needs-work-pending", "approve-user", "needs-work-user", "resume-pending"]);
+    const trailingActionIds = new Set(["pause", "stop-pending-review", "stop-paused-lane", "stop-active-work", "whip"]);
+
+    let insertAfterIndex = -1;
+    actionEntries.forEach((entry, index) => {
+      if (entry.kind === "action" && preferredAnchorIds.has(entry.id)) {
+        insertAfterIndex = index;
+      }
+    });
+
+    if (insertAfterIndex >= 0) {
+      const tailEntries = actionEntries.slice(insertAfterIndex + 1);
+      return [
+        ...actionEntries.slice(0, insertAfterIndex + 1),
+        dividerBefore,
+        relaneEntry,
+        ...(tailEntries.length ? [dividerAfter] : []),
+        ...tailEntries,
+      ];
+    }
+
+    const firstTrailingActionIndex = actionEntries.findIndex(
+      (entry) => entry.kind === "action" && trailingActionIds.has(entry.id),
+    );
+    if (firstTrailingActionIndex >= 0) {
+      return [
+        ...actionEntries.slice(0, firstTrailingActionIndex),
+        ...(firstTrailingActionIndex > 0 ? [dividerBefore] : []),
+        relaneEntry,
+        dividerAfter,
+        ...actionEntries.slice(firstTrailingActionIndex),
+      ];
+    }
+
+    return [...actionEntries, ...(actionEntries.length ? [dividerBefore] : []), relaneEntry];
   }
 
-  const primaryHeaderMobileActionMenuActions: TaskActionMenuAction[] = [
+  const primaryHeaderMobileActionMenuEntries = buildMobileHeaderActionMenuEntries([
     ...(activeSessionId
       ? [{ id: "open-session", label: "Open session", onClick: () => onOpenSession(activeSessionId, task.projectId), variant: "secondary" as const, dataRole: "task-open-session" }]
       : []),
-    ...buildMobileRelaneActionMenuActions(),
     ...headerActionMenuActions,
-  ];
-  const compactHeaderMobileActionMenuActions: TaskActionMenuAction[] = [
-    ...buildMobileRelaneActionMenuActions(),
-    ...compactHeaderActionMenuActions,
-  ];
+  ]);
+  const compactHeaderMobileActionMenuEntries = buildMobileHeaderActionMenuEntries(compactHeaderActionMenuActions);
 
   function renderHeaderActions(compact = false) {
     const desktopActionMenuActions = compact ? compactHeaderActionMenuActions : headerActionMenuActions;
-    const mobileActionMenuActions = compact ? compactHeaderMobileActionMenuActions : primaryHeaderMobileActionMenuActions;
+    const mobileActionMenuEntries = compact ? compactHeaderMobileActionMenuEntries : primaryHeaderMobileActionMenuEntries;
     const showDesktopActionRow = canRelane || desktopActionMenuActions.length > 0;
     const showDesktopHeaderActions = Boolean((!compact && activeSessionId) || showDesktopActionRow);
 
-    if (!showDesktopHeaderActions && mobileActionMenuActions.length === 0) {
+    if (!showDesktopHeaderActions && mobileActionMenuEntries.length === 0) {
       return null;
     }
 
@@ -1730,12 +1931,12 @@ export function TaskDetailPage({
             ) : null}
           </div>
         ) : null}
-        {mobileActionMenuActions.length ? (
+        {mobileActionMenuEntries.length ? (
           <div
             className="task-detail-header-actions__mobile"
             data-role={compact ? "task-detail-compact-actions-mobile" : "task-detail-primary-actions-mobile"}
           >
-            <TaskActionMenu actions={mobileActionMenuActions} menuLabel="Actions" pendingActionId={pendingActionId} />
+            <TaskDetailMobileActionMenu entries={mobileActionMenuEntries} menuLabel="Actions" pendingActionId={pendingActionId} />
           </div>
         ) : null}
       </div>
