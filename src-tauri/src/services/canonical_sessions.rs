@@ -4,11 +4,11 @@ use std::{
     path::Path,
 };
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::services::{
     orchestra_paths::{default_orchestra_root, infer_project_slug, project_session_dir},
-    pi_sessions, projects, session_list,
+    pi_sessions, projects, session_list, session_records,
 };
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -124,6 +124,7 @@ struct CanonicalSessionRow {
     last_indexed_at: Option<String>,
     title: String,
     session_status: String,
+    lifecycle_state: String,
     list_visibility: String,
     hidden_reason: Option<String>,
     dismissed_at: Option<String>,
@@ -270,27 +271,77 @@ fn collect_session_catalog_seeds(
                 row.get::<_, String>(9)?,
             ))
         })
-        .map_err(|error| format!("Unable to query session catalog rows: {error}"))?;
+        .map_err(|error| format!("Unable to query session catalog rows: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to read session catalog rows: {error}"))?;
 
-    for row in rows {
-        let (
-            session_id,
-            project_id,
-            session_path,
-            created_at,
-            updated_at,
-            title,
-            status,
-            file_size,
-            file_mtime_ms,
-            last_indexed_at,
-        ) = row.map_err(|error| format!("Unable to read session catalog row: {error}"))?;
+    for (
+        session_id,
+        project_id,
+        session_path,
+        created_at,
+        updated_at,
+        title,
+        status,
+        file_size,
+        file_mtime_ms,
+        last_indexed_at,
+    ) in rows
+    {
+        let path = Path::new(&session_path);
+        let existing_owner = load_existing_canonical_path_owner(connection, &session_path)?;
+
+        if path.exists() {
+            if let Ok(stored) = pi_sessions::summarize_session_for_catalog(path) {
+                let (actual_file_size, actual_file_mtime_ms) =
+                    pi_sessions::session_file_fingerprint(path)?;
+                let transcript_cwd = pi_sessions::session_file_header_cwd(path)?
+                    .map(|value| value.display().to_string());
+                let preferred_session_id = stored.record.id.clone();
+
+                if preferred_session_id != session_id {
+                    delete_stale_session_catalog_row(
+                        connection,
+                        &session_id,
+                        &session_path,
+                        &preferred_session_id,
+                    )?;
+                }
+
+                let seed = seeds.entry(preferred_session_id).or_default();
+                seed.merge_transcript(TranscriptMetadata {
+                    project_id,
+                    transcript_path: Some(session_path.clone()),
+                    transcript_cwd,
+                    transcript_exists: true,
+                    file_size: Some(actual_file_size as i64),
+                    file_mtime_ms: Some(actual_file_mtime_ms),
+                    last_indexed_at: Some(last_indexed_at),
+                    title: Some(stored.record.title.clone()),
+                    session_status: Some(canonicalize_transcript_status(&stored.record.status)),
+                    created_at: Some(stored.record.created_at.clone()),
+                    updated_at: Some(stored.record.updated_at.clone()),
+                });
+                continue;
+            }
+        }
+
+        if let Some(existing_owner) = existing_owner.filter(|owner| owner != &session_id) {
+            delete_stale_session_catalog_row(
+                connection,
+                &session_id,
+                &session_path,
+                &existing_owner,
+            )?;
+            continue;
+        }
+
         let seed = seeds.entry(session_id).or_default();
         seed.merge_transcript(TranscriptMetadata {
             project_id,
             transcript_path: Some(session_path.clone()),
             transcript_cwd: None,
-            transcript_exists: Path::new(&session_path).exists(),
+            transcript_exists: path.exists(),
             file_size: Some(file_size),
             file_mtime_ms: Some(file_mtime_ms),
             last_indexed_at: Some(last_indexed_at),
@@ -303,6 +354,51 @@ fn collect_session_catalog_seeds(
         seed.note_timestamp(Some(updated_at.as_str()));
     }
 
+    Ok(())
+}
+
+fn load_existing_canonical_path_owner(
+    connection: &Connection,
+    session_path: &str,
+) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            r#"
+            SELECT id
+            FROM sessions
+            WHERE session_path = ?1 OR transcript_path = ?1
+            ORDER BY id ASC
+            LIMIT 1
+            "#,
+            [session_path],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| {
+            format!(
+                "Unable to inspect existing canonical owner for transcript {}: {error}",
+                session_path
+            )
+        })
+}
+
+fn delete_stale_session_catalog_row(
+    connection: &Connection,
+    session_id: &str,
+    session_path: &str,
+    preferred_session_id: &str,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "DELETE FROM session_catalog WHERE session_id = ?1",
+            [session_id],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to delete stale session catalog row {} for transcript {} owned by {}: {error}",
+                session_id, session_path, preferred_session_id
+            )
+        })?;
     Ok(())
 }
 
@@ -708,6 +804,12 @@ fn build_canonical_session_row(
             }
         });
 
+    let lifecycle_state = if session_status == "closed" {
+        "closed".to_string()
+    } else {
+        "active".to_string()
+    };
+
     let (list_visibility, hidden_reason, dismissed_at) =
         if let Some(list_entry) = seed.list_entry.as_ref() {
             let hidden_reason = list_entry.hidden_reason.clone().or_else(|| {
@@ -815,6 +917,7 @@ fn build_canonical_session_row(
             .and_then(|transcript| transcript.last_indexed_at.clone()),
         title,
         session_status,
+        lifecycle_state,
         list_visibility,
         hidden_reason,
         dismissed_at,
@@ -833,6 +936,13 @@ fn upsert_canonical_session_row(
         .transcript_path
         .clone()
         .unwrap_or_else(|| format!("missing://{}", row.id));
+    if let Some(transcript_path) = row.transcript_path.as_deref() {
+        session_records::clear_conflicting_session_path_claims(
+            connection,
+            row.id.as_str(),
+            Path::new(transcript_path),
+        )?;
+    }
     connection
         .execute(
             r#"
@@ -841,8 +951,8 @@ fn upsert_canonical_session_row(
                 agent_id, role_id, role_instance_id,
                 primary_task_id, primary_workflow_id, primary_lane_id, primary_assignment_id,
                 transcript_path, transcript_cwd, transcript_exists, file_size, file_mtime_ms,
-                last_indexed_at, title, session_status, list_visibility, hidden_reason,
-                dismissed_at, first_seen_at, last_seen_at, created_at, updated_at
+                last_indexed_at, title, session_status, lifecycle_state, list_visibility,
+                hidden_reason, dismissed_at, first_seen_at, last_seen_at, created_at, updated_at
             )
             VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6,
@@ -850,7 +960,7 @@ fn upsert_canonical_session_row(
                 ?10, ?11, ?12, ?13,
                 ?14, ?15, ?16, ?17, ?18,
                 ?19, ?20, ?21, ?22, ?23,
-                ?24, ?25, ?26, ?27, ?28
+                ?24, ?25, ?26, ?27, ?28, ?29
             )
             ON CONFLICT(id) DO UPDATE SET
                 project_id = excluded.project_id,
@@ -873,6 +983,7 @@ fn upsert_canonical_session_row(
                 last_indexed_at = excluded.last_indexed_at,
                 title = excluded.title,
                 session_status = excluded.session_status,
+                lifecycle_state = excluded.lifecycle_state,
                 list_visibility = excluded.list_visibility,
                 hidden_reason = excluded.hidden_reason,
                 dismissed_at = excluded.dismissed_at,
@@ -884,7 +995,7 @@ fn upsert_canonical_session_row(
             params![
                 row.id,
                 row.project_id,
-                row.transcript_path.clone().unwrap_or_default(),
+                session_path.clone(),
                 row.session_kind,
                 row.owner_worker_type,
                 row.owner_worker_id,
@@ -903,6 +1014,7 @@ fn upsert_canonical_session_row(
                 row.last_indexed_at,
                 row.title,
                 row.session_status,
+                row.lifecycle_state,
                 row.list_visibility,
                 row.hidden_reason,
                 row.dismissed_at,
@@ -1287,6 +1399,88 @@ mod tests {
                 backfill_sessions_table(&connection).expect("second backfill should succeed");
             assert_eq!(second.created, 0);
             assert_eq!(second.updated, 1);
+        });
+    }
+
+    #[test]
+    fn backfill_sessions_table_reassigns_stale_session_catalog_path_claims() {
+        with_temp_storage_root("canonical-sessions-catalog-collision", |root| {
+            let connection = Connection::open_in_memory().expect("in-memory db should open");
+            database::apply_migrations(&connection).expect("migrations should apply");
+
+            seed_project(&connection, "project-1", "orchestra");
+            seed_workflow(&connection, "workflow-1", "lane-1");
+            let runtime_root = project_root(&root, "orchestra");
+            let session_dir = project_session_dir(&root, "orchestra");
+            let owner_session_id = Uuid::new_v4().to_string();
+            let stale_session_id = Uuid::new_v4().to_string();
+            write_session_file(
+                &session_dir,
+                &owner_session_id,
+                "Canonical owner",
+                "hello",
+                &runtime_root,
+            );
+            let session_path =
+                session_dir.join(format!("2026-04-30T00-00-00Z_{owner_session_id}.jsonl"));
+
+            let now = crate::state::now_iso();
+            connection
+                .execute(
+                    "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, whip_max_attempts, auto_blocked_by_dependencies, archived, source_schedule_id, source_schedule_occurrence_id, created_at, updated_at) VALUES ('task-1', 'project-1', 1, 'ORC-1', 'Task 1', NULL, 'task', 'ready', 'P1', 'workflow-1', 'lane-1', 'user', NULL, NULL, NULL, 10, 0, 0, NULL, NULL, ?1, ?1)",
+                    params![now],
+                )
+                .expect("task should seed");
+            connection
+                .execute(
+                    "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, pending_outcome, completion_notes, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-1', 'task-1', 'workflow-1', 'lane-1', 'user', NULL, 'active', ?1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, ?2, NULL, ?2, ?2)",
+                    params![stale_session_id, now],
+                )
+                .expect("assignment should seed");
+            connection
+                .execute(
+                    "INSERT INTO session_catalog (session_id, project_slug, session_path, created_at, updated_at, title, status, file_size, file_mtime_ms, last_indexed_at) VALUES (?1, 'orchestra', ?2, ?3, ?3, 'Stale owner', 'active', 1, 1, ?3)",
+                    params![stale_session_id, session_path.display().to_string(), now],
+                )
+                .expect("stale session catalog row should seed");
+
+            let report = backfill_sessions_table(&connection).expect("backfill should succeed");
+            assert_eq!(report.created, 2);
+            assert_eq!(report.updated, 0);
+            assert_eq!(report.transcript_missing, 1);
+
+            let owner_row: (String, i64, String) = connection
+                .query_row(
+                    "SELECT session_path, transcript_exists, title FROM sessions WHERE id = ?1",
+                    [owner_session_id.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("owner canonical row should exist");
+            assert_eq!(owner_row.0, session_path.display().to_string());
+            assert_eq!(owner_row.1, 1);
+            assert_eq!(owner_row.2, "Canonical owner");
+
+            let stale_row: (String, i64, Option<String>, Option<String>) = connection
+                .query_row(
+                    "SELECT session_path, transcript_exists, primary_task_id, primary_assignment_id FROM sessions WHERE id = ?1",
+                    [stale_session_id.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .expect("stale canonical row should exist");
+            assert_eq!(stale_row.0, format!("missing://{stale_session_id}"));
+            assert_eq!(stale_row.1, 0);
+            assert_eq!(stale_row.2.as_deref(), Some("task-1"));
+            assert_eq!(stale_row.3.as_deref(), Some("assignment-1"));
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM session_catalog WHERE session_id = ?1",
+                        [stale_session_id.as_str()],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .expect("session catalog count should query"),
+                0
+            );
         });
     }
 

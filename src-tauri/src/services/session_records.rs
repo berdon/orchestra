@@ -801,6 +801,87 @@ struct SessionRowWrite<'a> {
     updated_at: &'a str,
 }
 
+fn orphaned_session_path(session_id: &str) -> String {
+    format!("missing://{session_id}")
+}
+
+pub(crate) fn clear_conflicting_session_path_claims(
+    connection: &Connection,
+    session_id: &str,
+    session_path: &Path,
+) -> Result<Vec<String>, String> {
+    let session_path_text = session_path.display().to_string();
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id
+            FROM sessions
+            WHERE id != ?2 AND (session_path = ?1 OR transcript_path = ?1)
+            ORDER BY id ASC
+            "#,
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to prepare canonical session path conflict query for {}: {error}",
+                session_id
+            )
+        })?;
+    let conflicting_ids = statement
+        .query_map(params![session_path_text, session_id], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|error| {
+            format!(
+                "Unable to inspect canonical session path conflicts for {}: {error}",
+                session_id
+            )
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            format!(
+                "Unable to read canonical session path conflicts for {}: {error}",
+                session_id
+            )
+        })?;
+
+    if conflicting_ids.is_empty() {
+        return Ok(conflicting_ids);
+    }
+
+    let repaired_at = now_iso();
+    for conflicting_id in &conflicting_ids {
+        connection
+            .execute(
+                r#"
+                UPDATE sessions
+                SET session_path = ?2,
+                    transcript_path = NULL,
+                    transcript_exists = 0,
+                    file_size = NULL,
+                    file_mtime_ms = NULL,
+                    last_indexed_at = NULL,
+                    updated_at = CASE WHEN updated_at > ?3 THEN updated_at ELSE ?3 END
+                WHERE id = ?1
+                "#,
+                params![
+                    conflicting_id,
+                    orphaned_session_path(conflicting_id),
+                    repaired_at.as_str(),
+                ],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to repair conflicting canonical session {} for transcript {} owned by {}: {error}",
+                    conflicting_id,
+                    session_path.display(),
+                    session_id
+                )
+            })?;
+    }
+
+    Ok(conflicting_ids)
+}
+
 fn upsert_session_row(connection: &Connection, row: SessionRowWrite<'_>) -> Result<(), String> {
     let transcript_path = row.session_path.display().to_string();
     let project_id = existing_project_id(connection, row.project_id)?;
@@ -812,6 +893,7 @@ fn upsert_session_row(connection: &Connection, row: SessionRowWrite<'_>) -> Resu
     let role_id = existing_role_id(connection, role_instance_id)?;
     let (transcript_exists, file_size, file_mtime_ms) = transcript_file_metadata(row.session_path);
     let last_indexed_at = transcript_exists.then_some(row.updated_at);
+    clear_conflicting_session_path_claims(connection, row.session_id, row.session_path)?;
 
     connection
         .execute(
@@ -1379,6 +1461,8 @@ fn refresh_existing_session_row_from_transcript(
     } else {
         session_status_for_lifecycle(existing.lifecycle_state.as_str())
     };
+
+    clear_conflicting_session_path_claims(connection, existing.id.as_str(), session_path)?;
 
     connection
         .execute(

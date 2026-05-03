@@ -2108,57 +2108,6 @@ fn ensure_sessions_table_columns(connection: &Connection) -> Result<(), String> 
         [],
     ).map_err(|error| format!("Unable to create sessions lifecycle index: {error}"))?;
 
-    connection
-        .execute(
-            r#"
-        INSERT INTO sessions (
-            id,
-            project_id,
-            session_path,
-            transcript_path,
-            title,
-            session_kind,
-            session_status,
-            list_visibility,
-            first_seen_at,
-            last_seen_at,
-            transcript_exists,
-            file_size,
-            file_mtime_ms,
-            last_indexed_at,
-            lifecycle_state,
-            created_at,
-            updated_at
-        )
-        SELECT
-            catalog.session_id,
-            projects.id,
-            catalog.session_path,
-            catalog.session_path,
-            catalog.title,
-            'standalone',
-            CASE WHEN catalog.status = 'closed' THEN 'closed' ELSE 'active' END,
-            CASE WHEN catalog.status = 'closed' THEN 'closed' ELSE 'active' END,
-            catalog.created_at,
-            catalog.updated_at,
-            1,
-            catalog.file_size,
-            catalog.file_mtime_ms,
-            catalog.last_indexed_at,
-            CASE WHEN catalog.status = 'closed' THEN 'closed' ELSE 'active' END,
-            catalog.created_at,
-            catalog.updated_at
-        FROM session_catalog catalog
-        LEFT JOIN projects ON projects.slug = catalog.project_slug
-        WHERE projects.id IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM sessions existing WHERE existing.id = catalog.session_id
-        )
-        "#,
-            [],
-        )
-        .map_err(|error| format!("Unable to backfill canonical sessions rows: {error}"))?;
-
     Ok(())
 }
 
@@ -2673,7 +2622,7 @@ mod tests {
     use super::*;
     use std::{
         env,
-        path::PathBuf,
+        path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -2688,6 +2637,21 @@ mod tests {
                 .as_millis()
         );
         env::temp_dir().join(suffix).join("orchestra.db")
+    }
+
+    fn write_legacy_session_file(path: &Path, session_id: &str, title: &str) {
+        let parent = path.parent().expect("session file should have a parent");
+        fs::create_dir_all(parent).expect("session directory should exist");
+        let content = format!(
+            concat!(
+                "{{\"type\":\"session\",\"version\":3,\"id\":\"{}\",\"timestamp\":\"2026-04-30T00:00:00Z\",\"cwd\":\"/tmp/runtime\"}}\n",
+                "{{\"type\":\"session_info\",\"id\":\"info-1\",\"parentId\":null,\"timestamp\":\"2026-04-30T00:00:01Z\",\"name\":\"{}\"}}\n",
+                "{{\"type\":\"message\",\"id\":\"msg-1\",\"timestamp\":\"2026-04-30T00:00:02Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"hello\"}}],\"timestamp\":1714435202000}}}}\n"
+            ),
+            session_id,
+            title,
+        );
+        fs::write(path, content).expect("legacy session file should write");
     }
 
     #[test]
@@ -3558,6 +3522,140 @@ mod tests {
                 "closed".into(),
             )
         );
+    }
+
+    #[test]
+    fn initializes_database_when_legacy_canonical_session_owns_the_wrong_transcript_path() {
+        let _guard = crate::test_support::global_test_env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let previous_root = env::var_os("ORCHESTRA_STORAGE_ROOT");
+        let storage_root = env::temp_dir().join(format!(
+            "sessions-path-collision-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_millis()
+        ));
+        fs::create_dir_all(&storage_root).expect("temp storage root should exist");
+        unsafe {
+            env::set_var("ORCHESTRA_STORAGE_ROOT", &storage_root);
+        }
+
+        let path = unique_temp_db("sessions-path-collision-upgrade");
+        let parent = path.parent().expect("temp database should have a parent");
+        fs::create_dir_all(parent).expect("parent directory should exist");
+        let transcript_path = parent.join("2026-04-30T00-00-00Z_session-owner.jsonl");
+        write_legacy_session_file(&transcript_path, "session-owner", "Canonical owner");
+
+        let result = (|| {
+            let connection = Connection::open(&path).expect("legacy database should open");
+            connection
+                .execute_batch(
+                    &format!(
+                        r#"
+                        CREATE TABLE projects (
+                            id TEXT PRIMARY KEY,
+                            slug TEXT NOT NULL UNIQUE,
+                            name TEXT NOT NULL,
+                            description TEXT,
+                            task_prefix TEXT NOT NULL,
+                            default_repository_id TEXT,
+                            created_at TEXT NOT NULL,
+                            updated_at TEXT NOT NULL
+                        );
+
+                        INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at)
+                        VALUES ('project-1', 'legacy-migration-proj', 'Legacy Migration Project', NULL, 'LEG', NULL, '2026-03-18T00:00:00Z', '2026-03-18T00:00:00Z');
+
+                        CREATE TABLE session_catalog (
+                            session_id TEXT PRIMARY KEY,
+                            project_slug TEXT NOT NULL,
+                            session_path TEXT NOT NULL,
+                            created_at TEXT NOT NULL,
+                            updated_at TEXT NOT NULL,
+                            title TEXT NOT NULL,
+                            status TEXT NOT NULL,
+                            file_size INTEGER NOT NULL,
+                            file_mtime_ms INTEGER NOT NULL,
+                            last_indexed_at TEXT NOT NULL
+                        );
+
+                        INSERT INTO session_catalog (
+                            session_id, project_slug, session_path, created_at, updated_at, title, status, file_size, file_mtime_ms, last_indexed_at
+                        ) VALUES (
+                            'session-stale', 'legacy-migration-proj', '{session_path}', '2026-03-18T00:00:01Z', '2026-03-18T00:00:02Z', 'Stale owner', 'active', 42, 1234, '2026-03-18T00:00:02Z'
+                        );
+
+                        CREATE TABLE sessions (
+                            id TEXT PRIMARY KEY,
+                            project_id TEXT,
+                            session_path TEXT NOT NULL DEFAULT '' UNIQUE,
+                            transcript_path TEXT,
+                            title TEXT NOT NULL,
+                            session_kind TEXT NOT NULL,
+                            session_status TEXT NOT NULL,
+                            list_visibility TEXT NOT NULL,
+                            first_seen_at TEXT NOT NULL,
+                            last_seen_at TEXT NOT NULL,
+                            transcript_exists INTEGER NOT NULL,
+                            file_size INTEGER,
+                            file_mtime_ms INTEGER,
+                            last_indexed_at TEXT,
+                            lifecycle_state TEXT NOT NULL DEFAULT 'active',
+                            created_at TEXT NOT NULL,
+                            updated_at TEXT NOT NULL
+                        );
+
+                        INSERT INTO sessions (
+                            id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility,
+                            first_seen_at, last_seen_at, transcript_exists, file_size, file_mtime_ms, last_indexed_at, lifecycle_state,
+                            created_at, updated_at
+                        ) VALUES (
+                            'session-stale', 'project-1', '{session_path}', '{session_path}', 'Stale owner', 'standalone', 'active', 'active',
+                            '2026-03-18T00:00:01Z', '2026-03-18T00:00:02Z', 1, 42, 1234, '2026-03-18T00:00:02Z', 'active',
+                            '2026-03-18T00:00:01Z', '2026-03-18T00:00:02Z'
+                        );
+                        "#,
+                        session_path = transcript_path.display(),
+                    ),
+                )
+                .expect("legacy session tables should seed");
+            drop(connection);
+
+            initialize_database_at(&path).expect("database migration should succeed");
+            let connection = Connection::open(&path).expect("migrated database should open");
+
+            let owner_row: (String, String, i64) = connection
+                .query_row(
+                    "SELECT session_path, transcript_path, transcript_exists FROM sessions WHERE id = 'session-owner'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("owner row should load");
+            assert_eq!(owner_row.0, transcript_path.display().to_string());
+            assert_eq!(owner_row.1, transcript_path.display().to_string());
+            assert_eq!(owner_row.2, 1);
+
+            let stale_row: (String, Option<String>, i64) = connection
+                .query_row(
+                    "SELECT session_path, transcript_path, transcript_exists FROM sessions WHERE id = 'session-stale'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("stale row should load");
+            assert_eq!(stale_row.0, "missing://session-stale");
+            assert!(stale_row.1.is_none());
+            assert_eq!(stale_row.2, 0);
+        })();
+
+        match previous_root {
+            Some(value) => unsafe { env::set_var("ORCHESTRA_STORAGE_ROOT", value) },
+            None => unsafe { env::remove_var("ORCHESTRA_STORAGE_ROOT") },
+        }
+        let _ = fs::remove_dir_all(&storage_root);
+        result
     }
 
     #[test]
