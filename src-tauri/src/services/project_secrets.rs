@@ -1,6 +1,6 @@
-use std::{collections::HashMap, path::Path, sync::Mutex};
+use std::path::Path;
 #[cfg(test)]
-use std::sync::{Arc, LazyLock, MutexGuard};
+use std::{collections::HashMap, sync::Arc, sync::LazyLock, sync::Mutex, sync::MutexGuard};
 
 use chrono::Utc;
 use keyring::Entry;
@@ -36,6 +36,14 @@ struct StoredProjectSecretMetadata {
     created_at: String,
     updated_at: String,
     last_rotated_at: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProjectSecretMetadataFilter {
+    pub query: Option<String>,
+    pub secret_key: Option<String>,
+    pub value_state: Option<String>,
+    pub has_description: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -260,7 +268,9 @@ fn classify_store_error(message: String) -> SecretStoreError {
 
 fn availability_status_for_error(error: &SecretStoreError) -> ProjectSecretsAvailability {
     match error.kind {
-        SecretStoreErrorKind::Unsupported => availability("unsupported", Some(error.message.clone())),
+        SecretStoreErrorKind::Unsupported => {
+            availability("unsupported", Some(error.message.clone()))
+        }
         SecretStoreErrorKind::Locked => availability("locked", Some(error.message.clone())),
         SecretStoreErrorKind::Other => availability("error", Some(error.message.clone())),
     }
@@ -275,7 +285,9 @@ pub fn get_project_secrets_in(
     orchestra_root: &Path,
     project_slug: &str,
 ) -> Result<ProjectSecretsState, String> {
-    let connection = database::open_connection_at(&crate::services::orchestra_paths::orchestra_database_path(orchestra_root))?;
+    let connection = database::open_connection_at(
+        &crate::services::orchestra_paths::orchestra_database_path(orchestra_root),
+    )?;
     get_project_secrets_with_connection(&connection, Some(orchestra_root), project_slug)
 }
 
@@ -286,6 +298,40 @@ pub(crate) fn get_project_secrets_with_connection(
 ) -> Result<ProjectSecretsState, String> {
     let store = current_project_secret_store();
     get_project_secrets_with_store(connection, orchestra_root, project_slug, store.as_ref())
+}
+
+pub fn search_project_secrets(
+    project_slug: &str,
+    filter: ProjectSecretMetadataFilter,
+) -> Result<ProjectSecretsState, String> {
+    let orchestra_root = default_orchestra_root()?;
+    let connection = database::open_connection_at(
+        &crate::services::orchestra_paths::orchestra_database_path(&orchestra_root),
+    )?;
+    let store = current_project_secret_store();
+    search_project_secrets_with_store(
+        &connection,
+        Some(&orchestra_root),
+        project_slug,
+        &filter,
+        store.as_ref(),
+    )
+}
+
+pub(crate) fn search_project_secrets_with_connection(
+    connection: &Connection,
+    orchestra_root: Option<&Path>,
+    project_slug: &str,
+    filter: &ProjectSecretMetadataFilter,
+) -> Result<ProjectSecretsState, String> {
+    let store = current_project_secret_store();
+    search_project_secrets_with_store(
+        connection,
+        orchestra_root,
+        project_slug,
+        filter,
+        store.as_ref(),
+    )
 }
 
 fn get_project_secrets_with_store(
@@ -302,21 +348,24 @@ fn get_project_secrets_with_store(
         .into_iter()
         .map(|entry| {
             let account = secure_store_account(orchestra_root, &project.id, &entry.secret_key);
-            let (value_state, value_state_message) = match store.get_value(PROJECT_SECRET_SERVICE, &account) {
-                Ok(Some(_)) => ("ready".to_string(), None),
-                Ok(None) => ("missing_value".to_string(), None),
-                Err(error) => {
-                    if availability_state.status == "available" {
-                        availability_state = availability_status_for_error(&error);
-                    }
-                    match error.kind {
-                        SecretStoreErrorKind::Locked => ("store_locked".to_string(), Some(error.message)),
-                        SecretStoreErrorKind::Unsupported | SecretStoreErrorKind::Other => {
-                            ("store_error".to_string(), Some(error.message))
+            let (value_state, value_state_message) =
+                match store.get_value(PROJECT_SECRET_SERVICE, &account) {
+                    Ok(Some(_)) => ("ready".to_string(), None),
+                    Ok(None) => ("missing_value".to_string(), None),
+                    Err(error) => {
+                        if availability_state.status == "available" {
+                            availability_state = availability_status_for_error(&error);
+                        }
+                        match error.kind {
+                            SecretStoreErrorKind::Locked => {
+                                ("store_locked".to_string(), Some(error.message))
+                            }
+                            SecretStoreErrorKind::Unsupported | SecretStoreErrorKind::Other => {
+                                ("store_error".to_string(), Some(error.message))
+                            }
                         }
                     }
-                }
-            };
+                };
             ProjectSecretMetadata {
                 id: entry.id,
                 project_id: entry.project_id,
@@ -339,12 +388,27 @@ fn get_project_secrets_with_store(
     })
 }
 
+fn search_project_secrets_with_store(
+    connection: &Connection,
+    orchestra_root: Option<&Path>,
+    project_slug: &str,
+    filter: &ProjectSecretMetadataFilter,
+    store: &dyn ProjectSecretStore,
+) -> Result<ProjectSecretsState, String> {
+    let mut state =
+        get_project_secrets_with_store(connection, orchestra_root, project_slug, store)?;
+    state.secrets = filter_project_secret_metadata(state.secrets, filter)?;
+    Ok(state)
+}
+
 pub fn create_project_secret(
     project_slug: &str,
     input: ProjectSecretUpsertInput,
 ) -> Result<ProjectSecretsState, String> {
     let orchestra_root = default_orchestra_root()?;
-    let connection = database::open_connection_at(&crate::services::orchestra_paths::orchestra_database_path(&orchestra_root))?;
+    let connection = database::open_connection_at(
+        &crate::services::orchestra_paths::orchestra_database_path(&orchestra_root),
+    )?;
     let store = current_project_secret_store();
     write_project_secret_with_store(
         &connection,
@@ -361,7 +425,9 @@ pub fn update_project_secret(
     input: ProjectSecretUpsertInput,
 ) -> Result<ProjectSecretsState, String> {
     let orchestra_root = default_orchestra_root()?;
-    let connection = database::open_connection_at(&crate::services::orchestra_paths::orchestra_database_path(&orchestra_root))?;
+    let connection = database::open_connection_at(
+        &crate::services::orchestra_paths::orchestra_database_path(&orchestra_root),
+    )?;
     let store = current_project_secret_store();
     write_project_secret_with_store(
         &connection,
@@ -373,11 +439,22 @@ pub fn update_project_secret(
     )
 }
 
-pub fn delete_project_secret(project_slug: &str, secret_key: &str) -> Result<ProjectSecretsState, String> {
+pub fn delete_project_secret(
+    project_slug: &str,
+    secret_key: &str,
+) -> Result<ProjectSecretsState, String> {
     let orchestra_root = default_orchestra_root()?;
-    let connection = database::open_connection_at(&crate::services::orchestra_paths::orchestra_database_path(&orchestra_root))?;
+    let connection = database::open_connection_at(
+        &crate::services::orchestra_paths::orchestra_database_path(&orchestra_root),
+    )?;
     let store = current_project_secret_store();
-    delete_project_secret_with_store(&connection, Some(&orchestra_root), project_slug, secret_key, store.as_ref())
+    delete_project_secret_with_store(
+        &connection,
+        Some(&orchestra_root),
+        project_slug,
+        secret_key,
+        store.as_ref(),
+    )
 }
 
 pub fn get_project_secret_value(
@@ -385,9 +462,17 @@ pub fn get_project_secret_value(
     secret_key: &str,
 ) -> Result<ProjectSecretValueResult, String> {
     let orchestra_root = default_orchestra_root()?;
-    let connection = database::open_connection_at(&crate::services::orchestra_paths::orchestra_database_path(&orchestra_root))?;
+    let connection = database::open_connection_at(
+        &crate::services::orchestra_paths::orchestra_database_path(&orchestra_root),
+    )?;
     let store = current_project_secret_store();
-    get_project_secret_value_with_store(&connection, Some(&orchestra_root), project_slug, secret_key, store.as_ref())
+    get_project_secret_value_with_store(
+        &connection,
+        Some(&orchestra_root),
+        project_slug,
+        secret_key,
+        store.as_ref(),
+    )
 }
 
 fn get_project_secret_value_with_store(
@@ -400,8 +485,14 @@ fn get_project_secret_value_with_store(
     let project = projects::get_project_by_slug(connection, project_slug)?
         .ok_or_else(|| format!("Project slug {project_slug} was not found"))?;
     let normalized_key = normalize_secret_key(secret_key)?;
-    load_project_secret_metadata_entry(connection, &project.id, &normalized_key)?
-        .ok_or_else(|| format!("Project secret {normalized_key} was not found in project {}.", project.slug))?;
+    load_project_secret_metadata_entry(connection, &project.id, &normalized_key)?.ok_or_else(
+        || {
+            format!(
+                "Project secret {normalized_key} was not found in project {}.",
+                project.slug
+            )
+        },
+    )?;
     let account = secure_store_account(orchestra_root, &project.id, &normalized_key);
     let value = store
         .get_value(PROJECT_SECRET_SERVICE, &account)
@@ -510,7 +601,15 @@ fn write_project_secret_with_store(
                 updated_at = excluded.updated_at,
                 last_rotated_at = excluded.last_rotated_at
             "#,
-            params![id, project.id, normalized_key, description, created_at, now, last_rotated_at],
+            params![
+                id,
+                project.id,
+                normalized_key,
+                description,
+                created_at,
+                now,
+                last_rotated_at
+            ],
         )
         .map_err(|error| format!("Unable to save project secret metadata: {error}"))?;
 
@@ -603,6 +702,71 @@ fn load_project_secret_metadata_entry(
         .map_err(|error| format!("Unable to query project secret {secret_key}: {error}"))
 }
 
+fn filter_project_secret_metadata(
+    secrets: Vec<ProjectSecretMetadata>,
+    filter: &ProjectSecretMetadataFilter,
+) -> Result<Vec<ProjectSecretMetadata>, String> {
+    let normalized_query =
+        normalize_optional_string(filter.query.clone()).map(|value| value.to_ascii_lowercase());
+    let normalized_secret_key = filter
+        .secret_key
+        .as_deref()
+        .map(normalize_secret_key)
+        .transpose()?;
+    let normalized_value_state = normalize_optional_string(filter.value_state.clone())
+        .map(|value| value.to_ascii_lowercase());
+
+    Ok(secrets
+        .into_iter()
+        .filter(|secret| {
+            if let Some(secret_key) = normalized_secret_key.as_deref() {
+                if secret.secret_key != secret_key {
+                    return false;
+                }
+            }
+
+            if let Some(value_state) = normalized_value_state.as_deref() {
+                if secret.value_state.to_ascii_lowercase() != value_state {
+                    return false;
+                }
+            }
+
+            if let Some(has_description) = filter.has_description {
+                let secret_has_description = secret
+                    .description
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty());
+                if secret_has_description != has_description {
+                    return false;
+                }
+            }
+
+            if let Some(query) = normalized_query.as_deref() {
+                let description_matches = secret
+                    .description
+                    .as_deref()
+                    .map(|value| value.to_ascii_lowercase().contains(query))
+                    .unwrap_or(false);
+                let value_state_message_matches = secret
+                    .value_state_message
+                    .as_deref()
+                    .map(|value| value.to_ascii_lowercase().contains(query))
+                    .unwrap_or(false);
+                if !secret.secret_key.to_ascii_lowercase().contains(query)
+                    && !description_matches
+                    && !secret.value_state.to_ascii_lowercase().contains(query)
+                    && !value_state_message_matches
+                {
+                    return false;
+                }
+            }
+
+            true
+        })
+        .collect())
+}
+
 fn normalize_secret_key(value: &str) -> Result<String, String> {
     let normalized = value.trim().to_ascii_uppercase();
     if normalized.is_empty() {
@@ -613,17 +777,27 @@ fn normalize_secret_key(value: &str) -> Result<String, String> {
         return Err("Secret key is required.".into());
     };
     if !first.is_ascii_uppercase() {
-        return Err("Secret keys must start with an uppercase letter and contain only A-Z, 0-9, and _.".into());
+        return Err(
+            "Secret keys must start with an uppercase letter and contain only A-Z, 0-9, and _."
+                .into(),
+        );
     }
-    if !chars.all(|character| character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_') {
-        return Err("Secret keys must start with an uppercase letter and contain only A-Z, 0-9, and _.".into());
+    if !chars.all(|character| {
+        character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
+    }) {
+        return Err(
+            "Secret keys must start with an uppercase letter and contain only A-Z, 0-9, and _."
+                .into(),
+        );
     }
     if RESERVED_SECRET_KEYS.contains(&normalized.as_str())
         || RESERVED_SECRET_PREFIXES
             .iter()
             .any(|prefix| normalized.starts_with(prefix))
     {
-        return Err(format!("Secret key {normalized} uses a reserved name or prefix."));
+        return Err(format!(
+            "Secret key {normalized} uses a reserved name or prefix."
+        ));
     }
     Ok(normalized)
 }
@@ -640,17 +814,20 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
 }
 
 fn normalize_secret_value(value: Option<String>) -> Option<String> {
-    value.map(|entry| entry.trim_end_matches(['\r', '\n']).to_string())
+    value
+        .map(|entry| entry.trim_end_matches(['\r', '\n']).to_string())
         .and_then(|entry| if entry.is_empty() { None } else { Some(entry) })
 }
 
-fn secure_store_account(orchestra_root: Option<&Path>, project_id: &str, secret_key: &str) -> String {
+fn secure_store_account(
+    orchestra_root: Option<&Path>,
+    project_id: &str,
+    secret_key: &str,
+) -> String {
     let fingerprint = orchestra_root
         .map(root_fingerprint)
         .unwrap_or_else(|| "memory".into());
-    format!(
-        "scope:{fingerprint}:project:{project_id}:secret:{secret_key}",
-    )
+    format!("scope:{fingerprint}:project:{project_id}:secret:{secret_key}",)
 }
 
 fn root_fingerprint(orchestra_root: &Path) -> String {
@@ -686,7 +863,8 @@ mod tests {
     fn connection_with_project() -> (Connection, PathBuf) {
         let root = unique_temp_dir("project-secrets");
         let database_path = crate::services::orchestra_paths::orchestra_database_path(&root);
-        let connection = database::open_connection_at(&database_path).expect("database should open");
+        let connection =
+            database::open_connection_at(&database_path).expect("database should open");
         let now = Utc::now().to_rfc3339();
         connection
             .execute(
@@ -699,7 +877,10 @@ mod tests {
 
     #[test]
     fn validates_reserved_secret_keys() {
-        assert_eq!(normalize_secret_key("openai_api_key").as_deref(), Ok("OPENAI_API_KEY"));
+        assert_eq!(
+            normalize_secret_key("openai_api_key").as_deref(),
+            Ok("OPENAI_API_KEY")
+        );
         assert!(normalize_secret_key("1INVALID").is_err());
         assert!(normalize_secret_key("PATH").is_err());
         assert!(normalize_secret_key("orchestra_token").is_err());
@@ -740,7 +921,10 @@ mod tests {
             &store,
         )
         .expect("secret should update");
-        assert_eq!(updated.secrets[0].description.as_deref(), Some("Rotated provider key"));
+        assert_eq!(
+            updated.secrets[0].description.as_deref(),
+            Some("Rotated provider key")
+        );
         assert_ne!(updated.secrets[0].last_rotated_at, initial_rotated_at);
 
         let loaded = get_project_secret_value_with_store(
@@ -776,8 +960,9 @@ mod tests {
             )
             .expect("metadata should insert");
 
-        let state = get_project_secrets_with_store(&connection, Some(&root), "test-project", &store)
-            .expect("state should load");
+        let state =
+            get_project_secrets_with_store(&connection, Some(&root), "test-project", &store)
+                .expect("state should load");
         assert_eq!(state.secrets[0].value_state, "missing_value");
         assert_eq!(state.availability.status, "available");
     }
@@ -806,10 +991,60 @@ mod tests {
             message: "Keychain is locked".into(),
         });
 
-        let state = get_project_secrets_with_store(&connection, Some(&root), "test-project", &store)
-            .expect("state should load");
+        let state =
+            get_project_secrets_with_store(&connection, Some(&root), "test-project", &store)
+                .expect("state should load");
         assert_eq!(state.availability.status, "locked");
         assert_eq!(state.secrets[0].value_state, "store_locked");
+    }
+
+    #[test]
+    fn searches_project_secret_metadata_without_loading_values() {
+        let (connection, root) = connection_with_project();
+        let store = TestProjectSecretStore::new("available");
+
+        write_project_secret_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            ProjectSecretUpsertInput {
+                secret_key: "OPENAI_API_KEY".into(),
+                description: Some("Primary provider key".into()),
+                value: Some("sk-test-1".into()),
+            },
+            SecretWriteMode::Create,
+            &store,
+        )
+        .expect("first secret should create");
+        write_project_secret_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            ProjectSecretUpsertInput {
+                secret_key: "ANTHROPIC_API_KEY".into(),
+                description: None,
+                value: Some("sk-test-2".into()),
+            },
+            SecretWriteMode::Create,
+            &store,
+        )
+        .expect("second secret should create");
+
+        let state = search_project_secrets_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            &ProjectSecretMetadataFilter {
+                query: Some("provider".into()),
+                secret_key: None,
+                value_state: Some("ready".into()),
+                has_description: Some(true),
+            },
+            &store,
+        )
+        .expect("filtered state should load");
+        assert_eq!(state.secrets.len(), 1);
+        assert_eq!(state.secrets[0].secret_key, "OPENAI_API_KEY");
     }
 
     #[test]
@@ -817,11 +1052,10 @@ mod tests {
         let (connection, root) = connection_with_project();
         let account = secure_store_account(Some(&root), "project-1", "OPENAI_API_KEY");
         let store = TestProjectSecretStore::new("available");
-        store
-            .values
-            .lock()
-            .expect("values lock")
-            .insert(TestProjectSecretStore::key(PROJECT_SECRET_SERVICE, &account), "sk-test-1".into());
+        store.values.lock().expect("values lock").insert(
+            TestProjectSecretStore::key(PROJECT_SECRET_SERVICE, &account),
+            "sk-test-1".into(),
+        );
         connection
             .execute(
                 "INSERT INTO project_secret_metadata (id, project_id, secret_key, description, created_at, updated_at, last_rotated_at) VALUES ('secret-1', 'project-1', 'OPENAI_API_KEY', NULL, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z')",

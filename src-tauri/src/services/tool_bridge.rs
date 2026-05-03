@@ -29,8 +29,8 @@ use crate::{
     services::{
         agents, authorization, command_authorization, database, live_sessions, messages,
         pi_sessions, policies, project_notes, project_secrets, project_settings, projects,
-        reminders, role_runtime, roles, session_management, session_ownership,
-        task_attachments, task_file_references, task_runtime, tasks, workflows,
+        reminders, role_runtime, roles, session_management, session_ownership, task_attachments,
+        task_file_references, task_runtime, tasks, workflows,
     },
 };
 
@@ -146,6 +146,7 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "attach_repository_remote",
     "set_project_default_repository",
     "list_project_secrets",
+    "search_project_secrets",
     "get_project_secret",
     "add_project_secret",
     "update_project_secret",
@@ -1231,8 +1232,38 @@ fn invoke_bridge_command(
                 authorization,
                 "projects.secrets.read",
             )?;
-            serde_json::to_value(project_secrets::get_project_secrets(&project_slug)?)
-                .map_err(|error| format!("Unable to serialize project secrets: {error}"))
+            let filters = project_secret_filter_from_payload(&payload)?;
+            let orchestra_root = crate::services::orchestra_paths::default_orchestra_root()?;
+            serde_json::to_value(project_secrets::search_project_secrets_with_connection(
+                connection,
+                Some(&orchestra_root),
+                &project_slug,
+                &filters,
+            )?)
+            .map_err(|error| format!("Unable to serialize project secrets: {error}"))
+        }
+        "search_project_secrets" => {
+            let project_slug = resolve_secret_project_slug(
+                connection,
+                &payload,
+                authorization,
+                session_id,
+                "Create a project first before searching project secrets.",
+            )?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "projects.secrets.read",
+            )?;
+            let filters = project_secret_filter_from_payload(&payload)?;
+            let orchestra_root = crate::services::orchestra_paths::default_orchestra_root()?;
+            serde_json::to_value(project_secrets::search_project_secrets_with_connection(
+                connection,
+                Some(&orchestra_root),
+                &project_slug,
+                &filters,
+            )?)
+            .map_err(|error| format!("Unable to serialize project secret search results: {error}"))
         }
         "get_project_secret" => {
             let project_slug = resolve_secret_project_slug(
@@ -1269,8 +1300,11 @@ fn invoke_bridge_command(
             )?;
             let input = serde_json::from_value(payload.clone())
                 .map_err(|error| format!("Unable to parse project secret input: {error}"))?;
-            serde_json::to_value(project_secrets::create_project_secret(&project_slug, input)?)
-                .map_err(|error| format!("Unable to serialize project secrets: {error}"))
+            serde_json::to_value(project_secrets::create_project_secret(
+                &project_slug,
+                input,
+            )?)
+            .map_err(|error| format!("Unable to serialize project secrets: {error}"))
         }
         "update_project_secret" => {
             let project_slug = resolve_secret_project_slug(
@@ -1287,8 +1321,11 @@ fn invoke_bridge_command(
             )?;
             let input = serde_json::from_value(payload.clone())
                 .map_err(|error| format!("Unable to parse project secret input: {error}"))?;
-            serde_json::to_value(project_secrets::update_project_secret(&project_slug, input)?)
-                .map_err(|error| format!("Unable to serialize project secrets: {error}"))
+            serde_json::to_value(project_secrets::update_project_secret(
+                &project_slug,
+                input,
+            )?)
+            .map_err(|error| format!("Unable to serialize project secrets: {error}"))
         }
         "delete_project_secret" => {
             let project_slug = resolve_secret_project_slug(
@@ -2682,6 +2719,26 @@ fn invoke_bridge_command(
     }
 }
 
+fn project_secret_filter_from_payload(
+    payload: &Value,
+) -> Result<project_secrets::ProjectSecretMetadataFilter, String> {
+    Ok(project_secrets::ProjectSecretMetadataFilter {
+        query: payload
+            .get("query")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        secret_key: payload
+            .get("secretKey")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        value_state: payload
+            .get("valueState")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        has_description: payload.get("hasDescription").and_then(Value::as_bool),
+    })
+}
+
 fn resolve_secret_project_slug(
     connection: &Connection,
     payload: &Value,
@@ -2703,7 +2760,9 @@ fn resolve_secret_project_slug(
         let task = tasks::get_task_context(connection, task_id)?;
         return Ok(projects::get_project(connection, &task.project_id)?.slug);
     }
-    if let Ok((task_id, _lane_id)) = resolve_active_worker_task_context(connection, authorization, session_id) {
+    if let Ok((task_id, _lane_id)) =
+        resolve_active_worker_task_context(connection, authorization, session_id)
+    {
         let task = tasks::get_task_context(connection, &task_id)?;
         return Ok(projects::get_project(connection, &task.project_id)?.slug);
     }
@@ -2769,7 +2828,9 @@ mod tests {
     use super::*;
     use crate::{
         models::{AgentUpsertInput, RoleUpsertInput, TaskUpsertInput},
-        services::{agents, database, database::initialize_database_at, policies, project_secrets, tasks},
+        services::{
+            agents, database, database::initialize_database_at, policies, project_secrets, tasks,
+        },
     };
     use rusqlite::params;
     use std::{
@@ -3740,13 +3801,32 @@ mod tests {
             )
             .expect("create project secret should succeed");
             assert_eq!(
-                created.pointer("/secrets/0/secretKey").and_then(Value::as_str),
+                created
+                    .pointer("/secrets/0/secretKey")
+                    .and_then(Value::as_str),
                 Some("OPENAI_API_KEY")
             );
             assert_eq!(
-                created.pointer("/secrets/0/valueState").and_then(Value::as_str),
+                created
+                    .pointer("/secrets/0/valueState")
+                    .and_then(Value::as_str),
                 Some("ready")
             );
+
+            invoke_bridge_command(
+                &config,
+                &connection,
+                "add_project_secret",
+                authorization,
+                None,
+                json!({
+                    "projectSlug": "secret-project",
+                    "secretKey": "ANTHROPIC_API_KEY",
+                    "description": "Secondary provider key",
+                    "value": "sk-test-2"
+                }),
+            )
+            .expect("second project secret should succeed");
 
             let listed = invoke_bridge_command(
                 &config,
@@ -3757,8 +3837,73 @@ mod tests {
                 json!({ "projectSlug": "secret-project" }),
             )
             .expect("list project secrets should succeed");
-            assert_eq!(listed.as_object().and_then(|value| value.get("projectSlug")).and_then(Value::as_str), Some("secret-project"));
-            assert_eq!(listed.pointer("/secrets/0/description").and_then(Value::as_str), Some("Primary provider key"));
+            assert_eq!(
+                listed
+                    .as_object()
+                    .and_then(|value| value.get("projectSlug"))
+                    .and_then(Value::as_str),
+                Some("secret-project")
+            );
+            assert_eq!(
+                listed
+                    .pointer("/secrets/0/description")
+                    .and_then(Value::as_str),
+                Some("Secondary provider key")
+            );
+
+            let searched = invoke_bridge_command(
+                &config,
+                &connection,
+                "search_project_secrets",
+                authorization,
+                None,
+                json!({
+                    "projectSlug": "secret-project",
+                    "query": "primary",
+                    "valueState": "ready",
+                    "hasDescription": true
+                }),
+            )
+            .expect("search project secrets should succeed");
+            assert_eq!(
+                searched
+                    .pointer("/secrets/0/secretKey")
+                    .and_then(Value::as_str),
+                Some("OPENAI_API_KEY")
+            );
+            assert_eq!(
+                searched
+                    .pointer("/secrets")
+                    .and_then(Value::as_array)
+                    .map(Vec::len),
+                Some(1)
+            );
+
+            let filtered_list = invoke_bridge_command(
+                &config,
+                &connection,
+                "list_project_secrets",
+                authorization,
+                None,
+                json!({
+                    "projectSlug": "secret-project",
+                    "secretKey": "ANTHROPIC_API_KEY"
+                }),
+            )
+            .expect("filtered list project secrets should succeed");
+            assert_eq!(
+                filtered_list
+                    .pointer("/secrets/0/secretKey")
+                    .and_then(Value::as_str),
+                Some("ANTHROPIC_API_KEY")
+            );
+            assert_eq!(
+                filtered_list
+                    .pointer("/secrets")
+                    .and_then(Value::as_array)
+                    .map(Vec::len),
+                Some(1)
+            );
 
             let loaded = invoke_bridge_command(
                 &config,
@@ -3772,7 +3917,10 @@ mod tests {
                 }),
             )
             .expect("get project secret should succeed");
-            assert_eq!(loaded.get("value").and_then(Value::as_str), Some("sk-test-1"));
+            assert_eq!(
+                loaded.get("value").and_then(Value::as_str),
+                Some("sk-test-1")
+            );
 
             let updated = invoke_bridge_command(
                 &config,
@@ -3784,25 +3932,16 @@ mod tests {
                     "projectSlug": "secret-project",
                     "secretKey": "OPENAI_API_KEY",
                     "description": "Rotated provider key",
-                    "value": "sk-test-2"
+                    "value": "sk-test-3"
                 }),
             )
             .expect("update project secret should succeed");
-            assert_eq!(updated.pointer("/secrets/0/description").and_then(Value::as_str), Some("Rotated provider key"));
-
-            let reloaded = invoke_bridge_command(
-                &config,
-                &connection,
-                "get_project_secret",
-                authorization,
-                None,
-                json!({
-                    "projectSlug": "secret-project",
-                    "secretKey": "OPENAI_API_KEY"
-                }),
-            )
-            .expect("reloaded project secret should succeed");
-            assert_eq!(reloaded.get("value").and_then(Value::as_str), Some("sk-test-2"));
+            assert_eq!(
+                updated
+                    .pointer("/secrets/1/description")
+                    .and_then(Value::as_str),
+                Some("Rotated provider key")
+            );
 
             let deleted = invoke_bridge_command(
                 &config,
@@ -3816,7 +3955,13 @@ mod tests {
                 }),
             )
             .expect("delete project secret should succeed");
-            assert_eq!(deleted.pointer("/secrets").and_then(Value::as_array).map(Vec::len), Some(0));
+            assert_eq!(
+                deleted
+                    .pointer("/secrets")
+                    .and_then(Value::as_array)
+                    .map(Vec::len),
+                Some(1)
+            );
         });
     }
 
@@ -3925,7 +4070,34 @@ mod tests {
                 json!({ "projectSlug": "secret-auth-project" }),
             )
             .expect("reader should list project secrets");
-            assert_eq!(listed.pointer("/secrets/0/secretKey").and_then(Value::as_str), Some("OPENAI_API_KEY"));
+            assert_eq!(
+                listed
+                    .pointer("/secrets/0/secretKey")
+                    .and_then(Value::as_str),
+                Some("OPENAI_API_KEY")
+            );
+
+            let searched = invoke_bridge_command(
+                &config,
+                &connection,
+                "search_project_secrets",
+                Some(&AuthorizationContext {
+                    actor_type: "agent".into(),
+                    actor_id: read_agent.id.clone(),
+                }),
+                None,
+                json!({
+                    "projectSlug": "secret-auth-project",
+                    "query": "openai"
+                }),
+            )
+            .expect("reader should search project secrets");
+            assert_eq!(
+                searched
+                    .pointer("/secrets/0/secretKey")
+                    .and_then(Value::as_str),
+                Some("OPENAI_API_KEY")
+            );
 
             let read_denied = invoke_bridge_command(
                 &config,
@@ -3957,6 +4129,23 @@ mod tests {
             )
             .expect_err("use-only agent should not list secret metadata");
             assert!(use_denied.contains("projects.secrets.read"));
+
+            let search_denied = invoke_bridge_command(
+                &config,
+                &connection,
+                "search_project_secrets",
+                Some(&AuthorizationContext {
+                    actor_type: "agent".into(),
+                    actor_id: use_agent.id.clone(),
+                }),
+                None,
+                json!({
+                    "projectSlug": "secret-auth-project",
+                    "query": "openai"
+                }),
+            )
+            .expect_err("use-only agent should not search secret metadata");
+            assert!(search_denied.contains("projects.secrets.read"));
 
             let write_denied = invoke_bridge_command(
                 &config,

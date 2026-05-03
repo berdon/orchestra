@@ -220,6 +220,36 @@ describe("orchestra tools extension bridge tool setup", () => {
         requiredPermission: "projects.update",
       },
       {
+        name: "list_project_secrets",
+        description: "List project secret metadata",
+        requiredPermission: "projects.secrets.read",
+      },
+      {
+        name: "search_project_secrets",
+        description: "Search project secret metadata",
+        requiredPermission: "projects.secrets.read",
+      },
+      {
+        name: "get_project_secret",
+        description: "Load a project secret value",
+        requiredPermission: "projects.secrets.use",
+      },
+      {
+        name: "add_project_secret",
+        description: "Create a project secret",
+        requiredPermission: "projects.secrets.write",
+      },
+      {
+        name: "update_project_secret",
+        description: "Update a project secret",
+        requiredPermission: "projects.secrets.write",
+      },
+      {
+        name: "delete_project_secret",
+        description: "Delete a project secret",
+        requiredPermission: "projects.secrets.write",
+      },
+      {
         name: "list_workflows",
         description: "List workflows",
         requiredPermission: "workflows.read",
@@ -354,6 +384,12 @@ describe("orchestra tools extension bridge tool setup", () => {
         "delete_repository",
         "attach_repository_remote",
         "set_project_default_repository",
+        "list_project_secrets",
+        "search_project_secrets",
+        "get_project_secret",
+        "add_project_secret",
+        "update_project_secret",
+        "delete_project_secret",
         "list_workflows",
         "get_workflow",
         "validate_workflow",
@@ -1132,6 +1168,124 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(helpResult.content[0]?.text).toContain('"command": "create_task"');
     expect(helpResult.content[0]?.text).toContain('"projectId"');
     expect(helpResult.content[0]?.text).toContain('"title"');
+  });
+
+  test("exposes safe project-secret tools without returning raw values in tool details or UI commands", async () => {
+    const registeredTools: Array<any> = [];
+    const registeredCommands = new Map<string, (args: string, ctx: any) => Promise<void>>();
+    const notifications: Array<{ message: string; level: string }> = [];
+    process.env.OPENAI_SOURCE = "sk-secret-from-env";
+
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+      async json() {
+        const request = JSON.parse(String(init?.body));
+        if (request.command === "get_project_secret") {
+          return {
+            success: true,
+            data: {
+              projectSlug: "secret-project",
+              secretKey: request.payload.secretKey,
+              value: "sk-loaded-from-bridge",
+            },
+          };
+        }
+        return {
+          success: true,
+          data: {
+            echoedCommand: request.command,
+            echoedPayload: request.payload,
+          },
+        };
+      },
+    }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    orchestraToolsExtension({
+      registerTool(tool: any) {
+        registeredTools.push(tool);
+      },
+      registerCommand(name: string, definition: any) {
+        registeredCommands.set(name, definition.handler);
+      },
+    } as any);
+
+    const searchProjectSecretsTool = registeredTools.find((tool) => tool.name === "search_project_secrets");
+    expect(searchProjectSecretsTool.parameters.properties.projectSlug).toBeTruthy();
+    expect(searchProjectSecretsTool.parameters.properties.query).toBeTruthy();
+    expect(searchProjectSecretsTool.parameters.properties.secretKey).toBeTruthy();
+    expect(searchProjectSecretsTool.parameters.properties.valueState).toBeTruthy();
+    expect(searchProjectSecretsTool.parameters.properties.hasDescription).toBeTruthy();
+    await searchProjectSecretsTool.execute("tool-call-1", {
+      projectSlug: "secret-project",
+      query: "openai",
+      valueState: "ready",
+      hasDescription: true,
+    });
+
+    const getProjectSecretTool = registeredTools.find((tool) => tool.name === "get_project_secret");
+    const loadResult = await getProjectSecretTool.execute("tool-call-2", {
+      projectSlug: "secret-project",
+      secretKey: "OPENAI_API_KEY",
+      targetEnvVar: "OPENAI_TOKEN",
+    });
+
+    expect(loadResult.content[0]?.text).toContain("Loaded OPENAI_API_KEY into env var OPENAI_TOKEN");
+    expect(loadResult.details.result).toEqual({
+      projectSlug: "secret-project",
+      secretKey: "OPENAI_API_KEY",
+      targetEnvVar: "OPENAI_TOKEN",
+      loaded: true,
+    });
+    expect(JSON.stringify(loadResult.details.result)).not.toContain("sk-loaded-from-bridge");
+    expect(process.env.OPENAI_TOKEN).toBe("sk-loaded-from-bridge");
+
+    const updateProjectSecretTool = registeredTools.find((tool) => tool.name === "update_project_secret");
+    await updateProjectSecretTool.execute("tool-call-3", {
+      projectSlug: "secret-project",
+      secretKey: "OPENAI_API_KEY",
+      description: "Rotated key",
+      sourceEnvVar: "OPENAI_SOURCE",
+    });
+
+    const orchestraRun = registeredCommands.get("orchestra-run");
+    expect(orchestraRun).toBeTruthy();
+    await orchestraRun?.("get_project_secret {\"projectSlug\":\"secret-project\",\"secretKey\":\"OPENAI_API_KEY\",\"targetEnvVar\":\"OPENAI_RUNTIME\"}", {
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).payload).toEqual({
+      projectSlug: "secret-project",
+      query: "openai",
+      valueState: "ready",
+      hasDescription: true,
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).payload).toEqual({
+      projectSlug: "secret-project",
+      secretKey: "OPENAI_API_KEY",
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body)).payload).toEqual({
+      projectSlug: "secret-project",
+      secretKey: "OPENAI_API_KEY",
+      description: "Rotated key",
+      value: "sk-secret-from-env",
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body)).payload).toEqual({
+      projectSlug: "secret-project",
+      secretKey: "OPENAI_API_KEY",
+    });
+    expect(notifications).toEqual([
+      {
+        message: "Loaded OPENAI_API_KEY into env var OPENAI_RUNTIME for this session.",
+        level: "info",
+      },
+    ]);
+    expect(process.env.OPENAI_RUNTIME).toBe("sk-loaded-from-bridge");
   });
 
   test("documents nested input structures and examples for wrapped Orchestra payloads", async () => {

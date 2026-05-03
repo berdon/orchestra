@@ -300,6 +300,11 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "projects.secrets.read",
     ),
     (
+        "search_project_secrets",
+        "Search project secret metadata",
+        "projects.secrets.read",
+    ),
+    (
         "get_project_secret",
         "Load a project secret value",
         "projects.secrets.use",
@@ -859,9 +864,18 @@ mod tests {
             }),
         )
         .expect("read tools should list");
-        assert!(read_tools.iter().any(|tool| tool.name == "list_project_secrets"));
-        assert!(!read_tools.iter().any(|tool| tool.name == "get_project_secret"));
-        assert!(!read_tools.iter().any(|tool| tool.name == "add_project_secret"));
+        assert!(read_tools
+            .iter()
+            .any(|tool| tool.name == "list_project_secrets"));
+        assert!(read_tools
+            .iter()
+            .any(|tool| tool.name == "search_project_secrets"));
+        assert!(!read_tools
+            .iter()
+            .any(|tool| tool.name == "get_project_secret"));
+        assert!(!read_tools
+            .iter()
+            .any(|tool| tool.name == "add_project_secret"));
 
         let use_tools = list_allowed_tools(
             &connection,
@@ -871,9 +885,18 @@ mod tests {
             }),
         )
         .expect("use tools should list");
-        assert!(use_tools.iter().any(|tool| tool.name == "get_project_secret"));
-        assert!(!use_tools.iter().any(|tool| tool.name == "list_project_secrets"));
-        assert!(!use_tools.iter().any(|tool| tool.name == "update_project_secret"));
+        assert!(use_tools
+            .iter()
+            .any(|tool| tool.name == "get_project_secret"));
+        assert!(!use_tools
+            .iter()
+            .any(|tool| tool.name == "list_project_secrets"));
+        assert!(!use_tools
+            .iter()
+            .any(|tool| tool.name == "search_project_secrets"));
+        assert!(!use_tools
+            .iter()
+            .any(|tool| tool.name == "update_project_secret"));
 
         let write_tools = list_allowed_tools(
             &connection,
@@ -883,9 +906,17 @@ mod tests {
             }),
         )
         .expect("write tools should list");
-        assert!(write_tools.iter().any(|tool| tool.name == "add_project_secret"));
-        assert!(write_tools.iter().any(|tool| tool.name == "update_project_secret"));
-        assert!(write_tools.iter().any(|tool| tool.name == "delete_project_secret"));
-        assert!(!write_tools.iter().any(|tool| tool.name == "get_project_secret"));
+        assert!(write_tools
+            .iter()
+            .any(|tool| tool.name == "add_project_secret"));
+        assert!(write_tools
+            .iter()
+            .any(|tool| tool.name == "update_project_secret"));
+        assert!(write_tools
+            .iter()
+            .any(|tool| tool.name == "delete_project_secret"));
+        assert!(!write_tools
+            .iter()
+            .any(|tool| tool.name == "get_project_secret"));
     }
 }

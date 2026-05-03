@@ -524,6 +524,7 @@ function workflowSchemaDescription(tool: OrchestraToolDefinition) {
 
 const SAFE_PROJECT_SECRET_COMMANDS = new Set([
   "list_project_secrets",
+  "search_project_secrets",
   "get_project_secret",
   "add_project_secret",
   "update_project_secret",
@@ -550,13 +551,47 @@ function requireSourceEnvVar(sourceEnvVar: string) {
   return { normalized, value };
 }
 
-async function executeProjectSecretList(params: { projectId?: string; projectSlug?: string; taskId?: string }) {
+async function executeProjectSecretList(params: {
+  projectId?: string;
+  projectSlug?: string;
+  taskId?: string;
+  query?: string;
+  secretKey?: string;
+  valueState?: string;
+  hasDescription?: boolean;
+}) {
   const payload = {
     projectId: params.projectId,
     projectSlug: params.projectSlug,
     taskId: params.taskId,
+    query: params.query,
+    secretKey: params.secretKey,
+    valueState: params.valueState,
+    hasDescription: params.hasDescription,
   };
   const result = await invokeBridge("list_project_secrets", payload);
+  return { payload, result };
+}
+
+async function executeProjectSecretSearch(params: {
+  projectId?: string;
+  projectSlug?: string;
+  taskId?: string;
+  query?: string;
+  secretKey?: string;
+  valueState?: string;
+  hasDescription?: boolean;
+}) {
+  const payload = {
+    projectId: params.projectId,
+    projectSlug: params.projectSlug,
+    taskId: params.taskId,
+    query: params.query,
+    secretKey: params.secretKey,
+    valueState: params.valueState,
+    hasDescription: params.hasDescription,
+  };
+  const result = await invokeBridge("search_project_secrets", payload);
   return { payload, result };
 }
 
@@ -631,7 +666,11 @@ async function executeProjectSecretDelete(params: { secretKey: string; projectId
 
 async function runSafeProjectSecretCommandForUi(command: string, payload: Record<string, unknown>) {
   if (command === "list_project_secrets") {
-    const { result } = await executeProjectSecretList(payload as { projectId?: string; projectSlug?: string; taskId?: string });
+    const { result } = await executeProjectSecretList(payload as { projectId?: string; projectSlug?: string; taskId?: string; query?: string; secretKey?: string; valueState?: string; hasDescription?: boolean });
+    return JSON.stringify(result, null, 2);
+  }
+  if (command === "search_project_secrets") {
+    const { result } = await executeProjectSecretSearch(payload as { projectId?: string; projectSlug?: string; taskId?: string; query?: string; secretKey?: string; valueState?: string; hasDescription?: boolean });
     return JSON.stringify(result, null, 2);
   }
   if (command === "get_project_secret") {
@@ -926,9 +965,37 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Returns metadata only; secret values are never included.`,
-      parameters: Type.Object(projectSecretScopeSchema()),
-      async execute(_toolCallId: string, params: { projectId?: string; projectSlug?: string; taskId?: string }) {
+      parameters: Type.Object({
+        ...projectSecretScopeSchema(),
+        query: Type.Optional(Type.String({ description: "Optional substring query matched against metadata such as secretKey, description, and valueState." })),
+        secretKey: Type.Optional(Type.String({ description: "Optional exact secret key filter." })),
+        valueState: Type.Optional(Type.String({ description: "Optional exact value state filter such as ready, missing_value, store_locked, or store_error." })),
+        hasDescription: Type.Optional(Type.Boolean({ description: "Optional description-presence filter." })),
+      }),
+      async execute(_toolCallId: string, params: { projectId?: string; projectSlug?: string; taskId?: string; query?: string; secretKey?: string; valueState?: string; hasDescription?: boolean }) {
         const { payload, result } = await executeProjectSecretList(params);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "search_project_secrets") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Searches metadata only; secret values are never included.`,
+      parameters: Type.Object({
+        ...projectSecretScopeSchema(),
+        query: Type.Optional(Type.String({ description: "Optional substring query matched against metadata such as secretKey, description, and valueState." })),
+        secretKey: Type.Optional(Type.String({ description: "Optional exact secret key filter." })),
+        valueState: Type.Optional(Type.String({ description: "Optional exact value state filter such as ready, missing_value, store_locked, or store_error." })),
+        hasDescription: Type.Optional(Type.Boolean({ description: "Optional description-presence filter." })),
+      }),
+      async execute(_toolCallId: string, params: { projectId?: string; projectSlug?: string; taskId?: string; query?: string; secretKey?: string; valueState?: string; hasDescription?: boolean }) {
+        const { payload, result } = await executeProjectSecretSearch(params);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
           details: { command: tool.name, payload, result },
