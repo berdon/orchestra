@@ -25,8 +25,10 @@ function seedGeneralAndHarnessSettings() {
         {
           clientId: "client-1",
           sessionId: "session-1",
+          sessionTitle: "General diagnostics session",
           actorType: "role",
           actorId: "developer",
+          actorLabel: "Developer",
           requestCount: 3,
           inFlightRequestCount: 1,
           lastSeenAt: timestamp,
@@ -41,6 +43,7 @@ function seedGeneralAndHarnessSettings() {
           requestId: "request-1",
           clientId: "client-1",
           sessionId: "session-1",
+          sessionTitle: "General diagnostics session",
           command: "get_task_context",
           startedAt: timestamp,
           finishedAt: timestamp,
@@ -51,6 +54,40 @@ function seedGeneralAndHarnessSettings() {
       ],
       recentCleanupEvents: [],
     }),
+  );
+  window.localStorage.setItem(
+    "orchestra.mock.roles",
+    JSON.stringify([
+      {
+        id: "developer",
+        slug: "developer",
+        name: "Developer",
+        description: "Default developer role",
+        provider: null,
+        model: null,
+        thinkingLevel: "medium",
+        capacity: 1,
+        policyIds: [],
+        directPermissions: [],
+        archived: false,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+    ]),
+  );
+  window.localStorage.setItem(
+    "orchestra.mock.sessions.orchestra",
+    JSON.stringify([
+      {
+        id: "session-1",
+        title: "General diagnostics session",
+        status: "active",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        subscribed: false,
+        events: [],
+      },
+    ]),
   );
   window.localStorage.setItem(
     "orchestra.mock.project-settings",
@@ -191,7 +228,10 @@ test("settings general, harness, prompting, and source control panels render and
   await expect(page.locator('[data-role="bridge-instance-id"]')).toContainText("bridge-instance-browser");
   await expect(page.locator('[data-role="bridge-active-client-count"]')).toContainText("2");
   await expect(page.locator('[data-role="bridge-clients-table"]')).toContainText("client-1");
+  await expect(page.locator('[data-role="bridge-clients-table"]')).toContainText("General diagnostics session");
+  await expect(page.locator('[data-role="bridge-clients-table"]')).toContainText("Developer");
   await expect(page.locator('[data-role="bridge-requests-table"]')).toContainText("get_task_context");
+  await expect(page.locator('[data-role="bridge-requests-table"]')).toContainText("General diagnostics session");
 
   await page.locator('[data-role="cleanup-stale-bridges"]').click();
   await expect(page.locator('[data-role="bridge-cleanup-table"]')).toContainText("cleanup_requested");

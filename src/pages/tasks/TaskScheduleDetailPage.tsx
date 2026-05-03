@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type { AgentSummary, RepositoryRecord, RoleSummary, TaskScheduleDetail, TaskScheduleUpsertInput, WorkflowSummary } from "../../types";
+import { TaskReferenceLink, type TaskReferenceEntry } from "../../components/entity-links";
 import { TaskActionMenu } from "../../components/TaskActionMenu";
 import { TaskScheduleEditorForm } from "./TaskScheduleEditorForm";
 
@@ -11,6 +12,7 @@ interface TaskScheduleDetailPageProps {
   agents: AgentSummary[];
   roles: RoleSummary[];
   repositories: RepositoryRecord[];
+  taskLookup?: Map<string, TaskReferenceEntry>;
   saving: boolean;
   deleting: boolean;
   loading: boolean;
@@ -49,6 +51,7 @@ export function TaskScheduleDetailPage({
   agents,
   roles,
   repositories,
+  taskLookup,
   saving,
   deleting,
   loading,
@@ -192,7 +195,19 @@ export function TaskScheduleDetailPage({
                         {occurrence.status}
                       </span>
                     </div>
-                    {occurrence.taskId ? <p>Task {occurrence.taskId}</p> : null}
+                    {occurrence.taskId ? (
+                      <p>
+                        Task{" "}
+                        <TaskReferenceLink
+                          lookup={taskLookup}
+                          onOpenTask={onOpenTask}
+                          rawIdMode="secondary"
+                          taskId={occurrence.taskId}
+                          taskNumber={occurrence.taskNumber ?? null}
+                          taskTitle={occurrence.taskTitle ?? null}
+                        />
+                      </p>
+                    ) : null}
                     {occurrence.error ? <p className="muted-copy">{occurrence.error}</p> : null}
                   </article>
                 ))}

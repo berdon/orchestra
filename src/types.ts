@@ -224,8 +224,10 @@ export interface RemoteEventEnvelope {
 export interface BridgeClientDiagnostics {
   clientId: string;
   sessionId?: string | null;
+  sessionTitle?: string | null;
   actorType?: string | null;
   actorId?: string | null;
+  actorLabel?: string | null;
   requestCount: number;
   inFlightRequestCount: number;
   lastSeenAt: string;
@@ -239,6 +241,7 @@ export interface BridgeRequestDiagnostics {
   requestId: string;
   clientId?: string | null;
   sessionId?: string | null;
+  sessionTitle?: string | null;
   command: string;
   startedAt: string;
   finishedAt?: string | null;
@@ -664,6 +667,7 @@ export interface AgentRuntimeState {
   agentId: string;
   status: string;
   mainSessionId?: string | null;
+  mainSessionTitle?: string | null;
   runtimeCwd?: string | null;
   currentQueueEntryId?: string | null;
   lastDispatchAt?: string | null;
@@ -680,12 +684,15 @@ export interface AgentQueueEntry {
   status: string;
   sourceType: string;
   sourceTaskId?: string | null;
+  sourceTaskNumber?: string | null;
+  sourceTaskTitle?: string | null;
   sourceWorkflowId?: string | null;
   sourceLaneId?: string | null;
   deliveryMode: string;
   title: string;
   message: string;
   sessionId?: string | null;
+  sessionTitle?: string | null;
   runId?: string | null;
   dispatchedAt?: string | null;
   completedAt?: string | null;
@@ -1379,6 +1386,7 @@ export interface RoleInstance {
   status: string;
   currentQueueEntryId?: string | null;
   sessionId?: string | null;
+  sessionTitle?: string | null;
   worktreePath?: string | null;
   lastHeartbeatAt?: string | null;
   lastError?: string | null;
@@ -1597,6 +1605,7 @@ export interface TaskLaneRun {
   taskId: string;
   laneId: string;
   sessionId: string;
+  sessionTitle?: string | null;
   result: "success" | "failure" | "needs_user" | "canceled" | "blocked";
   notes?: string | null;
   startedAt: string;
@@ -1610,8 +1619,10 @@ export interface TaskLaneAssignment {
   laneId: string;
   workerType: string;
   workerId?: string | null;
+  workerName?: string | null;
   status: string;
   sessionId?: string | null;
+  sessionTitle?: string | null;
   runtimeCwd?: string | null;
   roleQueueEntryId?: string | null;
   roleInstanceId?: string | null;
@@ -1827,6 +1838,8 @@ export interface TaskScheduleOccurrence {
   eventId?: string | null;
   status: TaskScheduleOccurrenceStatus | string;
   taskId?: string | null;
+  taskNumber?: string | null;
+  taskTitle?: string | null;
   error?: string | null;
   createdAt: string;
   updatedAt: string;

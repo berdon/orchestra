@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
+import { buildEntityReferenceLookup } from "../components/entity-links";
 import { deleteAgentQueueEntry, getAgentOperations, listAgentOperations } from "../lib/agents";
 import {
   deleteRoleQueueEntry,
@@ -20,17 +21,23 @@ import type {
   AgentOperationsSnapshot,
   RoleOperationsDetail as RoleOperationsDetailModel,
   RoleOperationsSnapshot,
+  SessionRecord,
+  TaskSummary,
 } from "../types";
 
 interface AgentsPageProps {
   activeProjectId?: string | null;
   selectedWorkerRequest?: { type: "role" | "agent"; id: string; token: number } | null;
+  referenceTasks?: TaskSummary[];
+  referenceSessions?: SessionRecord[];
   onOpenAgentSession: (agentId: string) => void;
+  onOpenLinkedSession: (sessionId: string, projectId?: string | null) => void;
+  onOpenTask: (taskId: string, projectId?: string | null) => void;
   onOpenAgentSessionTerminal: (agentId: string) => void;
   supportsAgentTerminal?: boolean;
 }
 
-export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = null, onOpenAgentSession, onOpenAgentSessionTerminal, supportsAgentTerminal = false }: AgentsPageProps) {
+export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = null, referenceTasks = [], referenceSessions = [], onOpenAgentSession, onOpenLinkedSession, onOpenTask, onOpenAgentSessionTerminal, supportsAgentTerminal = false }: AgentsPageProps) {
   const [agentSnapshots, setAgentSnapshots] = useState<AgentOperationsSnapshot[]>([]);
   const [roleSnapshots, setRoleSnapshots] = useState<RoleOperationsSnapshot[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<{ type: "role" | "agent"; id: string } | null>(null);
@@ -53,6 +60,10 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
 
   const globalAgentSnapshots = useMemo(() => agentSnapshots.filter((snapshot) => snapshot.agent.scope === "global"), [agentSnapshots]);
   const projectAgentSnapshots = useMemo(() => agentSnapshots.filter((snapshot) => snapshot.agent.scope === "project"), [agentSnapshots]);
+  const entityLookup = useMemo(
+    () => buildEntityReferenceLookup({ tasks: referenceTasks, sessions: referenceSessions }),
+    [referenceSessions, referenceTasks],
+  );
 
   async function loadRoleDetail(roleId: string) {
     setLoading(true);
@@ -266,8 +277,10 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
         {selectedWorker?.type === "role" && selectedRoleDetail ? (
           <RoleOperationsDetail
             detail={selectedRoleDetail}
+            sessionLookup={entityLookup.sessions}
             busy={busy}
             onDispatch={() => runBusyAction(async () => refreshSelectedRole((await dispatchRoleQueue(selectedRoleDetail.role.id)).role.id))}
+            onOpenLinkedSession={onOpenLinkedSession}
             onEnqueue={(input) =>
               runBusyAction(async () => {
                 await enqueueRoleWork({
@@ -343,6 +356,8 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
           <AgentOperationsDetail
             busy={busy}
             detail={selectedAgentDetail}
+            sessionLookup={entityLookup.sessions}
+            taskLookup={entityLookup.tasks}
             onDeleteQueuedEntry={(entry) =>
               runBusyAction(async () => {
                 if (entry.sourceType === "workflow_lane" && entry.sourceTaskId) {
@@ -366,8 +381,10 @@ export function AgentsPage({ activeProjectId = null, selectedWorkerRequest = nul
                 await refreshSelectedAgent(selectedAgentDetail.agent.id);
               })
             }
-            onOpenSession={onOpenAgentSession}
+            onOpenAgentSession={onOpenAgentSession}
+            onOpenLinkedSession={onOpenLinkedSession}
             onOpenSessionTerminal={onOpenAgentSessionTerminal}
+            onOpenTask={onOpenTask}
             supportsTerminal={supportsAgentTerminal}
           />
         ) : (

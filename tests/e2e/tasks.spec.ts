@@ -3337,6 +3337,26 @@ test("task detail only shows session navigation when the task has an active sess
     window.localStorage.clear();
     const timestamp = new Date().toISOString();
     window.localStorage.setItem(
+      "orchestra.mock.roles",
+      JSON.stringify([
+        {
+          id: "developer",
+          slug: "developer",
+          name: "Developer",
+          description: "Default developer role",
+          provider: null,
+          model: null,
+          thinkingLevel: "medium",
+          capacity: 1,
+          policyIds: [],
+          directPermissions: [],
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
       "orchestra.mock.tasks",
       JSON.stringify([
         {
@@ -3378,7 +3398,19 @@ test("task detail only shows session navigation when the task has an active sess
           fileReferences: [],
           comments: [],
           todos: [],
-          laneRuns: [],
+          laneRuns: [
+            {
+              id: "lane-run-session-linked",
+              taskId: "task-session-linked",
+              laneId: "lane-implementation",
+              sessionId: "session-task-linked",
+              sessionTitle: "Active task session",
+              result: "success",
+              notes: "Finished the implementation handoff.",
+              startedAt: timestamp,
+              completedAt: timestamp,
+            },
+          ],
           activeLaneAssignment: {
             id: "assignment-session-linked",
             taskId: "task-session-linked",
@@ -3386,8 +3418,10 @@ test("task detail only shows session navigation when the task has an active sess
             laneId: "lane-implementation",
             workerType: "role",
             workerId: "developer",
+            workerName: "Developer",
             status: "active",
             sessionId: "session-task-linked",
+            sessionTitle: "Active task session",
             runtimeCwd: "/tmp/orchestra/task-session-linked",
             roleQueueEntryId: null,
             roleInstanceId: null,
@@ -3483,8 +3517,11 @@ test("task detail only shows session navigation when the task has an active sess
     testWindow.__orchestraTestOpenTaskDetail?.("task-session-linked");
   });
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task with active session");
+  await page.locator('[data-role="task-detail-tab-runtime"]').click();
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("session-task-linked");
+  await expect(page.locator('[data-role="task-runtime-session-link"]')).toBeVisible();
   await expect(page.locator('[data-role="task-open-session"]')).toBeVisible();
-  await page.locator('[data-role="task-open-session"]').click();
+  await page.locator('[data-role="task-runtime-session-link"]').click();
   await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", "session-task-linked");
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Active task session");
 

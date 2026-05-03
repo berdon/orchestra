@@ -5851,6 +5851,9 @@ export function App() {
                     canManageSystemNotifications={canManageSystemNotifications}
                     canOpenLogsWindow={canOpenLogsWindow}
                     bridgeDiagnostics={bridgeDiagnostics}
+                    referenceSessions={sessions}
+                    referenceAgents={referenceAgents}
+                    referenceRoles={referenceRoles}
                     localNotificationsEnabled={localNotificationsEnabled}
                     systemNotificationEnvironment={
                       systemNotificationEnvironment
@@ -5887,6 +5890,9 @@ export function App() {
                     onCleanupStaleBridges={() =>
                       void handleCleanupStaleBridges()
                     }
+                    onOpenSession={navigateToSession}
+                    onOpenAgent={navigateToAgent}
+                    onOpenRole={navigateToRole}
                     onOpenLogsWindow={() => void handleOpenLogsWindow()}
                     onOpenPromptingSettings={() => setSettingsTab("prompting")}
                     onToggleLocalNotificationsEnabled={
@@ -5919,9 +5925,13 @@ export function App() {
                 <AgentsPage
                   key={activeProject?.id ?? "default"}
                   activeProjectId={activeProject?.id ?? null}
+                  referenceTasks={referenceTasks}
+                  referenceSessions={sessions}
                   onOpenAgentSession={(agentId) =>
                     void handleOpenAgentSession(agentId)
                   }
+                  onOpenLinkedSession={navigateToSession}
+                  onOpenTask={navigateToTask}
                   onOpenAgentSessionTerminal={(agentId) =>
                     void handleOpenAgentSessionTerminal(agentId)
                   }
@@ -6131,6 +6141,7 @@ export function App() {
                   key={activeProject?.id ?? "default"}
                   openTaskRequest={tasksOpenRequest}
                   projectId={activeProject?.id ?? null}
+                  referenceSessions={sessions}
                   taskOverviewState={taskOverviewState}
                   tasksOverviewToken={tasksOverviewToken}
                   onTaskOverviewStateChange={setTaskOverviewState}

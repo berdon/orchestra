@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
+import { TaskReferenceLink } from "../components/entity-links";
 import { filterInboxMessages, getArchivableInboxMessages, type InboxMailFilter } from "../lib/inboxMessages";
 import { reportUiError } from "../lib/orchestraData/errors";
 import { useInboxData } from "../lib/orchestraData/inbox";
@@ -309,9 +310,15 @@ export function InboxPage({ projectId = null, onOpenTask }: InboxPageProps) {
                   </div>
                 </div>
                 {message.taskId ? (
-                  <button className="text-button" data-role={`open-inbox-task-${message.taskId}`} type="button" onClick={() => onOpenTask(message.taskId!)}>
-                    {message.taskNumber ?? message.taskId} · {message.taskTitle ?? "Open related task"}
-                  </button>
+                  <TaskReferenceLink
+                    className="entity-reference--stacked"
+                    dataRole={`open-inbox-task-${message.taskId}`}
+                    onOpenTask={onOpenTask}
+                    rawIdMode="secondary"
+                    taskId={message.taskId}
+                    taskNumber={message.taskNumber ?? null}
+                    taskTitle={message.taskTitle ?? "Open related task"}
+                  />
                 ) : null}
                 <p className="pre-wrap" data-role="inbox-message-body">{message.body}</p>
               </article>

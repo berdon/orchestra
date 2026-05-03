@@ -1,8 +1,11 @@
+import { useMemo } from "react";
+
+import { AgentReferenceLink, RoleReferenceLink, SessionReferenceLink, buildEntityReferenceLookup } from "../components/entity-links";
 import { RuntimeLogPanel } from "../components/RuntimeLogPanel";
 import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { OrchestraThemeDefinition, OrchestraThemeId } from "../lib/theme";
-import type { BridgeDiagnostics, LogEntry, SystemNotificationEnvironmentStatus, SystemNotificationPermissionState } from "../types";
+import type { AgentSummary, BridgeDiagnostics, LogEntry, RoleSummary, SessionRecord, SystemNotificationEnvironmentStatus, SystemNotificationPermissionState } from "../types";
 
 interface GeneralPanelProps {
   availableThemes: readonly OrchestraThemeDefinition[];
@@ -12,6 +15,9 @@ interface GeneralPanelProps {
   canManageSystemNotifications: boolean;
   canOpenLogsWindow: boolean;
   bridgeDiagnostics: BridgeDiagnostics | null;
+  referenceSessions?: SessionRecord[];
+  referenceAgents?: AgentSummary[];
+  referenceRoles?: RoleSummary[];
   localNotificationsEnabled: boolean;
   systemNotificationEnvironment: SystemNotificationEnvironmentStatus | null;
   systemNotificationPermission: SystemNotificationPermissionState;
@@ -32,6 +38,9 @@ interface GeneralPanelProps {
   onToggleExplanatoryTooltips: (nextEnabled: boolean) => void;
   onRefreshBridgeDiagnostics: () => void;
   onCleanupStaleBridges: () => void;
+  onOpenSession: (sessionId: string, projectId?: string | null) => void;
+  onOpenAgent: (agentId: string) => void;
+  onOpenRole: (roleId: string) => void;
   onOpenLogsWindow: () => void;
   onOpenPromptingSettings: () => void;
   onToggleLocalNotificationsEnabled: (nextEnabled: boolean) => void;
@@ -76,6 +85,9 @@ export function GeneralPanel({
   canManageSystemNotifications,
   canOpenLogsWindow,
   bridgeDiagnostics,
+  referenceSessions = [],
+  referenceAgents = [],
+  referenceRoles = [],
   localNotificationsEnabled,
   systemNotificationEnvironment,
   systemNotificationPermission,
@@ -96,6 +108,9 @@ export function GeneralPanel({
   onToggleExplanatoryTooltips,
   onRefreshBridgeDiagnostics,
   onCleanupStaleBridges,
+  onOpenSession,
+  onOpenAgent,
+  onOpenRole,
   onOpenLogsWindow,
   onOpenPromptingSettings,
   onToggleLocalNotificationsEnabled,
@@ -108,6 +123,10 @@ export function GeneralPanel({
   onClearLogs,
 }: GeneralPanelProps) {
   const selectedTheme = availableThemes.find((theme) => theme.id === selectedThemeId) ?? availableThemes[0] ?? null;
+  const entityLookup = useMemo(
+    () => buildEntityReferenceLookup({ sessions: referenceSessions, agents: referenceAgents, roles: referenceRoles }),
+    [referenceAgents, referenceRoles, referenceSessions],
+  );
   const getTooltipProps = useExplanatoryTooltipProps();
   return (
     <SettingsSectionTabs
@@ -341,8 +360,34 @@ export function GeneralPanel({
                               {bridgeDiagnostics.clients.map((client) => (
                                 <tr key={client.clientId} data-role="bridge-client-row">
                                   <td>{client.clientId}</td>
-                                  <td>{client.sessionId ?? "—"}</td>
-                                  <td>{client.actorType && client.actorId ? `${client.actorType}:${client.actorId}` : "—"}</td>
+                                  <td>
+                                    <SessionReferenceLink
+                                      lookup={entityLookup.sessions}
+                                      onOpenSession={onOpenSession}
+                                      rawIdMode="secondary"
+                                      sessionId={client.sessionId ?? null}
+                                      sessionTitle={client.sessionTitle ?? null}
+                                    />
+                                  </td>
+                                  <td>
+                                    {client.actorType === "agent" && client.actorId ? (
+                                      <AgentReferenceLink
+                                        agentId={client.actorId}
+                                        agentName={client.actorLabel ?? null}
+                                        lookup={entityLookup.agents}
+                                        onOpenAgent={onOpenAgent}
+                                        rawIdMode="secondary"
+                                      />
+                                    ) : client.actorType === "role" && client.actorId ? (
+                                      <RoleReferenceLink
+                                        lookup={entityLookup.roles}
+                                        onOpenRole={onOpenRole}
+                                        rawIdMode="secondary"
+                                        roleId={client.actorId}
+                                        roleName={client.actorLabel ?? null}
+                                      />
+                                    ) : "—"}
+                                  </td>
                                   <td>{client.lastCommand ?? "—"}</td>
                                   <td>{client.inFlightRequestCount}</td>
                                   <td>{formatDateTime(client.lastSeenAt)}</td>
@@ -377,7 +422,15 @@ export function GeneralPanel({
                               {bridgeDiagnostics.recentRequests.map((request) => (
                                 <tr key={request.requestId} data-role="bridge-request-row">
                                   <td>{request.command}</td>
-                                  <td>{request.sessionId ?? "—"}</td>
+                                  <td>
+                                    <SessionReferenceLink
+                                      lookup={entityLookup.sessions}
+                                      onOpenSession={onOpenSession}
+                                      rawIdMode="secondary"
+                                      sessionId={request.sessionId ?? null}
+                                      sessionTitle={request.sessionTitle ?? null}
+                                    />
+                                  </td>
                                   <td>{formatDateTime(request.startedAt)}</td>
                                   <td>{request.durationMs ?? "—"}</td>
                                   <td>{request.success ? "success" : request.error ?? "error"}</td>

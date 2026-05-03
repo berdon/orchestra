@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { TaskActionMenuAction } from "../components/TaskActionMenu";
 import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
@@ -13,6 +13,7 @@ import type {
   MailboxMessage,
   RepositoryRecord,
   RoleSummary,
+  SessionRecord,
   TaskCommentInput,
   TaskDetail,
   TaskFileReferenceInput,
@@ -24,6 +25,7 @@ import type {
   WorkflowDefinition,
   WorkflowSummary,
 } from "../types";
+import { SessionReferenceLink, buildEntityReferenceLookup } from "../components/entity-links";
 import { TaskCreatePage } from "./tasks/TaskCreatePage";
 import { TaskDetailPage } from "./tasks/TaskDetailPage";
 import { TaskScheduleDetailPage } from "./tasks/TaskScheduleDetailPage";
@@ -138,7 +140,7 @@ interface TaskTimelineItem {
   id: string;
   kind: "comment" | "attachment" | "file_reference" | "lane_run" | "dependency_in" | "dependency_out";
   title: string;
-  description: string;
+  description: ReactNode;
   timestamp: string;
   tone: "neutral" | "warning" | "success" | "error";
 }
@@ -168,6 +170,7 @@ interface TasksPageProps {
   onOpenAgent?: (agentId: string) => void;
   onOpenRole?: (roleId: string) => void;
   onOpenSession?: (sessionId: string, projectId?: string | null) => void;
+  referenceSessions?: SessionRecord[];
   onMobileHeaderContextChange?: (context: TasksMobileHeaderContext | null) => void;
   showCreateFab?: boolean;
 }
@@ -193,6 +196,7 @@ export function TasksPage({
   onOpenAgent,
   onOpenRole,
   onOpenSession,
+  referenceSessions = [],
   onMobileHeaderContextChange,
   showCreateFab = true,
 }: TasksPageProps) {
@@ -278,6 +282,10 @@ export function TasksPage({
     () => getVisibleTaskBoardTags(boardModel, taskOverviewState.boardFilter === "done"),
     [boardModel, taskOverviewState.boardFilter],
   );
+  const entityLookup = useMemo(
+    () => buildEntityReferenceLookup({ tasks, sessions: referenceSessions, agents, roles }),
+    [agents, referenceSessions, roles, tasks],
+  );
 
   const attentionTasks = useMemo(
     () => tagScopedTasks.filter((task) => task.status === "in_review" || task.status === "blocked" || task.dependencyBlocked),
@@ -337,7 +345,19 @@ export function TasksPage({
       id: `lane-run-${laneRun.id}`,
       kind: "lane_run",
       title: `Lane ${laneRun.laneId} ${laneRun.completedAt ? "completed" : "started"}`,
-      description: `${laneRun.result.replace(/_/g, " ")} · session ${laneRun.sessionId}`,
+      description: (
+        <span>
+          {laneRun.result.replace(/_/g, " ")} · {" "}
+          <SessionReferenceLink
+            lookup={entityLookup.sessions}
+            onOpenSession={onOpenSession ?? null}
+            projectId={taskDetail.projectId}
+            rawIdMode="secondary"
+            sessionId={laneRun.sessionId}
+            sessionTitle={laneRun.sessionTitle ?? null}
+          />
+        </span>
+      ),
       timestamp: laneRun.completedAt ?? laneRun.startedAt,
       tone: laneRun.result === "success" ? "success" : laneRun.result === "failure" ? "error" : "neutral",
     }));
@@ -363,7 +383,7 @@ export function TasksPage({
     return [...comments, ...attachments, ...fileReferences, ...laneRuns, ...blockedBy, ...blocking].sort(
       (left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp),
     );
-  }, [taskDetail]);
+  }, [entityLookup.sessions, onOpenSession, taskDetail]);
 
   const dependencyTree = useMemo<TaskDependencyTreeNode | null>(() => {
     if (!taskDetail) {
@@ -1574,6 +1594,7 @@ export function TasksPage({
           onOpenTask={openTaskDetail}
           onSave={() => void handleSaveTaskScheduleDetail()}
           onEditingStateChange={setTaskScheduleEditing}
+          taskLookup={entityLookup.tasks}
           repositories={repositories}
           roles={roles}
           saving={savingTask}
@@ -1622,6 +1643,7 @@ export function TasksPage({
             onOpenSession={onOpenSession ?? (() => {})}
             onOpenAgent={onOpenAgent ?? (() => {})}
             onOpenRole={onOpenRole ?? (() => {})}
+            entityLookup={entityLookup}
             onPublish={() => void handlePublishDetailTask()}
             onUpdateComment={(commentId, message) => handleUpdateComment(commentId, message)}
             onRemoveAttachment={(attachmentId) => void handleRemoveAttachment(attachmentId)}

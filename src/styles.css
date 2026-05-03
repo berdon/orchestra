@@ -3240,6 +3240,52 @@ strong {
   margin: 0;
 }
 
+.entity-reference {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.entity-reference--stacked {
+  display: inline-grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.entity-reference__link,
+.entity-reference__label,
+.entity-reference__prefix {
+  font: inherit;
+}
+
+.entity-reference__link {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+.entity-reference__link:hover {
+  color: color-mix(in srgb, var(--accent) 80%, white 20%);
+}
+
+.entity-reference__raw-id {
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
+  color: var(--text-muted);
+  font-size: 0.82em;
+}
+
+.entity-reference__prefix {
+  color: var(--text-muted);
+}
+
 .workforce-form,
 .workforce-agent-group {
   align-content: start;
@@ -4783,6 +4829,11 @@ strong {
   border: 0;
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-subtle) 72%, transparent);
+}
+
+.task-activity-copy {
+  display: grid;
+  gap: 6px;
 }
 
 .task-comment-composer,

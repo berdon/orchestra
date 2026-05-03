@@ -271,6 +271,175 @@ test("agents page deletes queued work items from a role queue", async ({ page })
   expect(storedQueue).toHaveLength(0);
 });
 
+test("agents page shows linked task and session labels in agent operations", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const now = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.agents",
+      JSON.stringify([
+        {
+          id: "agent-linked-ops",
+          slug: "linked-ops",
+          name: "Linked Ops",
+          description: "Agent with active linked work.",
+          systemPrompt: null,
+          provider: null,
+          model: null,
+          roleId: null,
+          scope: "project",
+          projectId: "orchestra",
+          thinkingLevel: "medium",
+          compactionWindow: null,
+          policyIds: [],
+          directPermissions: [],
+          system: false,
+          immutable: false,
+          archived: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-agent-linked",
+          projectId: "orchestra",
+          number: "ORC-777",
+          title: "Agent linked task",
+          description: null,
+          type: "task",
+          status: "in_progress",
+          priority: "P2",
+          workflowId: null,
+          currentLaneId: null,
+          assigneeType: "agent",
+          assigneeId: "agent-linked-ops",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          unreadCommentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: null,
+          tags: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-agent-linked",
+          title: "Agent workflow session",
+          status: "active",
+          createdAt: now,
+          updatedAt: now,
+          subscribed: false,
+          events: [],
+          taskId: "task-agent-linked",
+          taskProjectId: "orchestra",
+          taskNumber: "ORC-777",
+          taskTitle: "Agent linked task",
+          activeTaskId: "task-agent-linked",
+          activeTaskProjectId: "orchestra",
+          activeTaskNumber: "ORC-777",
+          activeTaskTitle: "Agent linked task",
+          workerType: "agent",
+          workerName: "Linked Ops",
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.agent-runtimes",
+      JSON.stringify([
+        {
+          projectId: "orchestra",
+          agentId: "agent-linked-ops",
+          status: "running",
+          mainSessionId: "session-agent-linked",
+          mainSessionTitle: "Agent workflow session",
+          runtimeCwd: "/tmp/agent-linked",
+          currentQueueEntryId: "agent-queue-linked",
+          lastDispatchAt: now,
+          lastError: null,
+          terminalAttached: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.agent-queue",
+      JSON.stringify([
+        {
+          id: "agent-queue-linked",
+          projectId: "orchestra",
+          agentId: "agent-linked-ops",
+          status: "dispatched",
+          sourceType: "workflow_lane",
+          sourceTaskId: "task-agent-linked",
+          sourceTaskNumber: "ORC-777",
+          sourceTaskTitle: "Agent linked task",
+          sourceWorkflowId: "workflow-linked",
+          sourceLaneId: "lane-linked",
+          deliveryMode: "prompt",
+          title: "Do linked work",
+          message: "Finish the linked task from the queue.",
+          sessionId: "session-agent-linked",
+          sessionTitle: "Agent workflow session",
+          runId: "run-linked",
+          dispatchedAt: now,
+          completedAt: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("link", { name: /Linked Ops/i }).click();
+
+  await expect(page.locator(".workforce-detail-stack")).toContainText("Agent workflow session");
+  await expect(page.locator(".workforce-detail-stack")).toContainText("ORC-777 · Agent linked task");
+  await expect(page.locator(".workforce-detail-stack")).toContainText("session-agent-linked");
+
+  await page.getByRole("button", { name: "Agent workflow session" }).first().click();
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Agent workflow session");
+
+  await page.getByRole("button", { name: "Agents" }).click();
+  await page.getByRole("link", { name: /Linked Ops/i }).click();
+  await page.getByRole("button", { name: /ORC-777 · Agent linked task/ }).click();
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Agent linked task");
+});
+
 test("agents page can cancel active agent workflow work without requeueing", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

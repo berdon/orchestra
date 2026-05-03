@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 
+import { SessionReferenceLink, type SessionReferenceEntry } from "../components/entity-links";
 import { EnqueueRoleWorkForm } from "./EnqueueRoleWorkForm";
 import type { RoleOperationsDetail } from "../types";
 
@@ -7,8 +8,10 @@ type RoleWorkFilter = "queued" | "active" | "completed";
 
 interface RoleOperationsDetailProps {
   detail: RoleOperationsDetail;
+  sessionLookup?: Map<string, SessionReferenceEntry>;
   busy?: boolean;
   onDispatch: () => Promise<void>;
+  onOpenLinkedSession: (sessionId: string, projectId?: string | null) => void;
   onEnqueue: (input: { title: string; summary: string; entryPrompt: string }) => Promise<void>;
   onDeleteQueuedEntry: (entry: RoleOperationsDetail["queueEntries"][number]) => Promise<void>;
   onCancelActiveEntry: (entry: RoleOperationsDetail["queueEntries"][number], requeue: boolean) => Promise<void>;
@@ -30,7 +33,7 @@ function formatDateTime(timestamp?: string | null) {
   });
 }
 
-export function RoleOperationsDetail({ detail, busy, onDispatch, onEnqueue, onDeleteQueuedEntry, onCancelActiveEntry, onRelease, onResetAssignments, onDispose }: RoleOperationsDetailProps) {
+export function RoleOperationsDetail({ detail, sessionLookup, busy, onDispatch, onOpenLinkedSession, onEnqueue, onDeleteQueuedEntry, onCancelActiveEntry, onRelease, onResetAssignments, onDispose }: RoleOperationsDetailProps) {
   const [workFilter, setWorkFilter] = useState<RoleWorkFilter>("active");
   const filteredQueueEntries = useMemo(() => {
     switch (workFilter) {
@@ -193,7 +196,7 @@ export function RoleOperationsDetail({ detail, busy, onDispatch, onEnqueue, onDe
               <div className="workflow-section__header">
                 <div>
                   <strong>{instance.displayName}</strong>
-                  <p>{instance.id}</p>
+                  <p className="muted-copy">{instance.id}</p>
                 </div>
                 <span className={`status-badge status-badge--${instance.status === "running" ? "success" : instance.status === "failed" ? "error" : "neutral"}`}>
                   {instance.status}
@@ -201,7 +204,16 @@ export function RoleOperationsDetail({ detail, busy, onDispatch, onEnqueue, onDe
               </div>
 
               <div className="workforce-meta-grid muted-copy">
-                <span>Session: {instance.sessionId ?? "—"}</span>
+                <span>
+                  Session:{" "}
+                  <SessionReferenceLink
+                    lookup={sessionLookup}
+                    onOpenSession={onOpenLinkedSession}
+                    rawIdMode="secondary"
+                    sessionId={instance.sessionId ?? null}
+                    sessionTitle={instance.sessionTitle ?? null}
+                  />
+                </span>
                 <span>Current work: {instance.currentQueueEntryId ?? "—"}</span>
                 <span>Worktree: {instance.worktreePath ?? "—"}</span>
                 <span>Updated: {formatDateTime(instance.updatedAt)}</span>

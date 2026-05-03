@@ -1,13 +1,18 @@
 import { useMemo, useState } from "react";
 
+import { SessionReferenceLink, TaskReferenceLink, type SessionReferenceEntry, type TaskReferenceEntry } from "../components/entity-links";
 import type { AgentOperationsDetail } from "../types";
 
 type AgentWorkFilter = "queued" | "active" | "completed";
 
 interface AgentOperationsDetailProps {
   detail: AgentOperationsDetail;
-  onOpenSession: (agentId: string) => void;
+  taskLookup?: Map<string, TaskReferenceEntry>;
+  sessionLookup?: Map<string, SessionReferenceEntry>;
+  onOpenAgentSession: (agentId: string) => void;
+  onOpenLinkedSession: (sessionId: string, projectId?: string | null) => void;
   onOpenSessionTerminal: (agentId: string) => void;
+  onOpenTask: (taskId: string, projectId?: string | null) => void;
   onDeleteQueuedEntry: (entry: AgentOperationsDetail["queueEntries"][number]) => void;
   onCancelActiveWorkflowEntry: (entry: AgentOperationsDetail["queueEntries"][number], requeue: boolean) => void;
   supportsTerminal?: boolean;
@@ -27,7 +32,7 @@ function formatDateTime(timestamp?: string | null) {
   });
 }
 
-export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerminal, onDeleteQueuedEntry, onCancelActiveWorkflowEntry, supportsTerminal = false, busy = false }: AgentOperationsDetailProps) {
+export function AgentOperationsDetail({ detail, taskLookup, sessionLookup, onOpenAgentSession, onOpenLinkedSession, onOpenSessionTerminal, onOpenTask, onDeleteQueuedEntry, onCancelActiveWorkflowEntry, supportsTerminal = false, busy = false }: AgentOperationsDetailProps) {
   const [workFilter, setWorkFilter] = useState<AgentWorkFilter>("active");
   const filteredQueueEntries = useMemo(() => {
     switch (workFilter) {
@@ -57,7 +62,7 @@ export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerm
               className="primary-button"
               data-role="open-agent-session"
               type="button"
-              onClick={() => onOpenSession(detail.agent.id)}
+              onClick={() => onOpenAgentSession(detail.agent.id)}
             >
               {detail.runtimeState.mainSessionId ? "Open session" : "Launch session"}
             </button>
@@ -90,7 +95,15 @@ export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerm
           </article>
           <article className="metric-card">
             <span className="metric-card__label">Session</span>
-            <strong>{detail.runtimeState.mainSessionId ?? "—"}</strong>
+            <strong>
+              <SessionReferenceLink
+                lookup={sessionLookup}
+                onOpenSession={onOpenLinkedSession}
+                rawIdMode="secondary"
+                sessionId={detail.runtimeState.mainSessionId ?? null}
+                sessionTitle={detail.runtimeState.mainSessionTitle ?? null}
+              />
+            </strong>
           </article>
           <article className="metric-card">
             <span className="metric-card__label">Runtime cwd</span>
@@ -157,8 +170,27 @@ export function AgentOperationsDetail({ detail, onOpenSession, onOpenSessionTerm
               <div className="workforce-meta-grid muted-copy">
                 <span>Source: {entry.sourceType}</span>
                 <span>Delivery: {entry.deliveryMode}</span>
-                <span>Task: {entry.sourceTaskId ?? "—"}</span>
-                <span>Session: {entry.sessionId ?? "—"}</span>
+                <span>
+                  Task:{" "}
+                  <TaskReferenceLink
+                    lookup={taskLookup}
+                    onOpenTask={onOpenTask}
+                    rawIdMode="secondary"
+                    taskId={entry.sourceTaskId ?? null}
+                    taskNumber={entry.sourceTaskNumber ?? null}
+                    taskTitle={entry.sourceTaskTitle ?? null}
+                  />
+                </span>
+                <span>
+                  Session:{" "}
+                  <SessionReferenceLink
+                    lookup={sessionLookup}
+                    onOpenSession={onOpenLinkedSession}
+                    rawIdMode="secondary"
+                    sessionId={entry.sessionId ?? null}
+                    sessionTitle={entry.sessionTitle ?? null}
+                  />
+                </span>
                 <span>Run: {entry.runId ?? "—"}</span>
                 <span>Created: {formatDateTime(entry.createdAt)}</span>
               </div>

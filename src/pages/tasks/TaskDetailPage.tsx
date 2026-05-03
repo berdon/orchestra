@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import hljs from "highlight.js";
 import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
@@ -6,6 +6,7 @@ import { useTaskFileContent } from "../../lib/orchestraData/tasks";
 import { buildTaskCommentThreads, sortTaskCommentThreadsByLatestActivityDesc } from "../../lib/taskCommentThreads";
 import { useExplanatoryTooltipProps } from "../../lib/tooltips";
 import { shouldShowUnreadCommentAttention } from "../../lib/taskUnreadCommentVisibility";
+import { AgentReferenceLink, RoleReferenceLink, SessionReferenceLink, TaskReferenceLink, WorkerReferenceLink, type EntityReferenceLookup } from "../../components/entity-links";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
 import { MarkdownContent } from "../../components/MarkdownContent";
@@ -21,7 +22,7 @@ interface TaskTimelineItem {
   id: string;
   kind: "comment" | "attachment" | "file_reference" | "lane_run" | "dependency_in" | "dependency_out";
   title: string;
-  description: string;
+  description: ReactNode;
   timestamp: string;
   tone: "neutral" | "warning" | "success" | "error";
 }
@@ -77,6 +78,7 @@ interface TaskDetailPageProps {
   repositories: RepositoryRecord[];
   taskMessages: MailboxMessage[];
   timelineItems: TaskTimelineItem[];
+  entityLookup: EntityReferenceLookup;
   dependencyCandidates: Array<{ id: string; number: string; title: string }>;
   selectedBlockerTaskId: string;
   saving: boolean;
@@ -493,6 +495,12 @@ interface FloatingTaskChromeLayout {
   top: number;
 }
 
+function renderTimelineDescription(description: ReactNode) {
+  return typeof description === "string"
+    ? <p className="pre-wrap">{description}</p>
+    : <div className="task-activity-copy">{description}</div>;
+}
+
 export function TaskDetailPage({
   task,
   draft,
@@ -509,6 +517,7 @@ export function TaskDetailPage({
   repositories,
   taskMessages,
   timelineItems,
+  entityLookup,
   dependencyCandidates,
   selectedBlockerTaskId,
   saving,
@@ -1201,14 +1210,38 @@ export function TaskDetailPage({
             {task.activeLaneAssignment ? (
               <div className="task-runtime-card" data-role="task-runtime-assignment">
                 <div className="workflow-section__header">
-                  <strong>{task.activeLaneAssignment.workerType} · {task.activeLaneAssignment.workerId ?? "unassigned"}</strong>
+                  <strong>
+                    <WorkerReferenceLink
+                      agentLookup={entityLookup.agents}
+                      layout="inline"
+                      onOpenAgent={onOpenAgent}
+                      onOpenRole={onOpenRole}
+                      rawIdMode="secondary"
+                      roleLookup={entityLookup.roles}
+                      workerId={task.activeLaneAssignment.workerId ?? null}
+                      workerName={task.activeLaneAssignment.workerName ?? null}
+                      workerType={task.activeLaneAssignment.workerType}
+                    />
+                  </strong>
                   <span className={`status-badge status-badge--${effectiveActiveLaneAssignmentStatus === "active" ? "success" : effectiveActiveLaneAssignmentStatus === "queued" ? "warning" : "neutral"}`}>
                     {effectiveActiveLaneAssignmentStatus ?? task.activeLaneAssignment.status}
                   </span>
                 </div>
                 <div className="workforce-meta-grid muted-copy">
                   <span>Lane: {task.activeLaneAssignment.laneId}</span>
-                  <span>Session: {task.activeLaneAssignment.sessionId ?? "—"}</span>
+                  <span>
+                    Session:{" "}
+                    <SessionReferenceLink
+                      dataRole="task-runtime-session-link"
+                      layout="inline"
+                      lookup={entityLookup.sessions}
+                      onOpenSession={onOpenSession}
+                      projectId={task.projectId}
+                      rawIdMode="secondary"
+                      sessionId={task.activeLaneAssignment.sessionId ?? null}
+                      sessionTitle={task.activeLaneAssignment.sessionTitle ?? null}
+                    />
+                  </span>
                   <span>Runtime cwd: {task.activeLaneAssignment.runtimeCwd ?? "—"}</span>
                   <span>Whips: {task.activeLaneAssignment.whipCount ?? 0} / {task.whipMaxAttempts ?? 10}</span>
                   <span>Last whip: {task.activeLaneAssignment.lastWhipAt ?? "—"}</span>
@@ -1774,7 +1807,7 @@ export function TaskDetailPage({
                       <strong>{item.title}</strong>
                       <span className={`status-badge status-badge--${item.tone}`}>{item.kind.replace(/_/g, " ")}</span>
                     </div>
-                    <p>{item.description}</p>
+                    {renderTimelineDescription(item.description)}
                     <p className="muted-copy">{new Date(item.timestamp).toLocaleString()}</p>
                   </article>
                 ))}
@@ -1802,7 +1835,18 @@ export function TaskDetailPage({
                         {laneRun.result.replace(/_/g, " ")}
                       </span>
                     </div>
-                    <p className="muted-copy">Session {laneRun.sessionId}</p>
+                    <p className="muted-copy">
+                      Session{" "}
+                      <SessionReferenceLink
+                        dataRole={`task-lane-history-session-${laneRun.id}`}
+                        lookup={entityLookup.sessions}
+                        onOpenSession={onOpenSession}
+                        projectId={task.projectId}
+                        rawIdMode="secondary"
+                        sessionId={laneRun.sessionId}
+                        sessionTitle={laneRun.sessionTitle ?? null}
+                      />
+                    </p>
                     {laneRun.notes ? <p>{laneRun.notes}</p> : null}
                   </article>
                 ))}
@@ -2188,7 +2232,7 @@ export function TaskDetailPage({
                         <strong>{item.title}</strong>
                         <span className={`status-badge status-badge--${item.tone}`}>{item.kind.replace(/_/g, " ")}</span>
                       </div>
-                      <p>{item.description}</p>
+                      {renderTimelineDescription(item.description)}
                       <p className="muted-copy">{new Date(item.timestamp).toLocaleString()}</p>
                     </article>
                   ))}
