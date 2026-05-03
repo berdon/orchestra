@@ -27,9 +27,17 @@ test("github landing page exposes the required product story and public CTAs", a
     await expect(page.getByText(copy, { exact: true }).first()).toBeVisible();
   }
 
+  await expect(page.locator('[data-role="github-workflow-gallery"]')).toBeVisible();
+  await expect(page.locator('[data-role="github-workflow-gallery-image"]')).toHaveCount(3);
+  await expect(page.getByText("See how work moves from lane definition to task execution")).toBeVisible();
   await expect(page.locator('[data-role="github-proof-grid"] img')).toHaveCount(7);
-  await expect(page.getByText("Real product surfaces, not invented mockups")).toBeVisible();
   await expect(page.getByText("Completely customizable kanban-style flows")).toBeVisible();
+
+  const activeBefore = await page.locator('[data-role="github-workflow-gallery-image"][data-active="true"]').first().getAttribute("alt");
+  await expect.poll(
+    async () => page.locator('[data-role="github-workflow-gallery-image"][data-active="true"]').first().getAttribute("alt"),
+    { timeout: 5000 },
+  ).not.toBe(activeBefore);
 });
 
 test("github landing page stays within the mobile viewport", async ({ page }) => {

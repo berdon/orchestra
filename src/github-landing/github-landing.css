@@ -395,6 +395,82 @@ a {
   padding-top: 2rem;
 }
 
+.github-workflow-gallery {
+  display: grid;
+  grid-template-columns: minmax(0, 1.28fr) minmax(18rem, 0.72fr);
+  gap: 1.2rem;
+  align-items: stretch;
+  margin-bottom: 1.35rem;
+}
+
+.github-workflow-gallery__frame,
+.github-workflow-gallery__copy {
+  min-width: 0;
+  border: 1px solid var(--github-border-strong);
+  border-radius: var(--github-radius-lg);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015));
+}
+
+.github-workflow-gallery__frame {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+}
+
+.github-workflow-gallery__image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  opacity: 0;
+  transition: opacity 280ms ease;
+}
+
+.github-workflow-gallery__image[data-active="true"] {
+  opacity: 1;
+}
+
+.github-workflow-gallery__copy {
+  display: grid;
+  align-content: start;
+  gap: 0.9rem;
+  padding: 1.15rem 1.15rem 1.2rem;
+}
+
+.github-workflow-gallery__copy h3 {
+  margin: 0;
+  font-size: clamp(1.4rem, 2.1vw, 2rem);
+  letter-spacing: -0.03em;
+  line-height: 1.06;
+}
+
+.github-workflow-gallery__copy p:last-of-type {
+  margin: 0;
+}
+
+.github-workflow-gallery__dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.25rem;
+}
+
+.github-workflow-gallery__dot {
+  width: 0.8rem;
+  height: 0.8rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.github-workflow-gallery__dot--active {
+  background: var(--github-accent);
+  box-shadow: 0 0 0 4px rgba(75, 153, 255, 0.16);
+}
+
 .github-section-heading {
   max-width: 48rem;
   margin-bottom: 1.4rem;
@@ -409,6 +485,10 @@ a {
 
 .github-section-heading--compact {
   margin-bottom: 1rem;
+}
+
+.github-section-heading--post-gallery {
+  margin-top: 1.55rem;
 }
 
 .github-proof-grid {
@@ -510,7 +590,8 @@ a {
   .github-operate__grid,
   .github-story__list,
   .github-inline-cards,
-  .github-security__grid {
+  .github-security__grid,
+  .github-workflow-gallery {
     grid-template-columns: 1fr;
   }
 

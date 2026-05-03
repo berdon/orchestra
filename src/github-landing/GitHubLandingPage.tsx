@@ -1,7 +1,17 @@
+import { useEffect, useState } from "react";
+
 type FeatureCard = {
   title: string;
   body: string;
   label: string;
+};
+
+type WorkflowGalleryShot = {
+  src: string;
+  alt: string;
+  eyebrow: string;
+  title: string;
+  copy: string;
 };
 
 type ProofShot = {
@@ -66,20 +76,44 @@ const featureCards: FeatureCard[] = [
   },
 ];
 
+const workflowGalleryShots: WorkflowGalleryShot[] = [
+  {
+    src: "/github-landing/workflow-lanes.png",
+    alt: "Orchestra Development workflow lanes shown in the workflow settings view.",
+    eyebrow: "Development workflow",
+    title: "Map the lane contract before work starts",
+    copy: "The workflow definition makes the path explicit: plan the work, implement it, verify it, and stop for review when the lane says a human should decide what happens next.",
+  },
+  {
+    src: "/github-landing/workflow-ticket-board.png",
+    alt: "Orchestra tasks page showing work distributed across workflow lanes.",
+    eyebrow: "Tasks page",
+    title: "Watch the ticket move through the lane board",
+    copy: "The tasks view keeps work organized by workflow stage so you can scan ownership, queue state, and progress without losing the wider delivery picture.",
+  },
+  {
+    src: "/github-landing/task-detail.png",
+    alt: "Orchestra task detail page showing a task summary, description, and comments.",
+    eyebrow: "Task detail",
+    title: "Open the task and keep the context attached",
+    copy: "When you drill into a task, the description, discussion, workflow state, and execution context stay connected to the exact lane the work is in.",
+  },
+];
+
 const proofShots: ProofShot[] = [
   {
     src: "/github-landing/workflow-controls.png",
     alt: "Orchestra workflow lane editor showing worktree and approval controls.",
-    eyebrow: "Workflow editor",
-    title: "Approvals, interventions, and worktrees are built into the flow model",
-    copy: "This is not a fixed pipeline. Lane ownership, failure routing, worker-specific worktrees, and success approvals are part of the actual workflow definition.",
+    eyebrow: "Workflow controls",
+    title: "Set lane rules where the process is defined",
+    copy: "Worktree choices, ownership, failure routing, and approval requirements live inside the workflow instead of being hidden in process docs or tribal knowledge.",
     className: "github-proof-card--wide",
   },
   {
     src: "/github-landing/repo-worktrees.png",
     alt: "Orchestra repo files panel showing multiple repositories and a task worktree.",
     eyebrow: "Repo context",
-    title: "Tasks stay grounded in real repository state",
+    title: "Tasks stay grounded in repository state",
     copy: "Keep task-linked repositories, tracked files, and worktree context visible while work is in flight.",
   },
   {
@@ -108,7 +142,7 @@ const proofShots: ProofShot[] = [
     alt: "Orchestra general settings screen showing theme selection.",
     eyebrow: "Themes",
     title: "Customize the operator workbench",
-    copy: "Themes are a real product surface, not an afterthought bolted onto a single marketing screenshot.",
+    copy: "Tune the workbench so teams can keep a consistent operating environment instead of settling for a generic admin shell.",
   },
   {
     src: "/github-landing/mobile.png",
@@ -145,6 +179,29 @@ function CheckIcon() {
 }
 
 export function GitHubLandingPage() {
+  const [activeWorkflowShot, setActiveWorkflowShot] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (mediaQuery.matches) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      setActiveWorkflowShot((current) => (current + 1) % workflowGalleryShots.length);
+    }, 3200);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const activeWorkflowGalleryShot = workflowGalleryShots[activeWorkflowShot];
+
   return (
     <div className="github-landing" data-role="github-landing-root">
       <div className="github-landing__backdrop" aria-hidden="true" />
@@ -159,7 +216,7 @@ export function GitHubLandingPage() {
         </a>
 
         <nav className="github-topbar__nav" aria-label="Page sections">
-          <a href="#proof">Proof</a>
+          <a href="#workflow">Workflow</a>
           <a href="#features">Features</a>
           <a href="#operate">Operate anywhere</a>
         </nav>
@@ -242,18 +299,18 @@ export function GitHubLandingPage() {
             <figure className="github-screenshot-card github-screenshot-card--hero">
               <img
                 data-role="github-hero-screenshot"
-                src="/github-landing/workflow-board.png"
-                alt="Orchestra task board with workflow lanes and task cards."
+                src="/github-landing/workflow-ticket-board.png"
+                alt="Orchestra tasks page showing work distributed across workflow lanes."
               />
               <figcaption>
-                <span>Real Orchestra screenshot</span>
-                <strong>Workflow board + task orchestration in the actual app</strong>
+                <span>Tasks page</span>
+                <strong>Track the workflow lane, owner, and state from the same board</strong>
               </figcaption>
             </figure>
 
             <div className="github-hero__floating-note">
               <p className="github-eyebrow">What makes it different</p>
-              <strong>Workflow definitions, repo state, runtime sessions, and approvals all stay connected.</strong>
+              <strong>Workflow definitions, lane movement, task detail, repo state, and approvals all stay connected.</strong>
             </div>
           </div>
         </section>
@@ -281,13 +338,57 @@ export function GitHubLandingPage() {
           </article>
         </section>
 
-        <section className="github-proof github-shell-section" id="proof">
+        <section className="github-proof github-shell-section" id="workflow">
           <div className="github-section-heading">
-            <p className="github-eyebrow">Screenshot-first proof</p>
-            <h2>Real product surfaces, not invented mockups</h2>
+            <p className="github-eyebrow">Workflow walkthrough</p>
+            <h2>See how work moves from lane definition to task execution</h2>
             <p>
-              The page uses real Orchestra captures to show how workflows, permissions, repo context, supervisor control, Telegram, themes,
-              and mobile orchestration actually look.
+              Start with the Development workflow itself, move into the tasks board where tickets progress through the lanes, then open the
+              task detail to keep the discussion and execution context attached to the work.
+            </p>
+          </div>
+
+          <div className="github-workflow-gallery" data-role="github-workflow-gallery">
+            <figure className="github-workflow-gallery__frame">
+              {workflowGalleryShots.map((shot, index) => (
+                <img
+                  key={shot.title}
+                  className="github-workflow-gallery__image"
+                  data-active={index === activeWorkflowShot ? "true" : "false"}
+                  data-role="github-workflow-gallery-image"
+                  src={shot.src}
+                  alt={shot.alt}
+                  loading="lazy"
+                />
+              ))}
+            </figure>
+
+            <div className="github-workflow-gallery__copy">
+              <p className="github-eyebrow">{activeWorkflowGalleryShot.eyebrow}</p>
+              <h3>{activeWorkflowGalleryShot.title}</h3>
+              <p>{activeWorkflowGalleryShot.copy}</p>
+
+              <div className="github-workflow-gallery__dots" aria-label="Workflow gallery slides">
+                {workflowGalleryShots.map((shot, index) => (
+                  <button
+                    key={shot.title}
+                    type="button"
+                    className={index === activeWorkflowShot ? "github-workflow-gallery__dot github-workflow-gallery__dot--active" : "github-workflow-gallery__dot"}
+                    aria-label={`Show ${shot.eyebrow.toLowerCase()} screenshot`}
+                    aria-pressed={index === activeWorkflowShot}
+                    onClick={() => setActiveWorkflowShot(index)}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="github-section-heading github-section-heading--compact github-section-heading--post-gallery">
+            <p className="github-eyebrow">More product surfaces</p>
+            <h2>Keep the rest of the operator workbench in view</h2>
+            <p>
+              Beyond the workflow path itself, Orchestra keeps repo context, supervisor control, permissions, Telegram, themes, and mobile
+              orchestration inside the same product surface.
             </p>
           </div>
 
@@ -445,7 +546,7 @@ export function GitHubLandingPage() {
         <section className="github-security github-shell-section">
           <div className="github-section-heading github-section-heading--compact">
             <p className="github-eyebrow">Built for real operations</p>
-            <h2>Extensible, secure, and honest about the work</h2>
+            <h2>Extensible, secure, and built around visible workflow context</h2>
           </div>
           <div className="github-security__grid">
             <article>
@@ -457,8 +558,8 @@ export function GitHubLandingPage() {
               <p>Share secrets across tasks through dedicated product support instead of leaking them through comments, shell history, or copy-paste workflows.</p>
             </article>
             <article>
-              <h3>Truthful product proof</h3>
-              <p>Every screenshot on this page comes from the actual Orchestra UI so new users can understand the real workbench faster.</p>
+              <h3>Workflow visibility</h3>
+              <p>The landing page stays focused on what operators need to see: the workflow lanes, the task board, the task detail, and the control surfaces around them.</p>
             </article>
           </div>
         </section>
