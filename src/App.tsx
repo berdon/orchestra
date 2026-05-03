@@ -26,6 +26,10 @@ import {
 import { sortSessionRecords } from "./lib/sessionList";
 import { reconcileListedSessions } from "./lib/sessionListMerge";
 import { getActiveProjectId, setActiveProjectId } from "./lib/projects";
+import {
+  createProjectCatalogRefresher,
+  resolveActiveProjectIdAfterProjectCatalogRefresh,
+} from "./lib/projectCatalogRefresh";
 import { listRoleOperations } from "./lib/roleRuntime";
 import { listRoles } from "./lib/roles";
 import {
@@ -1429,7 +1433,9 @@ export function App() {
 
   const replaceSessions = useCallback(
     (
-      updater: SessionRecord[] | ((current: SessionRecord[]) => SessionRecord[]),
+      updater:
+        | SessionRecord[]
+        | ((current: SessionRecord[]) => SessionRecord[]),
     ) => {
       const current = sessionsRef.current;
       const next = typeof updater === "function" ? updater(current) : updater;
@@ -2139,7 +2145,9 @@ export function App() {
   const patchSessionRecord = useCallback(
     (sessionId: string, patch: (session: SessionRecord) => SessionRecord) => {
       const current = sessionsRef.current;
-      const currentSession = current.find((session) => session.id === sessionId);
+      const currentSession = current.find(
+        (session) => session.id === sessionId,
+      );
       if (!currentSession) {
         return;
       }
@@ -2760,8 +2768,7 @@ export function App() {
       setSessionActionError(null);
 
       try {
-        const pendingSessionOpenRequest =
-          pendingSessionOpenRequestRef.current;
+        const pendingSessionOpenRequest = pendingSessionOpenRequestRef.current;
         const requestedSessionId =
           pendingSessionOpenRequest?.projectId === activeProjectId
             ? pendingSessionOpenRequest.sessionId
@@ -3214,36 +3221,39 @@ export function App() {
   }, [applySessionUpdate, handleSessionStreamEvent]);
 
   useEffect(() => {
-    const loadProjectCatalog = () => {
-      const startedAt =
-        typeof performance !== "undefined" ? performance.now() : undefined;
-      void orchestraClient.catalog.listProjects().then((nextProjects) => {
-        const storedActiveProjectId = getActiveProjectId();
-        setProjects(nextProjects);
-        setActiveProjectIdState((current) => {
-          if (
-            storedActiveProjectId &&
-            nextProjects.some((project) => project.id === storedActiveProjectId)
-          ) {
-            return storedActiveProjectId;
-          }
-          if (
-            current &&
-            nextProjects.some((project) => project.id === current)
-          ) {
-            return current;
-          }
-          const fallbackProject = nextProjects[0] ?? null;
-          if (fallbackProject) {
-            setActiveProjectId(fallbackProject.id, fallbackProject.slug);
-          }
-          return fallbackProject?.id ?? null;
-        });
+    const refreshProjectCatalog = createProjectCatalogRefresher(
+      async () => {
+        const startedAt =
+          typeof performance !== "undefined" ? performance.now() : undefined;
+        const nextProjects = await orchestraClient.catalog.listProjects();
         logStartupTiming("frontend.rpc.list_projects", startedAt, {
           projectCount: nextProjects.length,
         });
-      });
-    };
+        return nextProjects;
+      },
+      (nextProjects) => {
+        const storedActiveProjectId = getActiveProjectId();
+        setProjects(nextProjects);
+        setActiveProjectIdState((current) => {
+          const nextActiveProjectId =
+            resolveActiveProjectIdAfterProjectCatalogRefresh(
+              nextProjects,
+              storedActiveProjectId,
+              current,
+            );
+          const nextActiveProject = nextActiveProjectId
+            ? (nextProjects.find(
+                (project) => project.id === nextActiveProjectId,
+              ) ?? null)
+            : null;
+          setActiveProjectId(
+            nextActiveProject?.id ?? null,
+            nextActiveProject?.slug ?? null,
+          );
+          return nextActiveProjectId;
+        });
+      },
+    );
 
     void loadAppInfo();
     if (shellExtension) {
@@ -3253,8 +3263,10 @@ export function App() {
         setAgentTerminalSessionId(state.agentTerminalSessionId);
       });
     }
-    loadProjectCatalog();
-    const onProjectsChanged = () => loadProjectCatalog();
+    void refreshProjectCatalog();
+    const onProjectsChanged = () => {
+      void refreshProjectCatalog();
+    };
     const onPiSetupChanged = () => {
       void (async () => {
         await refreshPiSetupState({ includeModelsJson: true });
@@ -3294,7 +3306,7 @@ export function App() {
         onPiOAuthFlowChanged,
       );
     };
-  }, [hostAdminExtension, shellExtension]);
+  }, [hostAdminExtension, orchestraClient, shellExtension]);
 
   useEffect(() => {
     if (activeProjectId) {
@@ -3806,8 +3818,12 @@ export function App() {
     }
 
     const trackedSessionIds = liveSurfaceSubscribedSessionIdsRef.current;
-    const sessionIdsToSubscribe = Array.from(desiredSessionIds).filter((sessionId) => !trackedSessionIds.has(sessionId));
-    const sessionIdsToUnsubscribe = Array.from(trackedSessionIds).filter((sessionId) => !desiredSessionIds.has(sessionId));
+    const sessionIdsToSubscribe = Array.from(desiredSessionIds).filter(
+      (sessionId) => !trackedSessionIds.has(sessionId),
+    );
+    const sessionIdsToUnsubscribe = Array.from(trackedSessionIds).filter(
+      (sessionId) => !desiredSessionIds.has(sessionId),
+    );
 
     for (const sessionId of sessionIdsToSubscribe) {
       trackedSessionIds.add(sessionId);
@@ -3819,7 +3835,8 @@ export function App() {
     let cancelled = false;
 
     for (const sessionId of sessionIdsToSubscribe) {
-      void orchestraClient.sessions.subscribe(sessionId)
+      void orchestraClient.sessions
+        .subscribe(sessionId)
         .then((record) => {
           if (!cancelled) {
             applySessionUpdate(record);
@@ -3841,7 +3858,8 @@ export function App() {
     }
 
     for (const sessionId of sessionIdsToUnsubscribe) {
-      void orchestraClient.sessions.unsubscribe(sessionId)
+      void orchestraClient.sessions
+        .unsubscribe(sessionId)
         .then((record) => {
           if (!cancelled) {
             mergeSessionRecord(record, { select: false });
@@ -3870,7 +3888,11 @@ export function App() {
   ]);
 
   useEffect(() => {
-    if (isDetachedWindow || (activePage !== "sessions" && activePage !== "chat") || !viewedSession) {
+    if (
+      isDetachedWindow ||
+      (activePage !== "sessions" && activePage !== "chat") ||
+      !viewedSession
+    ) {
       return;
     }
 
