@@ -1369,6 +1369,7 @@ export function App() {
   const sessionListRefreshCountRef = useRef(0);
   const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
   const testPinnedSessionIdsRef = useRef<Set<string>>(new Set());
+  const liveSurfaceSubscribedSessionIdsRef = useRef<Set<string>>(new Set());
   const commandPaletteRequestIdRef = useRef(0);
   const startupTimingOriginRef = useRef(
     typeof performance !== "undefined" ? performance.now() : 0,
@@ -2900,6 +2901,21 @@ export function App() {
     [activeProjectId],
   );
 
+  const ensureLiveSurfaceSessionSubscription = useCallback(
+    async (sessionId: string) => {
+      liveSurfaceSubscribedSessionIdsRef.current.add(sessionId);
+      try {
+        const record = await orchestraClient.sessions.subscribe(sessionId);
+        applySessionUpdate(record);
+        return record;
+      } catch (error) {
+        liveSurfaceSubscribedSessionIdsRef.current.delete(sessionId);
+        throw error;
+      }
+    },
+    [applySessionUpdate, orchestraClient],
+  );
+
   async function runSessionAction(
     action: () => Promise<SessionRecord>,
     options?: { select?: boolean },
@@ -2925,11 +2941,30 @@ export function App() {
   }
 
   async function handleCreateSession() {
-    await runSessionAction(
-      async () =>
-        orchestraClient.sessions.create(undefined, activeProject?.slug ?? null),
-      { select: true },
-    );
+    setIsSubmitting(true);
+    setSessionActionError(null);
+
+    try {
+      const session = await orchestraClient.sessions.create(
+        undefined,
+        activeProject?.slug ?? null,
+      );
+      mergeSessionRecord(session, { select: true });
+      if (!session.terminalAttached) {
+        await ensureLiveSurfaceSessionSubscription(session.id);
+      }
+    } catch (error) {
+      setSessionActionError(
+        await reportUiError(
+          orchestraClient,
+          "ui.sessions.create",
+          error,
+          "Unable to create a new session.",
+        ),
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   async function handleDeleteSession(sessionId: string) {
@@ -3740,43 +3775,48 @@ export function App() {
 
     const sessionSurfaceActive =
       activePage === "sessions" || activePage === "chat";
-    const previousViewedSessionId = viewedSessionIdRef.current;
-    const nextViewedSessionId = sessionSurfaceActive
+    viewedSessionIdRef.current = sessionSurfaceActive
       ? (viewedSession?.id ?? null)
       : null;
 
-    viewedSessionIdRef.current = nextViewedSessionId;
-
+    const desiredSessionIds = new Set<string>();
     if (
-      previousViewedSessionId &&
-      previousViewedSessionId !== nextViewedSessionId &&
-      (!sessionSurfaceActive || Boolean(viewedSession?.id))
+      sessionSurfaceActive &&
+      viewedSession?.id &&
+      !viewedSession.terminalAttached
     ) {
-      void orchestraClient.sessions
-        .unsubscribe(previousViewedSessionId)
-        .then((record) => {
-          mergeSessionRecord(record, { select: false });
-        })
-        .catch(() => {
-          // Ignore auto-unsubscribe failures; explicit actions will surface errors.
-        });
+      desiredSessionIds.add(viewedSession.id);
+    }
+    if (supervisorQuickChatOpen) {
+      const quickChatSessionId =
+        supervisorSession?.id ?? supervisorSessionId ?? null;
+      if (quickChatSessionId) {
+        desiredSessionIds.add(quickChatSessionId);
+      }
     }
 
-    if (!sessionSurfaceActive || !viewedSession) {
-      return;
+    const trackedSessionIds = liveSurfaceSubscribedSessionIdsRef.current;
+    const sessionIdsToSubscribe = Array.from(desiredSessionIds).filter((sessionId) => !trackedSessionIds.has(sessionId));
+    const sessionIdsToUnsubscribe = Array.from(trackedSessionIds).filter((sessionId) => !desiredSessionIds.has(sessionId));
+
+    for (const sessionId of sessionIdsToSubscribe) {
+      trackedSessionIds.add(sessionId);
+    }
+    for (const sessionId of sessionIdsToUnsubscribe) {
+      trackedSessionIds.delete(sessionId);
     }
 
     let cancelled = false;
 
-    if (!viewedSession.subscribed && !viewedSession.terminalAttached) {
-      void orchestraClient.sessions
-        .subscribe(viewedSession.id)
+    for (const sessionId of sessionIdsToSubscribe) {
+      void orchestraClient.sessions.subscribe(sessionId)
         .then((record) => {
           if (!cancelled) {
             applySessionUpdate(record);
           }
         })
         .catch(async (error) => {
+          liveSurfaceSubscribedSessionIdsRef.current.delete(sessionId);
           if (!cancelled) {
             setSessionActionError(
               await reportUiError(
@@ -3788,11 +3828,43 @@ export function App() {
             );
           }
         });
-
-      return () => {
-        cancelled = true;
-      };
     }
+
+    for (const sessionId of sessionIdsToUnsubscribe) {
+      void orchestraClient.sessions.unsubscribe(sessionId)
+        .then((record) => {
+          if (!cancelled) {
+            mergeSessionRecord(record, { select: false });
+          }
+        })
+        .catch(() => {
+          liveSurfaceSubscribedSessionIdsRef.current.add(sessionId);
+          // Ignore auto-unsubscribe failures; explicit actions will surface errors.
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activePage,
+    applySessionUpdate,
+    isDetachedWindow,
+    mergeSessionRecord,
+    orchestraClient,
+    supervisorQuickChatOpen,
+    supervisorSession?.id,
+    supervisorSessionId,
+    viewedSession?.id,
+    viewedSession?.terminalAttached,
+  ]);
+
+  useEffect(() => {
+    if (isDetachedWindow || (activePage !== "sessions" && activePage !== "chat") || !viewedSession) {
+      return;
+    }
+
+    let cancelled = false;
 
     setLoadingModelSessionId(viewedSession.id);
 
@@ -3831,15 +3903,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [
-    activePage,
-    isDetachedWindow,
-    viewedSession?.id,
-    viewedSession?.subscribed,
-    viewedSession?.terminalAttached,
-    applySessionUpdate,
-    mergeSessionRecord,
-  ]);
+  }, [activePage, isDetachedWindow, orchestraClient, viewedSession?.id]);
 
   useEffect(() => {
     if (
@@ -4307,6 +4371,9 @@ export function App() {
         setActivePage("sessions");
         setPendingSessionOpenRequest(null);
         setSelectedSessionId(session.id);
+      }
+      if (!session.terminalAttached) {
+        await ensureLiveSurfaceSessionSubscription(session.id);
       }
     } catch (error) {
       setSessionActionError(
@@ -4872,6 +4939,10 @@ export function App() {
         lastKnownChatSessionIdRef.current = nextSession.id;
         lastKnownChatSessionAgentIdRef.current = effectiveChatAgentId;
         void loadChatAgents({ background: true });
+      }
+
+      if (!nextSession.terminalAttached) {
+        await ensureLiveSurfaceSessionSubscription(nextSession.id);
       }
     } catch (error) {
       console.error("[orchestra][session-create:error]", {

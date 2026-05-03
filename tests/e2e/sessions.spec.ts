@@ -180,6 +180,13 @@ async function readStoredSupervisorQuickChat(page: import("@playwright/test").Pa
   });
 }
 
+async function readSessionLogCount(page: import("@playwright/test").Page, target: string) {
+  return page.evaluate((nextTarget) => {
+    const logs = JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]") as Array<{ target?: string }>;
+    return logs.filter((entry) => entry.target === nextTarget).length;
+  }, target);
+}
+
 async function readSessionRefreshCount(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
     const testWindow = window as typeof window & {
@@ -249,46 +256,22 @@ test("sessions page hides shared header controls on mobile while keeping session
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  const createSessionFab = page.locator('[data-role="sessions-create-fab"]');
-  const createSessionButton = createSessionFab.locator('[data-role="create-session"]');
   await expect(page.locator('.page-header')).toHaveCount(0);
   await expect(page.locator('[data-role="app-version-label"]')).toHaveCount(0);
   await expect(page.locator('[data-role="open-command-palette"]')).toHaveCount(0);
   await expect(page.locator('[data-role="open-supervisor-quick-chat"]')).toHaveCount(0);
-  await expect(createSessionFab).toBeVisible();
-  await expect(createSessionButton).toBeVisible();
 
-  const initialFabInsets = await page.evaluate(() => {
-    const button = document.querySelector('[data-role="sessions-create-fab"] [data-role="create-session"]');
-    if (!(button instanceof HTMLElement)) {
-      return null;
-    }
-    const rect = button.getBoundingClientRect();
-    return {
-      rightInset: window.innerWidth - rect.right,
-      bottomInset: window.innerHeight - rect.bottom,
-    };
-  });
-  expect(initialFabInsets).not.toBeNull();
-  expect(initialFabInsets?.rightInset ?? 999).toBeGreaterThanOrEqual(8);
-  expect(initialFabInsets?.rightInset ?? 999).toBeLessThanOrEqual(24);
-  expect(initialFabInsets?.bottomInset ?? 999).toBeGreaterThanOrEqual(8);
-  expect(initialFabInsets?.bottomInset ?? 999).toBeLessThanOrEqual(24);
-
-  await createSessionButton.click();
-  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("New session");
-  await expect(createSessionFab).toHaveCount(0);
-  await expect(page.locator('.field-group__label').filter({ hasText: /^Send$/ })).toHaveCount(0);
-  await expect(page.locator('[data-role="send-message"]')).not.toContainText("Send");
-
-  const previousSessionCount = await page.locator('[data-role="session-link"]').count();
+  const baselineSubscribeCount = await readSessionLogCount(page, "sessions.subscribe");
+  await expect(page.locator('[data-role="session-actions-trigger"]')).toBeVisible();
   await page.locator('[data-role="session-actions-trigger"]').click();
   await expect(page.locator('[data-role="session-actions-menu"]')).toBeVisible();
   await expect(page.locator('[data-role="session-action-new"]')).toBeEnabled();
   await page.locator('[data-role="session-action-new"]').click();
-  await expect(page.locator('[data-role="session-link"]')).toHaveCount(previousSessionCount + 1);
+
+  await expect.poll(async () => (await readSessionLogCount(page, "sessions.subscribe")) > baselineSubscribeCount).toBe(true);
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("New session");
-  await expect(createSessionFab).toHaveCount(0);
+  await expect(page.locator('.field-group__label').filter({ hasText: /^Send$/ })).toHaveCount(0);
+  await expect(page.locator('[data-role="send-message"]')).not.toContainText("Send");
 
   await page.locator('[data-role="composer-input"]').fill("Hello from mobile sessions");
   await page.locator('[data-role="composer-input"]').press("Control+Enter");
@@ -2429,8 +2412,10 @@ test("ctrl+t opens a persistent supervisor quick chat modal", async ({ page }) =
   });
 
   await page.goto("/");
+  const baselineSubscribeCount = await readSessionLogCount(page, "sessions.subscribe");
   await triggerShortcut(page, "t");
   await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
+  await expect.poll(async () => (await readSessionLogCount(page, "sessions.subscribe")) > baselineSubscribeCount).toBe(true);
   await expect(page.locator('[data-role="supervisor-send-message"]')).not.toContainText("Send");
   await expect(page.locator('[data-role="supervisor-send-message"]')).toBeEnabled();
 

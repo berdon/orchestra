@@ -151,6 +151,13 @@ async function measureTranscriptHorizontalOverflow(page: import("@playwright/tes
   });
 }
 
+async function readSessionLogCount(page: import("@playwright/test").Page, target: string) {
+  return page.evaluate((nextTarget) => {
+    const logs = JSON.parse(window.localStorage.getItem("orchestra.mock.logs") ?? "[]") as Array<{ target?: string }>;
+    return logs.filter((entry) => entry.target === nextTarget).length;
+  }, target);
+}
+
 test("chat nav lists named agents and excludes roles", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -521,12 +528,18 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
   await page.getByRole("button", { name: "Chat" }).click();
 
   await expect(page.locator('[data-role="chat-mobile-agent-picker-trigger"]')).toBeVisible();
+  await expect(page.locator('[data-role="chat-mobile-agent-picker-trigger"]')).toContainText("Supervisor");
   await expect(page.locator('[data-role="chat-agent-sidebar-nav"]')).toBeHidden();
+  await expect.poll(async () => page.locator('[data-role="session-chat-panel"]').getAttribute('data-session-id')).toBeTruthy();
+
+  const baselineSubscribeCount = await readSessionLogCount(page, "sessions.subscribe");
 
   await page.locator('[data-role="chat-mobile-agent-picker-trigger"]').click();
   await expect(page.locator('[data-role="chat-mobile-agent-picker"]')).toBeVisible();
   await page.locator('[data-role="chat-mobile-agent-option-data"]').click();
 
+  await expect.poll(async () => (await readSessionLogCount(page, "sessions.subscribe")) > baselineSubscribeCount).toBe(true);
+  const afterDataSubscribeCount = await readSessionLogCount(page, "sessions.subscribe");
   await expect(page.locator('[data-role="chat-mobile-agent-picker-trigger"]')).toContainText("Data");
   await expect(page.locator('[data-role="session-mobile-transcript-controls-trigger"]')).toBeVisible();
   await expect(page.locator('[data-role="session-chat-panel"] > .panel__header')).toBeHidden();
@@ -572,6 +585,7 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
 
   await page.locator('[data-role="chat-mobile-agent-picker-trigger"]').click();
   await page.locator('[data-role="chat-mobile-agent-option-supervisor"]').click();
+  await expect.poll(async () => (await readSessionLogCount(page, "sessions.subscribe")) > afterDataSubscribeCount).toBe(true);
   await expect(page.locator('[data-role="chat-mobile-agent-picker-trigger"]')).toContainText("Supervisor");
   await expect(page.locator('[data-role="chat-mobile-agent-picker"]')).toHaveCount(0);
 });
