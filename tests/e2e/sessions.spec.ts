@@ -151,6 +151,22 @@ async function appendMockSessionEvents(page: import("@playwright/test").Page, se
   }, { nextSessionId: sessionId, nextCount: count });
 }
 
+async function measureTranscriptHorizontalOverflow(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const transcript = document.querySelector('[data-role="session-transcript"]') as HTMLDivElement | null;
+    const panel = document.querySelector('[data-role="session-chat-panel"]') as HTMLElement | null;
+
+    return {
+      viewportWidth: window.innerWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      panelClientWidth: panel?.clientWidth ?? 0,
+      panelScrollWidth: panel?.scrollWidth ?? 0,
+      transcriptClientWidth: transcript?.clientWidth ?? 0,
+      transcriptScrollWidth: transcript?.scrollWidth ?? 0,
+    };
+  });
+}
+
 async function triggerShortcut(page: import("@playwright/test").Page, key: string) {
   await page.evaluate((nextKey) => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: nextKey, ctrlKey: true, bubbles: true }));
@@ -1991,11 +2007,10 @@ test("sessions transcript wraps long lines by default and can toggle to no-wrap"
   await expect(transcript).toHaveAttribute("data-wrap-mode", "wrap");
   await expect(firstMessage).toHaveCSS("white-space", "pre-wrap");
 
-  const wrappedMetrics = await transcript.evaluate((node) => ({
-    clientWidth: node.clientWidth,
-    scrollWidth: node.scrollWidth,
-  }));
-  expect(wrappedMetrics.scrollWidth).toBeLessThanOrEqual(wrappedMetrics.clientWidth + 4);
+  const wrappedMetrics = await measureTranscriptHorizontalOverflow(page);
+  expect(wrappedMetrics.documentScrollWidth).toBeLessThanOrEqual(wrappedMetrics.viewportWidth + 4);
+  expect(wrappedMetrics.panelScrollWidth).toBeLessThanOrEqual(wrappedMetrics.panelClientWidth + 4);
+  expect(wrappedMetrics.transcriptScrollWidth).toBeLessThanOrEqual(wrappedMetrics.transcriptClientWidth + 4);
 
   await toggle.click();
 
@@ -2003,11 +2018,10 @@ test("sessions transcript wraps long lines by default and can toggle to no-wrap"
   await expect(transcript).toHaveAttribute("data-wrap-mode", "nowrap");
   await expect(firstMessage).toHaveCSS("white-space", "pre");
 
-  const nowrapMetrics = await transcript.evaluate((node) => ({
-    clientWidth: node.clientWidth,
-    scrollWidth: node.scrollWidth,
-  }));
-  expect(nowrapMetrics.scrollWidth).toBeGreaterThan(nowrapMetrics.clientWidth + 20);
+  const nowrapMetrics = await measureTranscriptHorizontalOverflow(page);
+  expect(nowrapMetrics.documentScrollWidth).toBeLessThanOrEqual(nowrapMetrics.viewportWidth + 4);
+  expect(nowrapMetrics.panelScrollWidth).toBeLessThanOrEqual(nowrapMetrics.panelClientWidth + 4);
+  expect(nowrapMetrics.transcriptScrollWidth).toBeGreaterThan(nowrapMetrics.transcriptClientWidth + 20);
 });
 
 test("session detail only shows active task navigation when the session still owns the task", async ({ page }) => {

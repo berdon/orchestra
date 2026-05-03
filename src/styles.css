@@ -2553,7 +2553,9 @@ strong {
 .session-transcript-wrap {
   position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
+  min-width: 0;
   height: 100%;
   overflow: hidden;
 }
@@ -2606,8 +2608,10 @@ strong {
 
 .session-transcript {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
+  min-width: 0;
   height: 100%;
   overflow: auto;
   padding: 52px 14px 18px 14px;
@@ -2621,6 +2625,12 @@ strong {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.session-transcript--wrapped .transcript-event__preview,
+.session-transcript--wrapped .transcript-fallback-pre,
+.session-transcript--wrapped .transcript-code-block pre {
+  overflow-x: hidden;
 }
 
 .session-transcript--nowrap .transcript-event {
@@ -2679,7 +2689,9 @@ strong {
 
 .transcript-event__meta {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
   padding-right: 112px;
 }
 
@@ -2711,6 +2723,8 @@ strong {
 .transcript-fallback-pre,
 .transcript-code-block pre {
   margin: 0;
+  min-width: 0;
+  max-width: 100%;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -2734,6 +2748,7 @@ strong {
 
 .transcript-render {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   min-width: 0;
 }
@@ -2781,7 +2796,9 @@ strong {
 .transcript-code-block {
   margin: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
 }
 
 .transcript-code-block figcaption {

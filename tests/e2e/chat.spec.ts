@@ -135,6 +135,22 @@ async function appendMockChatSessionEvents(page: import("@playwright/test").Page
   }, { nextSessionId: sessionId, nextCount: count });
 }
 
+async function measureTranscriptHorizontalOverflow(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const transcript = document.querySelector('[data-role="session-transcript"]') as HTMLDivElement | null;
+    const panel = document.querySelector('[data-role="session-chat-panel"]') as HTMLElement | null;
+
+    return {
+      viewportWidth: window.innerWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      panelClientWidth: panel?.clientWidth ?? 0,
+      panelScrollWidth: panel?.scrollWidth ?? 0,
+      transcriptClientWidth: transcript?.clientWidth ?? 0,
+      transcriptScrollWidth: transcript?.scrollWidth ?? 0,
+    };
+  });
+}
+
 test("chat nav lists named agents and excludes roles", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -359,6 +375,45 @@ test("chat page opens an agent main session with focused chat controls while Ses
   await page.locator('[data-role="chat-agent-nav-data"]').click();
 
   await expect.poll(async () => page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id")).toBe(firstSessionId);
+});
+
+test("chat transcript keeps long wrapped messages constrained to the panel", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Chat" }).click();
+  await page.locator('[data-role="chat-agent-nav-data"]').click();
+
+  const longLine = `CHAT-${"y".repeat(600)}`;
+  await page.locator('[data-role="composer-input"]').fill(longLine);
+  await page.locator('[data-role="send-message"]').click();
+
+  const transcript = page.locator('[data-role="session-transcript"]');
+  const toggle = page.locator('[data-role="session-wrap-toggle"]');
+  const firstMessage = transcript.locator(".transcript-event p").last();
+
+  await expect(firstMessage).toContainText(longLine);
+  await expect(toggle).toHaveAttribute("data-wrap-mode", "wrap");
+  await expect(transcript).toHaveAttribute("data-wrap-mode", "wrap");
+  await expect(firstMessage).toHaveCSS("white-space", "pre-wrap");
+
+  const wrappedMetrics = await measureTranscriptHorizontalOverflow(page);
+  expect(wrappedMetrics.documentScrollWidth).toBeLessThanOrEqual(wrappedMetrics.viewportWidth + 4);
+  expect(wrappedMetrics.panelScrollWidth).toBeLessThanOrEqual(wrappedMetrics.panelClientWidth + 4);
+  expect(wrappedMetrics.transcriptScrollWidth).toBeLessThanOrEqual(wrappedMetrics.transcriptClientWidth + 4);
+
+  await toggle.click();
+
+  await expect(toggle).toHaveAttribute("data-wrap-mode", "nowrap");
+  await expect(transcript).toHaveAttribute("data-wrap-mode", "nowrap");
+  await expect(firstMessage).toHaveCSS("white-space", "pre");
+
+  const nowrapMetrics = await measureTranscriptHorizontalOverflow(page);
+  expect(nowrapMetrics.documentScrollWidth).toBeLessThanOrEqual(nowrapMetrics.viewportWidth + 4);
+  expect(nowrapMetrics.panelScrollWidth).toBeLessThanOrEqual(nowrapMetrics.panelClientWidth + 4);
+  expect(nowrapMetrics.transcriptScrollWidth).toBeGreaterThan(nowrapMetrics.transcriptClientWidth + 20);
 });
 
 test("chat page hides shared header controls on mobile while keeping chat usable", async ({ page }) => {
