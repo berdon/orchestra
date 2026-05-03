@@ -4316,6 +4316,17 @@ strong {
   margin-left: auto;
 }
 
+.task-detail-header-actions__desktop {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.task-detail-header-actions__mobile {
+  display: none;
+}
+
 .task-detail-header-action-row {
   width: max-content;
   align-items: center;
@@ -6490,6 +6501,20 @@ strong {
 
   .task-detail-tab-dock--persistent-settings .task-detail-section-select {
     display: none;
+  }
+
+  .task-detail-header-actions__desktop {
+    display: none;
+  }
+
+  .task-detail-header-actions__mobile {
+    display: flex;
+    justify-content: flex-end;
+    width: max-content;
+  }
+
+  .task-detail-header-actions__mobile .task-action-menu {
+    gap: 0;
   }
 
   .task-action-menu__desktop {

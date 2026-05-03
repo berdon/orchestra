@@ -4084,7 +4084,7 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
 
   const readHeaderActionLayout = async (selector: string) => page.locator(selector).evaluate((node) => {
     const relane = node.querySelector('[data-role="toggle-task-relane"]');
-    const session = node.querySelector('[data-role="task-open-session"]');
+    const session = document.querySelector('[data-role="task-detail-primary-header"] [data-role="task-open-session"]');
     const actionMenu = node.querySelector('.task-action-menu');
     if (!(relane instanceof HTMLElement)) {
       throw new Error('Expected Re-lane button in the header action row');
@@ -4111,9 +4111,16 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
   expect(widePrimaryHeaderLayout.relaneLeftOfSession).toBe(true);
 
   await page.setViewportSize({ width: 820, height: 900 });
-  const narrowPrimaryHeaderLayout = await readHeaderActionLayout('[data-role="task-detail-primary-actions"]');
-  expect(narrowPrimaryHeaderLayout.relaneLeftOfAction).toBe(true);
-  expect(narrowPrimaryHeaderLayout.relaneSharesRowWithAction).toBe(true);
+  const primaryHeader = page.locator('[data-role="task-detail-primary-header"]');
+  const primaryMobileActions = page.locator('[data-role="task-detail-primary-actions-mobile"]');
+  await expect(primaryMobileActions.getByRole('button', { name: 'Actions' })).toBeVisible();
+  await expect(primaryHeader.locator('[data-role="task-open-session"]:visible')).toHaveCount(0);
+  await expect(primaryHeader.locator('[data-role="toggle-task-relane"]:visible')).toHaveCount(0);
+
+  await primaryMobileActions.getByRole('button', { name: 'Actions' }).click();
+  await expect(primaryMobileActions.getByRole('button', { name: 'Open session' })).toBeVisible();
+  await expect(primaryMobileActions.getByRole('button', { name: 'Move to Review pass' })).toBeVisible();
+  await primaryMobileActions.getByRole('button', { name: 'Actions' }).click();
 
   await page.evaluate(() => {
     const content = document.querySelector('.content') as HTMLElement | null;
@@ -4139,13 +4146,15 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
   await expect(page.locator('[data-role="task-detail-compact-header"]')).toHaveAttribute('data-scroll-state', 'visible');
   await expect(page.locator('[data-role="task-detail-compact-header"]')).toBeVisible();
 
-  const compactHeaderLayout = await readHeaderActionLayout('[data-role="task-detail-compact-actions"]');
-  expect(compactHeaderLayout.relaneLeftOfAction).toBe(true);
-  expect(compactHeaderLayout.relaneSharesRowWithAction).toBe(true);
+  const compactHeader = page.locator('[data-role="task-detail-compact-header"]');
+  const compactMobileActions = page.locator('[data-role="task-detail-compact-actions-mobile"]');
+  await expect(compactMobileActions.getByRole('button', { name: 'Actions' })).toBeVisible();
+  await expect(compactHeader.locator('[data-role="toggle-task-relane"]:visible')).toHaveCount(0);
+  await expect(compactHeader.locator('[data-role="task-open-session"]')).toHaveCount(0);
 
-  await page.locator('[data-role="toggle-task-relane"]').first().click();
-  await expect(page.locator('[data-role="task-relane-menu"]').first()).toBeVisible();
-  await page.locator('[data-role="task-relane-option"][data-lane-id="lane-review-pass"]').first().click();
+  await compactMobileActions.getByRole('button', { name: 'Actions' }).click();
+  await expect(compactMobileActions.getByRole('button', { name: 'Move to Review pass' })).toBeVisible();
+  await compactMobileActions.getByRole('button', { name: 'Move to Review pass' }).click();
   await expect(page.locator('[data-role="task-relane-confirm-dialog"]')).toBeVisible();
   await page.locator('[data-role="task-relane-notes"]').fill("Redirect this into the review pass lane.");
   await page.locator('[data-role="task-relane-confirm"]').click();
@@ -4162,6 +4171,13 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
   expect(relanedTask.status).toBe("in_progress");
   expect(relanedTask.activeLaneAssignment?.laneId).toBe("lane-review-pass");
   expect(relanedTask.laneRuns?.[0]?.result).toBe("failure");
+  expect(relanedTask.activeLaneAssignment?.sessionId).toBeTruthy();
+
+  await page.locator('[data-role="task-detail-primary-header"]').scrollIntoViewIfNeeded();
+  await primaryMobileActions.getByRole('button', { name: 'Actions' }).click();
+  await expect(primaryMobileActions.getByRole('button', { name: 'Open session' })).toBeVisible();
+  await primaryMobileActions.getByRole('button', { name: 'Open session' }).click();
+  await expect(page.locator('[data-role="session-chat-panel"]')).toBeVisible();
 });
 
 test("task detail dispatches an agent-owned task via publish, retries the active session, and completes the workflow", async ({ page }) => {

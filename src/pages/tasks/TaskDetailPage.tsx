@@ -6,7 +6,7 @@ import { useTaskFileContent } from "../../lib/orchestraData/tasks";
 import { buildTaskCommentThreads, sortTaskCommentThreadsByLatestActivityDesc } from "../../lib/taskCommentThreads";
 import { useExplanatoryTooltipProps } from "../../lib/tooltips";
 import { shouldShowUnreadCommentAttention } from "../../lib/taskUnreadCommentVisibility";
-import { TaskActionMenu } from "../../components/TaskActionMenu";
+import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
 import { MarkdownContent } from "../../components/MarkdownContent";
 import { TaskCommentComposer } from "../../components/TaskCommentComposer";
@@ -1669,30 +1669,75 @@ export function TaskDetailPage({
     : undefined;
   const compactHeaderActionMenuActions = headerActionMenuActions.map((action) => ({ ...action, dataRole: undefined }));
 
+  function buildMobileRelaneActionMenuActions(): TaskActionMenuAction[] {
+    if (!canRelane) {
+      return [];
+    }
+    return availableRelaneTargets.map((lane) => ({
+      id: `relane-${lane.id}`,
+      label: `Move to ${lane.name}`,
+      onClick: () => openRelaneConfirm(lane),
+      variant: "secondary",
+    }));
+  }
+
+  const primaryHeaderMobileActionMenuActions: TaskActionMenuAction[] = [
+    ...(activeSessionId
+      ? [{ id: "open-session", label: "Open session", onClick: () => onOpenSession(activeSessionId, task.projectId), variant: "secondary" as const, dataRole: "task-open-session" }]
+      : []),
+    ...buildMobileRelaneActionMenuActions(),
+    ...headerActionMenuActions,
+  ];
+  const compactHeaderMobileActionMenuActions: TaskActionMenuAction[] = [
+    ...buildMobileRelaneActionMenuActions(),
+    ...compactHeaderActionMenuActions,
+  ];
+
   function renderHeaderActions(compact = false) {
+    const desktopActionMenuActions = compact ? compactHeaderActionMenuActions : headerActionMenuActions;
+    const mobileActionMenuActions = compact ? compactHeaderMobileActionMenuActions : primaryHeaderMobileActionMenuActions;
+    const showDesktopActionRow = canRelane || desktopActionMenuActions.length > 0;
+    const showDesktopHeaderActions = Boolean((!compact && activeSessionId) || showDesktopActionRow);
+
+    if (!showDesktopHeaderActions && mobileActionMenuActions.length === 0) {
+      return null;
+    }
+
     return (
       <div className="task-detail-header-actions">
-        {!compact && activeSessionId ? (
-          <button
-            className="secondary-button"
-            data-role="task-open-session"
-            type="button"
-            onClick={() => onOpenSession(activeSessionId, task.projectId)}
-          >
-            Open session
-          </button>
+        {showDesktopHeaderActions ? (
+          <div className="task-detail-header-actions__desktop">
+            {!compact && activeSessionId ? (
+              <button
+                className="secondary-button"
+                data-role="task-open-session"
+                type="button"
+                onClick={() => onOpenSession(activeSessionId, task.projectId)}
+              >
+                Open session
+              </button>
+            ) : null}
+            {showDesktopActionRow ? (
+              <div
+                className="action-cluster action-cluster--wrap task-detail-header-action-row"
+                data-role={compact ? "task-detail-compact-actions" : "task-detail-primary-actions"}
+              >
+                {canRelane ? <TaskRelaneMenu lanes={availableRelaneTargets} disabled={Boolean(pendingActionId)} onChoose={openRelaneConfirm} /> : null}
+                {desktopActionMenuActions.length ? (
+                  <TaskActionMenu actions={desktopActionMenuActions} pendingActionId={pendingActionId} />
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         ) : null}
-        <div
-          className="action-cluster action-cluster--wrap task-detail-header-action-row"
-          data-role={compact ? "task-detail-compact-actions" : "task-detail-primary-actions"}
-        >
-          {canRelane ? <TaskRelaneMenu lanes={availableRelaneTargets} disabled={Boolean(pendingActionId)} onChoose={openRelaneConfirm} /> : null}
-          <TaskActionMenu
-            actions={compact ? compactHeaderActionMenuActions : headerActionMenuActions}
-            menuLabel={compact ? "Sticky task actions" : undefined}
-            pendingActionId={pendingActionId}
-          />
-        </div>
+        {mobileActionMenuActions.length ? (
+          <div
+            className="task-detail-header-actions__mobile"
+            data-role={compact ? "task-detail-compact-actions-mobile" : "task-detail-primary-actions-mobile"}
+          >
+            <TaskActionMenu actions={mobileActionMenuActions} menuLabel="Actions" pendingActionId={pendingActionId} />
+          </div>
+        ) : null}
       </div>
     );
   }
