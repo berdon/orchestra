@@ -117,11 +117,11 @@ const proofShots: ProofShot[] = [
     copy: "Keep task-linked repositories, tracked files, and worktree context visible while work is in flight.",
   },
   {
-    src: "/github-landing/supervisor-chat.png",
-    alt: "Orchestra supervisor quick chat modal.",
-    eyebrow: "Supervisor quick chat",
+    src: "/github-landing/supervisor-chat-desktop.png",
+    alt: "Orchestra desktop supervisor chat session.",
+    eyebrow: "Supervisor chat",
     title: "Natural-language control over the whole system",
-    copy: "Create, coordinate, review, redirect, or unblock work from a persistent supervisor session.",
+    copy: "Create tasks, coordinate delivery, review blockers, and keep active work moving from the supervisor’s persistent chat session.",
   },
   {
     src: "/github-landing/permissions.png",
@@ -156,7 +156,7 @@ const proofShots: ProofShot[] = [
 function MarkIcon() {
   return (
     <span className="github-brand-mark" aria-hidden="true">
-      O
+      <img src="/github-landing/orchestra-logo.png" alt="" />
     </span>
   );
 }
@@ -494,16 +494,16 @@ export function GitHubLandingPage() {
             </p>
             <ul className="github-bullet-list">
               <li>Create tasks, coordinate workers, and route follow-up work from the supervisor session</li>
+              <li>Keep the same supervisor conversation available in the desktop workbench and the mobile layout</li>
               <li>Grant narrow protected actions or full supervisor access depending on the role</li>
-              <li>Keep agent capability, role authority, and escalation paths explicit inside the product</li>
             </ul>
           </div>
           <div className="github-duo__media">
             <figure className="github-screenshot-card">
-              <img src="/github-landing/supervisor-chat.png" alt="Orchestra supervisor quick chat modal." loading="lazy" />
+              <img src="/github-landing/supervisor-chat-desktop.png" alt="Orchestra desktop supervisor chat session." loading="lazy" />
             </figure>
             <figure className="github-screenshot-card">
-              <img src="/github-landing/permissions.png" alt="Orchestra permissions UI." loading="lazy" />
+              <img src="/github-landing/supervisor-chat-mobile.png" alt="Orchestra mobile supervisor chat session." loading="lazy" />
             </figure>
           </div>
         </section>

@@ -31,6 +31,8 @@ test("github landing page exposes the required product story and public CTAs", a
   await expect(page.locator('[data-role="github-workflow-gallery-image"]')).toHaveCount(3);
   await expect(page.getByText("See how work moves from lane definition to task execution")).toBeVisible();
   await expect(page.locator('[data-role="github-proof-grid"] img')).toHaveCount(7);
+  await expect(page.locator('img[alt="Orchestra desktop supervisor chat session."]')).toHaveCount(2);
+  await expect(page.locator('img[alt="Orchestra mobile supervisor chat session."]')).toHaveCount(1);
   await expect(page.getByText("Completely customizable kanban-style flows")).toBeVisible();
 
   const activeBefore = await page.locator('[data-role="github-workflow-gallery-image"][data-active="true"]').first().getAttribute("alt");
