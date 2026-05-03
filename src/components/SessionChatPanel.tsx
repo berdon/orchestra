@@ -157,7 +157,9 @@ interface SessionChatPanelProps {
   piSetupState?: PiSetupState | null;
   transcriptRef: RefObject<HTMLDivElement | null>;
   scrollState: SessionScrollState;
+  wrapTranscript: boolean;
   onScrollLockChange: (lockedToBottom: boolean) => void;
+  onWrapTranscriptChange: (wrapTranscript: boolean) => void;
   formatDateTime: (timestamp: string) => string;
   formatTimestamp: (timestamp: string) => string;
   formatModelOptionLabel: (state: SessionModelState | undefined) => string;
@@ -212,7 +214,9 @@ interface SessionTranscriptProps {
   mentionResolver?: (mention: string) => { key: string; label?: string; onClick: () => void } | null;
   transcriptRef: RefObject<HTMLDivElement | null>;
   scrollState: SessionScrollState;
+  wrapTranscript: boolean;
   onScrollLockChange: (lockedToBottom: boolean) => void;
+  onWrapTranscriptChange: (wrapTranscript: boolean) => void;
   formatTimestamp: (timestamp: string) => string;
   getEventTone: (kind: SessionEvent["kind"]) => string;
 }
@@ -501,11 +505,12 @@ const SessionTranscript = memo(function SessionTranscript({
   mentionResolver,
   transcriptRef,
   scrollState,
+  wrapTranscript,
   onScrollLockChange,
+  onWrapTranscriptChange,
   formatTimestamp,
   getEventTone,
 }: SessionTranscriptProps) {
-  const [wrapTranscript, setWrapTranscript] = useState(true);
 
   useEffect(() => {
     const node = transcriptRef.current;
@@ -569,7 +574,7 @@ const SessionTranscript = memo(function SessionTranscript({
               ? "Wrap long transcript lines so they stay inside the panel."
               : "Show each transcript line without wrapping.",
           )}
-          onClick={() => setWrapTranscript((current) => !current)}
+          onClick={() => onWrapTranscriptChange(!wrapTranscript)}
         >
           <span aria-hidden="true">{wrapTranscript ? "↩" : "↔"}</span>
           <span>{wrapTranscript ? "Wrap" : "No wrap"}</span>
@@ -620,7 +625,9 @@ export function SessionChatPanel({
   piSetupState,
   transcriptRef,
   scrollState,
+  wrapTranscript,
   onScrollLockChange,
+  onWrapTranscriptChange,
   formatDateTime,
   formatTimestamp,
   formatModelOptionLabel,
@@ -719,7 +726,9 @@ export function SessionChatPanel({
             mentionResolver={mentionResolver}
             transcriptRef={transcriptRef}
             scrollState={scrollState}
+            wrapTranscript={wrapTranscript}
             onScrollLockChange={onScrollLockChange}
+            onWrapTranscriptChange={onWrapTranscriptChange}
             formatTimestamp={formatTimestamp}
             getEventTone={getEventTone}
           />

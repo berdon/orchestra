@@ -25,6 +25,7 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
     const panelHeader = panel?.querySelector('.panel__header') as HTMLElement | null;
     const mobileSessionPicker = document.querySelector('[data-role="sessions-mobile-switcher"]') as HTMLElement | null;
     const mobilePickerTrigger = document.querySelector('[data-role="sessions-mobile-picker-trigger"]') as HTMLElement | null;
+    const mobileTranscriptControlsTrigger = document.querySelector('[data-role="session-mobile-transcript-controls-trigger"]') as HTMLElement | null;
     const mobilePickerCurrent = document.querySelector('.page-mobile-switcher--sessions .page-mobile-switcher__current') as HTMLElement | null;
     const mobilePickerSheet = document.querySelector('[data-role="sessions-mobile-picker"]') as HTMLElement | null;
     const createSessionFabButton = document.querySelector('[data-role="sessions-create-fab"] [data-role="create-session"]') as HTMLButtonElement | null;
@@ -41,6 +42,7 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
     const sendRect = sendButton?.getBoundingClientRect() ?? null;
     const modelRect = modelSelect?.getBoundingClientRect() ?? null;
     const triggerRect = mobilePickerTrigger?.getBoundingClientRect() ?? null;
+    const mobileTranscriptControlsRect = mobileTranscriptControlsTrigger?.getBoundingClientRect() ?? null;
     const sheetRect = mobilePickerSheet?.getBoundingClientRect() ?? null;
     const fabRect = createSessionFabButton?.getBoundingClientRect() ?? null;
     const pickerCurrentStyle = mobilePickerCurrent ? window.getComputedStyle(mobilePickerCurrent) : null;
@@ -88,6 +90,8 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
       sendDisabled: sendButton?.disabled ?? null,
       modelWidth: modelRect?.width ?? null,
       mobilePickerRight: triggerRect?.right ?? null,
+      mobileTranscriptControlsLeft: mobileTranscriptControlsRect?.left ?? null,
+      mobileTranscriptControlsRight: mobileTranscriptControlsRect?.right ?? null,
       mobilePickerSheetRight: sheetRect?.right ?? null,
       mobilePickerCurrentOverflow: pickerCurrentStyle?.overflow ?? null,
       mobilePickerCurrentTextOverflow: pickerCurrentStyle?.textOverflow ?? null,
@@ -424,8 +428,13 @@ test("sessions list uses deterministic task ordering and delays the dismiss affo
 
 test("sessions mobile mirrors chat with a lightweight page-local session picker and single-column detail view", async ({ page }) => {
   const timestamp = new Date().toISOString();
-  await page.addInitScript(({ nextTimestamp }) => {
+  await page.addInitScript(() => {
     window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.goto("/");
+  await page.evaluate(({ nextTimestamp }) => {
     window.localStorage.setItem(
       "orchestra.mock.sessions.orchestra",
       JSON.stringify([
@@ -463,24 +472,44 @@ test("sessions mobile mirrors chat with a lightweight page-local session picker 
         },
       ]),
     );
+    window.dispatchEvent(new CustomEvent("orchestra:session-change", {
+      detail: {
+        sessionIds: ["session-mobile-1", "session-mobile-2"],
+        reason: "test.mobile_session_picker_seed",
+      },
+    }));
+    window.dispatchEvent(new Event("focus"));
   }, { nextTimestamp: timestamp });
-
-  await page.setViewportSize({ width: 375, height: 667 });
-  await page.goto("/");
 
   await expect(page.locator('[data-role="sessions-mobile-picker-trigger"]')).toBeVisible();
   await expect(page.locator('.session-list-panel--desktop')).toBeHidden();
 
   await page.locator('[data-role="sessions-mobile-picker-trigger"]').click();
   await expect(page.locator('[data-role="sessions-mobile-picker"]')).toBeVisible();
-  await expect(page.locator('[data-role="sessions-mobile-picker"] .session-delete-button').first()).toHaveJSProperty('tabIndex', 0);
+  await expect(page.locator('[data-role="sessions-mobile-picker"] [data-role="session-link"][data-session-id="session-mobile-1"]')).toBeVisible();
 
   await page.locator('[data-role="sessions-mobile-picker"] [data-role="session-link"][data-session-id="session-mobile-1"]').click();
   await expect(page.locator('[data-role="sessions-mobile-picker"]')).toHaveCount(0);
   await expect(page.locator('[data-role="sessions-mobile-picker-trigger"]')).toContainText("Mobile planning session");
+  await expect(page.locator('[data-role="session-mobile-transcript-controls-trigger"]')).toBeVisible();
   await expect(page.locator('[data-role="sessions-create-fab"]')).toHaveCount(0);
   await expect(page.locator('[data-role="session-chat-panel"] > .panel__header')).toBeHidden();
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("First mobile transcript entry.");
+
+  await page.locator('[data-role="session-mobile-transcript-controls-trigger"]').click();
+  await expect(page.locator('[data-role="session-mobile-transcript-controls-menu"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-mobile-wrap-toggle"]')).toHaveAttribute("data-wrap-mode", "wrap");
+  await page.locator('[data-role="session-mobile-wrap-toggle"]').click();
+  await expect(page.locator('[data-role="session-transcript"]')).toHaveAttribute("data-wrap-mode", "nowrap");
+
+  await page.locator('[data-role="session-mobile-transcript-controls-trigger"]').click();
+  await expect(page.locator('[data-role="session-mobile-auto-scroll-toggle"]')).toHaveAttribute("data-auto-scroll-mode", "on");
+  await page.locator('[data-role="session-mobile-auto-scroll-toggle"]').click();
+  await expect(page.locator('[data-role="session-transcript"]')).toHaveAttribute("data-scroll-locked", "false");
+
+  await page.locator('[data-role="session-mobile-transcript-controls-trigger"]').click();
+  await page.locator('[data-role="session-mobile-auto-scroll-toggle"]').click();
+  await expect(page.locator('[data-role="session-transcript"]')).toHaveAttribute("data-scroll-locked", "true");
 
   await page.locator('[data-role="composer-input"]').fill("Reply from mobile sessions test");
   await page.locator('[data-role="send-message"]').click();
@@ -490,6 +519,9 @@ test("sessions mobile mirrors chat with a lightweight page-local session picker 
   expect(mobileLayout).not.toBeNull();
   expect(mobileLayout?.panelTop ?? 999).toBeLessThan(330);
   expect(mobileLayout?.mobilePickerTop ?? 999).toBeLessThan(mobileLayout?.panelTop ?? 999);
+  expect((mobileLayout?.mobileTranscriptControlsLeft ?? 0) - (mobileLayout?.mobilePickerRight ?? 0)).toBeGreaterThanOrEqual(0);
+  expect((mobileLayout?.mobileTranscriptControlsLeft ?? 999) - (mobileLayout?.mobilePickerRight ?? 0)).toBeLessThanOrEqual(12);
+  expect(mobileLayout?.mobileTranscriptControlsRight ?? 999).toBeLessThanOrEqual(mobileLayout?.viewportWidth ?? 0);
   expect(mobileLayout?.panelHeaderVisible).toBe(false);
   expect(mobileLayout?.transcriptHeight ?? 0).toBeGreaterThan(120);
   expect(mobileLayout?.transcriptTop ?? 999).toBeLessThan((mobileLayout?.viewportHeight ?? 0) - 180);
@@ -510,8 +542,13 @@ test("sessions mobile truncates long session labels without horizontal overflow 
   const timestamp = new Date().toISOString();
   const longTitle = `Mobile overflow regression ${"session ".repeat(18)}${"X".repeat(120)}`;
 
-  await page.addInitScript(({ nextTimestamp, nextLongTitle }) => {
+  await page.addInitScript(() => {
     window.localStorage.clear();
+  });
+
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.goto("/");
+  await page.evaluate(({ nextTimestamp, nextLongTitle }) => {
     window.localStorage.setItem(
       "orchestra.mock.sessions.orchestra",
       JSON.stringify([
@@ -533,10 +570,14 @@ test("sessions mobile truncates long session labels without horizontal overflow 
         },
       ]),
     );
+    window.dispatchEvent(new CustomEvent("orchestra:session-change", {
+      detail: {
+        sessionIds: ["session-mobile-long-label"],
+        reason: "test.mobile_long_label_seed",
+      },
+    }));
+    window.dispatchEvent(new Event("focus"));
   }, { nextTimestamp: timestamp, nextLongTitle: longTitle });
-
-  await page.setViewportSize({ width: 320, height: 568 });
-  await page.goto("/");
 
   const trigger = page.locator('[data-role="sessions-mobile-picker-trigger"]');
   await expect(trigger).toBeVisible();
@@ -555,6 +596,8 @@ test("sessions mobile truncates long session labels without horizontal overflow 
   expect(closedLayout).not.toBeNull();
   expect(closedLayout?.documentScrollWidth ?? 999).toBeLessThanOrEqual(closedLayout?.viewportWidth ?? 0);
   expect(closedLayout?.mobilePickerRight ?? 999).toBeLessThanOrEqual(closedLayout?.viewportWidth ?? 0);
+  expect(closedLayout?.mobileTranscriptControlsRight ?? 999).toBeLessThanOrEqual(closedLayout?.viewportWidth ?? 0);
+  expect((closedLayout?.mobileTranscriptControlsLeft ?? 0) - (closedLayout?.mobilePickerRight ?? 0)).toBeGreaterThanOrEqual(0);
   expect(closedLayout?.mobilePickerCurrentOverflow).toBe("hidden");
   expect(closedLayout?.mobilePickerCurrentTextOverflow).toBe("ellipsis");
   expect(closedLayout?.mobilePickerCurrentWhiteSpace).toBe("nowrap");

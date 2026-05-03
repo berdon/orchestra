@@ -2,6 +2,7 @@ import { useEffect, useState, type RefObject } from "react";
 
 import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
 import { SessionChatPanel } from "../components/SessionChatPanel";
+import { SessionTranscriptMobileControlsMenu } from "../components/SessionTranscriptMobileControlsMenu";
 import type { OrchestraConnectionSnapshot } from "../lib/orchestraClient";
 import type { UiErrorState } from "../lib/orchestraData/errors";
 import type {
@@ -112,10 +113,24 @@ export function AgentChatPage({
   onReloadSession,
 }: AgentChatPageProps) {
   const [mobileAgentPickerOpen, setMobileAgentPickerOpen] = useState(false);
+  const [mobileTranscriptControlsOpen, setMobileTranscriptControlsOpen] = useState(false);
+  const [wrapTranscript, setWrapTranscript] = useState(true);
 
   useEffect(() => {
     setMobileAgentPickerOpen(false);
+    setMobileTranscriptControlsOpen(false);
   }, [selectedAgentId]);
+
+  function handleTranscriptAutoScrollToggle() {
+    const nextLockedState = !scrollState.lockedToBottom;
+    const node = transcriptRef.current;
+
+    if (nextLockedState && node) {
+      node.scrollTop = node.scrollHeight;
+    }
+
+    onScrollLockChange(nextLockedState);
+  }
 
   const emptyStateLoading = !session && (loadingAgents || loadingSession);
   const mobileSwitcherBusy = loadingAgents || loadingSession;
@@ -162,20 +177,39 @@ export function AgentChatPage({
         aria-busy={mobileSwitcherBusy}
       >
         {mobileSwitcherLabel ? <p className="eyebrow">{mobileSwitcherLabel}</p> : null}
-        <button
-          className="page-mobile-switcher__trigger"
-          type="button"
-          data-role="chat-mobile-agent-picker-trigger"
-          aria-haspopup="listbox"
-          aria-expanded={mobileAgentPickerOpen}
-          disabled={loadingAgents && chatAgents.length === 0}
-          onClick={() => setMobileAgentPickerOpen((current) => !current)}
-        >
-          <span className="page-mobile-switcher__current">
-            {agent?.name ?? (loadingAgents ? "Loading agents…" : "Choose an agent")}
-          </span>
-          <span className="page-mobile-switcher__chevron" aria-hidden="true">▾</span>
-        </button>
+        <div className="page-mobile-switcher__row">
+          <button
+            className="page-mobile-switcher__trigger"
+            type="button"
+            data-role="chat-mobile-agent-picker-trigger"
+            aria-haspopup="listbox"
+            aria-expanded={mobileAgentPickerOpen}
+            disabled={loadingAgents && chatAgents.length === 0}
+            onClick={() => {
+              setMobileTranscriptControlsOpen(false);
+              setMobileAgentPickerOpen((current) => !current);
+            }}
+          >
+            <span className="page-mobile-switcher__current">
+              {agent?.name ?? (loadingAgents ? "Loading agents…" : "Choose an agent")}
+            </span>
+            <span className="page-mobile-switcher__chevron" aria-hidden="true">▾</span>
+          </button>
+          <SessionTranscriptMobileControlsMenu
+            open={mobileTranscriptControlsOpen}
+            disabled={!session}
+            onOpenChange={(open) => {
+              if (open) {
+                setMobileAgentPickerOpen(false);
+              }
+              setMobileTranscriptControlsOpen(open);
+            }}
+            autoScrollEnabled={scrollState.lockedToBottom}
+            wrapEnabled={wrapTranscript}
+            onToggleAutoScroll={handleTranscriptAutoScrollToggle}
+            onToggleWrap={() => setWrapTranscript((current) => !current)}
+          />
+        </div>
         {mobileSwitcherStatus ? <p className="page-mobile-switcher__hint page-mobile-switcher__hint--status" data-role="chat-mobile-agent-switcher-status">{mobileSwitcherStatus}</p> : null}
         {mobileAgentPickerOpen ? (
           <div className="page-mobile-switcher__sheet" data-role="chat-mobile-agent-picker">
@@ -223,7 +257,9 @@ export function AgentChatPage({
           piSetupState={piSetupState}
           transcriptRef={transcriptRef}
           scrollState={scrollState}
+          wrapTranscript={wrapTranscript}
           onScrollLockChange={onScrollLockChange}
+          onWrapTranscriptChange={setWrapTranscript}
           formatDateTime={formatDateTime}
           formatTimestamp={formatTimestamp}
           formatModelOptionLabel={formatModelOptionLabel}

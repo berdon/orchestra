@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { SessionChatPanel } from "../components/SessionChatPanel";
+import { SessionTranscriptMobileControlsMenu } from "../components/SessionTranscriptMobileControlsMenu";
 import type { OrchestraConnectionSnapshot } from "../lib/orchestraClient";
 import type { UiErrorState } from "../lib/orchestraData/errors";
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
@@ -169,6 +170,8 @@ export function SessionsPage({
   const [runtimeDetailsError, setRuntimeDetailsError] = useState<string | null>(null);
   const [revealedDeleteSessionId, setRevealedDeleteSessionId] = useState<string | null>(null);
   const [mobileSessionPickerOpen, setMobileSessionPickerOpen] = useState(false);
+  const [mobileTranscriptControlsOpen, setMobileTranscriptControlsOpen] = useState(false);
+  const [wrapTranscript, setWrapTranscript] = useState(true);
   const [compactSessionLayout, setCompactSessionLayout] = useState(
     () => (typeof window !== "undefined"
       ? window.matchMedia("(max-width: 1100px)").matches
@@ -221,7 +224,19 @@ export function SessionsPage({
 
   useEffect(() => {
     setMobileSessionPickerOpen(false);
+    setMobileTranscriptControlsOpen(false);
   }, [selectedSession?.id, sessionFilter]);
+
+  function handleTranscriptAutoScrollToggle() {
+    const nextLockedState = !scrollState.lockedToBottom;
+    const node = transcriptRef.current;
+
+    if (nextLockedState && node) {
+      node.scrollTop = node.scrollHeight;
+    }
+
+    onScrollLockChange(nextLockedState);
+  }
 
   function scheduleDeleteReveal(sessionId: string) {
     if (touchFriendlySessionListActions) {
@@ -414,19 +429,38 @@ export function SessionsPage({
       : "panel-stack panel-stack--sessions panel-stack--sessions-layout sessions-page"}
     >
       <div className="page-mobile-switcher page-mobile-switcher--sessions" data-role="sessions-mobile-switcher">
-        <button
-          className="page-mobile-switcher__trigger"
-          type="button"
-          data-role="sessions-mobile-picker-trigger"
-          aria-haspopup="dialog"
-          aria-expanded={mobileSessionPickerOpen}
-          onClick={() => setMobileSessionPickerOpen((current) => !current)}
-        >
-          <span className="page-mobile-switcher__current" title={selectedSessionPickerLabel}>
-            {selectedSessionPickerLabel}
-          </span>
-          <span className="page-mobile-switcher__chevron" aria-hidden="true">▾</span>
-        </button>
+        <div className="page-mobile-switcher__row">
+          <button
+            className="page-mobile-switcher__trigger"
+            type="button"
+            data-role="sessions-mobile-picker-trigger"
+            aria-haspopup="dialog"
+            aria-expanded={mobileSessionPickerOpen}
+            onClick={() => {
+              setMobileTranscriptControlsOpen(false);
+              setMobileSessionPickerOpen((current) => !current);
+            }}
+          >
+            <span className="page-mobile-switcher__current" title={selectedSessionPickerLabel}>
+              {selectedSessionPickerLabel}
+            </span>
+            <span className="page-mobile-switcher__chevron" aria-hidden="true">▾</span>
+          </button>
+          <SessionTranscriptMobileControlsMenu
+            open={mobileTranscriptControlsOpen}
+            disabled={!selectedSession}
+            onOpenChange={(open) => {
+              if (open) {
+                setMobileSessionPickerOpen(false);
+              }
+              setMobileTranscriptControlsOpen(open);
+            }}
+            autoScrollEnabled={scrollState.lockedToBottom}
+            wrapEnabled={wrapTranscript}
+            onToggleAutoScroll={handleTranscriptAutoScrollToggle}
+            onToggleWrap={() => setWrapTranscript((current) => !current)}
+          />
+        </div>
         {mobileSessionPickerOpen ? (
           <div className="page-mobile-switcher__sheet" data-role="sessions-mobile-picker">
             {renderMobileSessionPicker()}
@@ -460,7 +494,9 @@ export function SessionsPage({
             piSetupState={piSetupState}
             transcriptRef={transcriptRef}
             scrollState={scrollState}
+            wrapTranscript={wrapTranscript}
             onScrollLockChange={onScrollLockChange}
+            onWrapTranscriptChange={setWrapTranscript}
             formatDateTime={formatDateTime}
             formatTimestamp={formatTimestamp}
             formatModelOptionLabel={formatModelOptionLabel}

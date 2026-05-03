@@ -1446,8 +1446,9 @@ strong {
 }
 
 .page-mobile-switcher__row {
-  display: flex;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 8px;
   min-width: 0;
   max-width: 100%;
@@ -1475,6 +1476,49 @@ strong {
   background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
   color: var(--text);
   text-align: left;
+}
+
+.page-mobile-switcher__menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.page-mobile-switcher__menu-trigger {
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.page-mobile-switcher__menu-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(240px, calc(100vw - 32px));
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-overlay-background) 96%, transparent);
+  box-shadow: var(--shadow-overlay);
+  z-index: 20;
+}
+
+.page-mobile-switcher__menu-item {
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.page-mobile-switcher__menu-item[aria-checked="true"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--border));
+  background: var(--color-transcript-control-hover-background);
 }
 
 .page-mobile-switcher__current {
@@ -5768,24 +5812,15 @@ strong {
   }
 
   .session-chat-panel .session-transcript {
-    padding: 64px 14px 14px;
+    padding: 16px 14px 14px;
   }
 
   .session-chat-panel[data-surface="page-mobile-detail"] .session-transcript {
-    padding-top: 56px;
+    padding-top: 14px;
   }
 
   .session-transcript-controls {
-    left: 10px;
-    right: 10px;
-    justify-content: flex-start;
-    max-width: none;
-  }
-
-  .transcript-wrap-toggle {
-    flex: 1 1 calc(50% - 4px);
-    justify-content: center;
-    min-width: 0;
+    display: none;
   }
 
   .composer__meta,
