@@ -9,6 +9,8 @@ import {
 
 async function measureSessionLayout(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
+    const pageScroller = document.scrollingElement as HTMLElement | null;
+    const content = document.querySelector('.content') as HTMLElement | null;
     const contentBody = document.querySelector('.content__body') as HTMLDivElement | null;
     const stack = document.querySelector('.panel-stack--sessions') as HTMLElement | null;
     const shell = document.querySelector('.session-shell') as HTMLElement | null;
@@ -27,7 +29,7 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
     const mobilePickerSheet = document.querySelector('[data-role="sessions-mobile-picker"]') as HTMLElement | null;
     const createSessionFabButton = document.querySelector('[data-role="sessions-create-fab"] [data-role="create-session"]') as HTMLButtonElement | null;
 
-    if (!contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput) {
+    if (!content || !contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput) {
       return null;
     }
 
@@ -47,13 +49,25 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
       viewportWidth: window.innerWidth,
       viewportHeight: window.innerHeight,
       documentScrollWidth: document.documentElement.scrollWidth,
+      pageScrollHeight: pageScroller?.scrollHeight ?? null,
+      pageClientHeight: pageScroller?.clientHeight ?? null,
+      pageScrollable: pageScroller ? pageScroller.scrollHeight - pageScroller.clientHeight > 1 : false,
+      contentHeight: content.getBoundingClientRect().height,
+      contentClientHeight: content.clientHeight,
+      contentScrollHeight: content.scrollHeight,
+      contentOverflowY: window.getComputedStyle(content).overflowY,
+      contentScrollable: content.scrollHeight - content.clientHeight > 1,
       contentBodyHeight: contentBody.getBoundingClientRect().height,
       stackHeight: stack.getBoundingClientRect().height,
       shellGridColumns: shell ? window.getComputedStyle(shell).gridTemplateColumns : null,
       listPanelWidth: listPanel ? listPanel.getBoundingClientRect().width : 0,
       detailHeight: detailRect.height,
       detailTop: detailRect.top,
+      detailClientHeight: detailColumn.clientHeight,
       detailScrollHeight: detailColumn.scrollHeight,
+      detailOverflowY: window.getComputedStyle(detailColumn).overflowY,
+      detailScrollable: detailColumn.scrollHeight - detailColumn.clientHeight > 1
+        && ["auto", "scroll", "overlay"].includes(window.getComputedStyle(detailColumn).overflowY),
       panelHeight: panelRect.height,
       panelTop: panelRect.top,
       panelHeaderVisible: panelHeader ? window.getComputedStyle(panelHeader).display !== 'none' : false,
@@ -62,6 +76,9 @@ async function measureSessionLayout(page: import("@playwright/test").Page) {
       transcriptTop: transcriptRect.top,
       transcriptClientHeight: transcript.clientHeight,
       transcriptScrollHeight: transcript.scrollHeight,
+      transcriptOverflowY: window.getComputedStyle(transcript).overflowY,
+      transcriptScrollable: transcript.scrollHeight - transcript.clientHeight > 1
+        && ["auto", "scroll", "overlay"].includes(window.getComputedStyle(transcript).overflowY),
       composerInputHeight: composerRect.height,
       composerInputWidth: composerRect.width,
       composerFooterWidth: composerFooterRect?.width ?? 0,
@@ -286,13 +303,17 @@ test("sessions transcript fills the available page height while the composer rem
 
   const initialLayout = await measureSessionLayout(page);
   expect(initialLayout).not.toBeNull();
+  expect(initialLayout?.pageScrollable).toBe(false);
+  expect(initialLayout?.contentOverflowY).toBe("hidden");
+  expect(initialLayout?.contentScrollable).toBe(false);
   expect(initialLayout?.stackHeight ?? 0).toBeGreaterThan((initialLayout?.contentBodyHeight ?? 0) - 24);
   expect(initialLayout?.listPanelWidth ?? 0).toBeGreaterThan(220);
-  expect(initialLayout?.detailHeight ?? 0).toBeGreaterThan(900);
-  expect(initialLayout?.detailScrollHeight ?? 0).toBeGreaterThan((initialLayout?.detailHeight ?? 0) + 80);
-  expect(initialLayout?.panelHeight ?? 0).toBeGreaterThan((initialLayout?.detailHeight ?? 0) * 1.05);
+  expect(initialLayout?.detailHeight ?? 0).toBeGreaterThan((initialLayout?.contentBodyHeight ?? 0) * 0.8);
+  expect(initialLayout?.detailScrollable).toBe(false);
+  expect(initialLayout?.panelHeight ?? 0).toBeGreaterThan((initialLayout?.detailHeight ?? 0) * 0.85);
   expect(initialLayout?.panelHeaderVisible).toBe(true);
   expect(initialLayout?.transcriptHeight ?? 0).toBeGreaterThan(400);
+  expect(initialLayout?.transcriptOverflowY).toBe("auto");
   expect(initialLayout?.panelResize).toBe("none");
   expect(initialLayout?.composerResize).toBe("vertical");
 
@@ -303,6 +324,10 @@ test("sessions transcript fills the available page height while the composer rem
 
   const beforeResize = await measureSessionLayout(page);
   expect(beforeResize).not.toBeNull();
+  expect(beforeResize?.pageScrollable).toBe(false);
+  expect(beforeResize?.contentScrollable).toBe(false);
+  expect(beforeResize?.detailScrollable).toBe(false);
+  expect(beforeResize?.transcriptScrollable).toBe(true);
   expect((beforeResize?.transcriptScrollHeight ?? 0) - (beforeResize?.transcriptClientHeight ?? 0)).toBeGreaterThan(200);
 
   await dragComposerResizeCorner(page);
@@ -310,12 +335,13 @@ test("sessions transcript fills the available page height while the composer rem
 
   const afterResize = await measureSessionLayout(page);
   expect(afterResize).not.toBeNull();
+  expect(afterResize?.pageScrollable).toBe(false);
+  expect(afterResize?.contentScrollable).toBe(false);
+  expect(afterResize?.detailScrollable).toBe(false);
+  expect(afterResize?.transcriptScrollable).toBe(true);
   expect(afterResize?.composerInputHeight ?? 0).toBeGreaterThan((beforeResize?.composerInputHeight ?? 0) + 100);
-  expect(Math.abs((afterResize?.composerTop ?? 0) - (beforeResize?.composerTop ?? 0))).toBeLessThan(16);
-  expect(afterResize?.composerBottom ?? 0).toBeGreaterThan((beforeResize?.composerBottom ?? 0) + 100);
-  expect(afterResize?.panelHeight ?? 0).toBeGreaterThan((beforeResize?.panelHeight ?? 0) + 100);
-  expect(Math.abs((afterResize?.transcriptHeight ?? 0) - (beforeResize?.transcriptHeight ?? 0))).toBeLessThan(16);
-  expect(afterResize?.detailScrollHeight ?? 0).toBeGreaterThan((beforeResize?.detailScrollHeight ?? 0) + 100);
+  expect(afterResize?.transcriptHeight ?? 0).toBeLessThan((beforeResize?.transcriptHeight ?? 0) - 100);
+  expect(Math.abs((afterResize?.panelHeight ?? 0) - (beforeResize?.panelHeight ?? 0))).toBeLessThan(8);
   expect((afterResize?.transcriptScrollHeight ?? 0) - (afterResize?.transcriptClientHeight ?? 0)).toBeGreaterThan(200);
 
   await transcript.evaluate((element) => {

@@ -9,6 +9,8 @@ import {
 
 async function measureChatLayout(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
+    const pageScroller = document.scrollingElement as HTMLElement | null;
+    const content = document.querySelector('.content') as HTMLElement | null;
     const contentBody = document.querySelector('.content__body') as HTMLDivElement | null;
     const stack = document.querySelector('.panel-stack--sessions') as HTMLElement | null;
     const detailColumn = document.querySelector('.session-detail-column') as HTMLElement | null;
@@ -18,10 +20,10 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
     const composerFooter = document.querySelector('.composer__footer') as HTMLDivElement | null;
     const sendButton = document.querySelector('[data-role="send-message"]') as HTMLButtonElement | null;
     const modelSelect = document.querySelector('.session-model-field--composer .select-input') as HTMLSelectElement | null;
-    const panelHeader = panel.querySelector('.panel__header') as HTMLElement | null;
+    const panelHeader = panel?.querySelector('.panel__header') as HTMLElement | null;
     const mobileAgentPicker = document.querySelector('[data-role="chat-mobile-agent-switcher"]') as HTMLElement | null;
 
-    if (!contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput || !composerFooter || !sendButton || !modelSelect) {
+    if (!content || !contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput || !composerFooter || !sendButton || !modelSelect) {
       return null;
     }
 
@@ -35,15 +37,32 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
 
     return {
       viewportHeight: window.innerHeight,
+      pageScrollHeight: pageScroller?.scrollHeight ?? null,
+      pageClientHeight: pageScroller?.clientHeight ?? null,
+      pageScrollable: pageScroller ? pageScroller.scrollHeight - pageScroller.clientHeight > 1 : false,
+      contentHeight: content.getBoundingClientRect().height,
+      contentClientHeight: content.clientHeight,
+      contentScrollHeight: content.scrollHeight,
+      contentOverflowY: window.getComputedStyle(content).overflowY,
+      contentScrollable: content.scrollHeight - content.clientHeight > 1,
       contentBodyHeight: contentBody.getBoundingClientRect().height,
       stackHeight: stack.getBoundingClientRect().height,
       detailHeight: detailRect.height,
       detailTop: detailRect.top,
+      detailClientHeight: detailColumn.clientHeight,
       detailScrollHeight: detailColumn.scrollHeight,
+      detailOverflowY: window.getComputedStyle(detailColumn).overflowY,
+      detailScrollable: detailColumn.scrollHeight - detailColumn.clientHeight > 1
+        && ["auto", "scroll", "overlay"].includes(window.getComputedStyle(detailColumn).overflowY),
       panelHeight: panelRect.height,
       panelTop: panelRect.top,
       transcriptHeight: transcriptRect.height,
       transcriptTop: transcriptRect.top,
+      transcriptClientHeight: transcript.clientHeight,
+      transcriptScrollHeight: transcript.scrollHeight,
+      transcriptOverflowY: window.getComputedStyle(transcript).overflowY,
+      transcriptScrollable: transcript.scrollHeight - transcript.clientHeight > 1
+        && ["auto", "scroll", "overlay"].includes(window.getComputedStyle(transcript).overflowY),
       composerInputHeight: composerRect.height,
       composerInputWidth: composerRect.width,
       composerTop: composerRect.top,
@@ -73,6 +92,38 @@ async function dragComposerResizeCorner(page: import("@playwright/test").Page) {
   await page.mouse.down();
   await page.mouse.move(x, y + 120, { steps: 15 });
   await page.mouse.up();
+}
+
+async function appendMockChatSessionEvents(page: import("@playwright/test").Page, sessionId: string, count = 80) {
+  await page.evaluate(({ nextSessionId, nextCount }) => {
+    const storageKey = "orchestra.mock.sessions.orchestra";
+    const sessions = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+    const baseTime = Date.now();
+    const nextSessions = sessions.map((session: { id: string; events: unknown[]; updatedAt: string }) => {
+      if (session.id !== nextSessionId) {
+        return session;
+      }
+      const extraEvents = Array.from({ length: nextCount }, (_, index) => ({
+        id: `chat-layout-event-${index}`,
+        kind: index % 2 === 0 ? "user" : "assistant",
+        message: `Chat layout event ${index}\n${"transcript ".repeat(40)}`,
+        timestamp: new Date(baseTime + index * 1000).toISOString(),
+      }));
+      return {
+        ...session,
+        events: [...session.events, ...extraEvents],
+        updatedAt: new Date(baseTime + nextCount * 1000).toISOString(),
+      };
+    });
+    window.localStorage.setItem(storageKey, JSON.stringify(nextSessions));
+    window.dispatchEvent(new CustomEvent("orchestra:session-change", {
+      detail: {
+        sessionIds: [nextSessionId],
+        reason: "test.chat_layout_resize",
+      },
+    }));
+    window.dispatchEvent(new Event("focus"));
+  }, { nextSessionId: sessionId, nextCount: count });
 }
 
 test("chat nav lists named agents and excludes roles", async ({ page }) => {
@@ -350,6 +401,7 @@ test("chat page fills the available height while keeping the composer resizable"
   await page.getByRole("button", { name: "Chat" }).click();
   await page.locator('[data-role="chat-agent-nav-data"]').click();
 
+  const panel = page.locator('[data-role="session-chat-panel"]');
   const transcript = page.locator('[data-role="session-transcript"]');
 
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data chat");
@@ -357,24 +409,43 @@ test("chat page fills the available height while keeping the composer resizable"
 
   const initialLayout = await measureChatLayout(page);
   expect(initialLayout).not.toBeNull();
+  expect(initialLayout?.pageScrollable).toBe(false);
+  expect(initialLayout?.contentOverflowY).toBe("hidden");
+  expect(initialLayout?.contentScrollable).toBe(false);
   expect(initialLayout?.stackHeight ?? 0).toBeGreaterThan((initialLayout?.contentBodyHeight ?? 0) - 24);
   expect(initialLayout?.detailHeight ?? 0).toBeGreaterThan((initialLayout?.stackHeight ?? 0) - 24);
+  expect(initialLayout?.detailScrollable).toBe(false);
   expect(initialLayout?.panelHeight ?? 0).toBeGreaterThan((initialLayout?.detailHeight ?? 0) - 24);
   expect(initialLayout?.transcriptHeight ?? 0).toBeGreaterThan(400);
+  expect(initialLayout?.transcriptOverflowY).toBe("auto");
   expect(initialLayout?.panelResize).toBe("none");
   expect(initialLayout?.composerResize).toBe("vertical");
+
+  const sessionId = await panel.getAttribute("data-session-id");
+  expect(sessionId).toBeTruthy();
+  await appendMockChatSessionEvents(page, sessionId ?? "");
+  await expect(transcript).toContainText("Chat layout event 79");
+
+  const beforeResize = await measureChatLayout(page);
+  expect(beforeResize).not.toBeNull();
+  expect(beforeResize?.pageScrollable).toBe(false);
+  expect(beforeResize?.contentScrollable).toBe(false);
+  expect(beforeResize?.detailScrollable).toBe(false);
+  expect(beforeResize?.transcriptScrollable).toBe(true);
+  expect((beforeResize?.transcriptScrollHeight ?? 0) - (beforeResize?.transcriptClientHeight ?? 0)).toBeGreaterThan(200);
 
   await dragComposerResizeCorner(page);
   await page.waitForTimeout(100);
 
   const afterResize = await measureChatLayout(page);
   expect(afterResize).not.toBeNull();
-  expect(afterResize?.composerInputHeight ?? 0).toBeGreaterThan((initialLayout?.composerInputHeight ?? 0) + 100);
-  expect(Math.abs((afterResize?.composerTop ?? 0) - (initialLayout?.composerTop ?? 0))).toBeLessThan(16);
-  expect(afterResize?.composerBottom ?? 0).toBeGreaterThan((initialLayout?.composerBottom ?? 0) + 100);
-  expect(afterResize?.panelHeight ?? 0).toBeGreaterThan((initialLayout?.panelHeight ?? 0) + 100);
-  expect(Math.abs((afterResize?.transcriptHeight ?? 0) - (initialLayout?.transcriptHeight ?? 0))).toBeLessThan(16);
-  expect(afterResize?.detailScrollHeight ?? 0).toBeGreaterThan((initialLayout?.detailScrollHeight ?? 0) + 100);
+  expect(afterResize?.pageScrollable).toBe(false);
+  expect(afterResize?.contentScrollable).toBe(false);
+  expect(afterResize?.detailScrollable).toBe(false);
+  expect(afterResize?.transcriptScrollable).toBe(true);
+  expect(afterResize?.composerInputHeight ?? 0).toBeGreaterThan((beforeResize?.composerInputHeight ?? 0) + 100);
+  expect(afterResize?.transcriptHeight ?? 0).toBeLessThan((beforeResize?.transcriptHeight ?? 0) - 100);
+  expect(Math.abs((afterResize?.panelHeight ?? 0) - (beforeResize?.panelHeight ?? 0))).toBeLessThan(8);
 });
 
 test("chat mobile keeps a page-local agent picker and usable transcript/composer layout", async ({ page }) => {

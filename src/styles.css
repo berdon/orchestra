@@ -1423,11 +1423,14 @@ strong {
 }
 
 .panel-stack--sessions {
+  min-width: 0;
   min-height: 0;
   height: 100%;
 }
 
 .panel-stack--sessions-layout {
+  min-width: 0;
+  min-height: 0;
   grid-template-rows: minmax(0, 1fr);
 }
 
@@ -1861,14 +1864,17 @@ strong {
 }
 
 .session-shell {
+  min-width: 0;
   min-height: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 .session-list-panel,
 .session-detail-panel {
   display: grid;
   gap: 14px;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -1879,6 +1885,7 @@ strong {
   padding: 14px;
   border: 0;
   border-radius: 10px;
+  overflow: hidden;
   background: color-mix(in srgb, var(--bg-elevated) 86%, transparent);
 }
 
@@ -1894,18 +1901,19 @@ strong {
   min-height: 0;
   min-width: 0;
   align-content: stretch;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .session-detail-column--standalone {
+  min-width: 0;
   min-height: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 .session-detail-panel {
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
-  height: 100%;
   min-width: 0;
   padding: 20px;
 }
@@ -1913,7 +1921,6 @@ strong {
 .session-chat-panel {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-height: 0;
-  height: 100%;
   resize: none;
   overflow: hidden;
   background: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
@@ -1971,18 +1978,15 @@ strong {
 
 @media (min-width: 901px) {
   .session-chat-panel--desktop-native-resize {
-    display: flex;
-    flex-direction: column;
-    align-self: start;
-    min-height: 100%;
-    height: auto;
+    display: grid;
+    align-self: stretch;
+    min-height: 0;
     width: 100%;
   }
 
   .session-chat-panel--desktop-native-resize .session-transcript-wrap {
-    flex: 0 0 auto;
-    height: clamp(320px, 62vh, 760px);
     min-height: 0;
+    height: auto;
   }
 
   .session-chat-panel--desktop-native-resize .session-transcript {
