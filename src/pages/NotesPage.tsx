@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { MarkdownContent } from "../components/MarkdownContent";
 import { NotesCreateDialog, type NotesCreateDialogMode } from "../components/NotesCreateDialog";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
-import { SettingsMobileSubnavHeader } from "../components/SettingsMobileSubnavHeader";
 import { SyntaxHighlightedMarkdownEditor } from "../components/SyntaxHighlightedMarkdownEditor";
-import type { TaskActionMenuAction } from "../components/TaskActionMenu";
+import { TaskActionMenu, type TaskActionMenuAction } from "../components/TaskActionMenu";
 import { useOrchestraClient } from "../lib/orchestraClient";
 import type { NoteDetail, NoteLocation, NoteTreeNode, NotesRoot, NotesTree } from "../types";
 
@@ -27,6 +26,16 @@ interface NotesPageProps {
   canWrite: boolean;
 }
 
+interface FloatingNotesHeaderLayout {
+  left: number;
+  right: number;
+  top: number;
+}
+
+const MOBILE_NOTES_MEDIA_QUERY = "(max-width: 900px)";
+const FLOATING_CHROME_SCROLL_EPSILON = 2;
+const FLOATING_CHROME_DIRECTION_THRESHOLD = 28;
+
 function rootKey(root: Pick<NotesRoot, "scope" | "repositoryId">) {
   return root.scope === "project" ? "project" : `repository:${root.repositoryId ?? "missing"}`;
 }
@@ -46,7 +55,7 @@ function createRootSelection(root: NotesRoot): NotesSelection {
   };
 }
 
-interface NotesMobileSubnavOption {
+interface NotesMobileSelectionOption {
   id: string;
   label: string;
   selection: NotesSelection;
@@ -67,15 +76,15 @@ function mergeExpandedKeysForSelection(current: Set<string>, selection: NotesSel
   return next;
 }
 
-function formatNotesMobileSubnavLabel(root: NotesRoot, selection: NotesSelection) {
+function formatNotesSelectionLabel(root: NotesRoot, selection: NotesSelection) {
   if (selection.kind === "root") {
     return `${root.label} · Root`;
   }
   return `${root.label} · ${selection.kind === "directory" ? "Folder" : "Note"} · ${selection.location.path}`;
 }
 
-function collectNotesMobileSubnavOptions(root: NotesRoot, nodes: NoteTreeNode[]): NotesMobileSubnavOption[] {
-  const options: NotesMobileSubnavOption[] = [];
+function collectNotesSelectionOptions(root: NotesRoot, nodes: NoteTreeNode[]): NotesMobileSelectionOption[] {
+  const options: NotesMobileSelectionOption[] = [];
   for (const node of nodes) {
     const selection = {
       kind: node.kind,
@@ -87,17 +96,17 @@ function collectNotesMobileSubnavOptions(root: NotesRoot, nodes: NoteTreeNode[])
     } satisfies NotesSelection;
     options.push({
       id: selectionKey(selection),
-      label: formatNotesMobileSubnavLabel(root, selection),
+      label: formatNotesSelectionLabel(root, selection),
       selection,
     });
     if (node.kind === "directory" && node.children?.length) {
-      options.push(...collectNotesMobileSubnavOptions(root, node.children));
+      options.push(...collectNotesSelectionOptions(root, node.children));
     }
   }
   return options;
 }
 
-function buildNotesMobileSubnavOptions(tree: NotesTree | null): NotesMobileSubnavOption[] {
+function buildNotesSelectionOptions(tree: NotesTree | null): NotesMobileSelectionOption[] {
   if (!tree) {
     return [];
   }
@@ -106,10 +115,10 @@ function buildNotesMobileSubnavOptions(tree: NotesTree | null): NotesMobileSubna
     return [
       {
         id: selectionKey(rootSelection),
-        label: formatNotesMobileSubnavLabel(root, rootSelection),
+        label: formatNotesSelectionLabel(root, rootSelection),
         selection: rootSelection,
       },
-      ...collectNotesMobileSubnavOptions(root, root.children),
+      ...collectNotesSelectionOptions(root, root.children),
     ];
   });
 }
@@ -206,6 +215,21 @@ function buildDefaultScopePrompt(location: NoteLocation) {
   return location.scope === "project" ? "project" : `repository:${location.repositoryId ?? ""}`;
 }
 
+function findScrollableAncestor(element: HTMLElement | null) {
+  if (!element || typeof window === "undefined") {
+    return null;
+  }
+  let currentAncestor = element.parentElement;
+  while (currentAncestor) {
+    const styles = window.getComputedStyle(currentAncestor);
+    if (["auto", "scroll", "overlay"].includes(styles.overflowY)) {
+      return currentAncestor;
+    }
+    currentAncestor = currentAncestor.parentElement;
+  }
+  return null;
+}
+
 function NotesTreeBranch({
   nodes,
   selection,
@@ -289,9 +313,34 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
   const [createDialogError, setCreateDialogError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return false;
+    }
+    return window.matchMedia(MOBILE_NOTES_MEDIA_QUERY).matches;
+  });
+  const detailPageRef = useRef<HTMLElement | null>(null);
+  const primaryHeaderRef = useRef<HTMLDivElement | null>(null);
+  const compactHeaderSentinelRef = useRef<HTMLDivElement | null>(null);
+  const [floatingHeaderLayout, setFloatingHeaderLayout] = useState<FloatingNotesHeaderLayout | null>(null);
+  const [compactHeaderEligible, setCompactHeaderEligible] = useState(false);
+  const [compactHeaderShown, setCompactHeaderShown] = useState(false);
 
   const dirty = selectedNote != null && draftMarkdown !== savedMarkdown;
   const resolvedSelection = useMemo(() => resolveSelection(tree, selection), [tree, selection]);
+  const selectedPath = selection ? `docs/${selection.location.path || ""}` : null;
+  const detailEyebrow = resolvedSelection ? formatScopeLabel(selection?.location ?? { scope: "project", repositoryId: null }) : "Notes";
+  const detailTitle = resolvedSelection?.kind === "note"
+    ? resolvedSelection.node?.name ?? "Untitled note"
+    : resolvedSelection?.kind === "directory"
+      ? resolvedSelection.node?.name ?? "Folder"
+      : resolvedSelection?.root.label ?? "Notes";
+  const compactMeta = [
+    selectedPath,
+    resolvedSelection?.kind === "note" ? (previewVisible ? "Preview" : "Editing") : null,
+    resolvedSelection?.kind === "note" ? (dirty ? "Unsaved" : "Saved") : null,
+  ].filter(Boolean);
+  const activeSelectionKey = selection ? selectionKey(selection) : "none";
 
   const loadTree = useCallback(async (options?: { nextSelection?: NotesSelection | null; preserveStatus?: boolean }) => {
     if (!projectId) {
@@ -341,6 +390,19 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
     void loadTree();
   }, [loadTree]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const mediaQuery = window.matchMedia(MOBILE_NOTES_MEDIA_QUERY);
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsMobileViewport(event.matches);
+    };
+    setIsMobileViewport(mediaQuery.matches);
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
   const loadNote = useCallback(async (noteLocation: NoteLocation) => {
     if (!projectId) {
       return;
@@ -368,6 +430,140 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
     }
     void loadNote(selection.location);
   }, [loadNote, projectId, selectedNote, selection]);
+
+  useEffect(() => {
+    if (selection?.kind !== "note") {
+      setPreviewVisible(false);
+    }
+  }, [selection]);
+
+  useEffect(() => {
+    if (!isMobileViewport || typeof window === "undefined") {
+      return;
+    }
+    const detailPage = detailPageRef.current;
+    const scrollRoot = findScrollableAncestor(detailPage);
+    scrollRoot?.scrollTo({ top: 0, behavior: "auto" });
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, [activeSelectionKey, isMobileViewport]);
+
+  useEffect(() => {
+    const detailPage = detailPageRef.current;
+    const primaryHeader = primaryHeaderRef.current;
+    const sentinel = compactHeaderSentinelRef.current;
+    if (!isMobileViewport || !detailPage || !primaryHeader || !sentinel || typeof window === "undefined") {
+      setFloatingHeaderLayout(null);
+      setCompactHeaderEligible(false);
+      setCompactHeaderShown(false);
+      return;
+    }
+
+    const scrollRoot = findScrollableAncestor(detailPage);
+    const contentRoot = detailPage.closest(".content") as HTMLElement | null;
+    const mobileTopbar = document.querySelector('[data-role="mobile-topbar"]') as HTMLElement | null;
+    scrollRoot?.scrollTo({ top: 0, behavior: "auto" });
+    window.scrollTo({ top: 0, behavior: "auto" });
+    setCompactHeaderEligible(false);
+    setCompactHeaderShown(false);
+    let frameId: number | null = null;
+    const getScrollPosition = () => Math.max(scrollRoot?.scrollTop ?? 0, window.scrollY, detailPage.ownerDocument.documentElement.scrollTop);
+    let lastScrollPosition = getScrollPosition();
+    let accumulatedDirection: "up" | "down" | null = null;
+    let accumulatedDistance = 0;
+    let pendingScrollIntent: "up" | "down" | null = null;
+
+    const updateFloatingHeader = () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+      frameId = window.requestAnimationFrame(() => {
+        const detailRect = detailPage.getBoundingClientRect();
+        const contentRect = contentRoot?.getBoundingClientRect() ?? null;
+        const topbarRect = mobileTopbar?.getBoundingClientRect() ?? null;
+        const pinnedTop = Math.max(contentRect?.top ?? 0, topbarRect?.bottom ?? 0, 0) + 10;
+        const nextLayout = detailRect.width > 0 && detailRect.bottom > pinnedTop + 72
+          ? {
+              left: Math.max(detailRect.left, 12),
+              right: Math.max(window.innerWidth - detailRect.right, 12),
+              top: pinnedTop,
+            }
+          : null;
+        const scrollPosition = getScrollPosition();
+        const nextEligible = scrollPosition > 120 && sentinel.getBoundingClientRect().top <= pinnedTop + 4;
+
+        setFloatingHeaderLayout((current) => {
+          if (!nextLayout && !current) {
+            return current;
+          }
+          if (
+            current
+            && nextLayout
+            && current.left === nextLayout.left
+            && current.right === nextLayout.right
+            && current.top === nextLayout.top
+          ) {
+            return current;
+          }
+          return nextLayout;
+        });
+
+        if (!nextLayout || !nextEligible) {
+          accumulatedDirection = null;
+          accumulatedDistance = 0;
+          pendingScrollIntent = null;
+          lastScrollPosition = scrollPosition;
+          setCompactHeaderEligible((current) => (current ? false : current));
+          setCompactHeaderShown((current) => (current ? false : current));
+          return;
+        }
+
+        setCompactHeaderEligible((current) => (current === nextEligible ? current : nextEligible));
+
+        if (pendingScrollIntent) {
+          const nextShown = pendingScrollIntent === "up";
+          pendingScrollIntent = null;
+          setCompactHeaderShown((current) => (current === nextShown ? current : nextShown));
+        }
+      });
+    };
+
+    updateFloatingHeader();
+    const handleScroll = () => {
+      const scrollPosition = getScrollPosition();
+      const delta = scrollPosition - lastScrollPosition;
+      lastScrollPosition = scrollPosition;
+
+      if (Math.abs(delta) >= FLOATING_CHROME_SCROLL_EPSILON) {
+        const nextDirection = delta > 0 ? "down" : "up";
+        if (accumulatedDirection !== nextDirection) {
+          accumulatedDirection = nextDirection;
+          accumulatedDistance = Math.abs(delta);
+        } else {
+          accumulatedDistance += Math.abs(delta);
+        }
+
+        if (accumulatedDistance >= FLOATING_CHROME_DIRECTION_THRESHOLD) {
+          pendingScrollIntent = nextDirection;
+          accumulatedDistance = 0;
+        }
+      }
+
+      updateFloatingHeader();
+    };
+    const handleMeasure = () => updateFloatingHeader();
+    scrollRoot?.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("resize", handleMeasure);
+
+    return () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+      scrollRoot?.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", handleMeasure);
+    };
+  }, [activeSelectionKey, isMobileViewport]);
 
   const activeContainerLocation = useMemo(() => {
     if (!selection) {
@@ -586,11 +782,11 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
     }
   }, [canWrite, loadTree, orchestraClient.notes, projectId, promptForDestination, selection]);
 
-  const notesMobileSubnavOptions = useMemo(() => buildNotesMobileSubnavOptions(tree), [tree]);
-  const notesMobileSubnavValue = selection ? selectionKey(selection) : null;
-  const notesMobileSubnavSelectionMap = useMemo(
-    () => new Map(notesMobileSubnavOptions.map((option) => [option.id, option.selection])),
-    [notesMobileSubnavOptions],
+  const notesSelectionOptions = useMemo(() => buildNotesSelectionOptions(tree), [tree]);
+  const notesSelectionValue = selection ? selectionKey(selection) : "";
+  const notesSelectionMap = useMemo(
+    () => new Map(notesSelectionOptions.map((option) => [option.id, option.selection])),
+    [notesSelectionOptions],
   );
 
   const refreshAction = useMemo<TaskActionMenuAction>(() => ({
@@ -647,7 +843,13 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
     ];
   }, [canWrite, handleCopySelected, handleDeleteSelected, handleMoveOrRenameSelected, handleOpenCreateDialog, saving, selection, tree]);
 
-  const mobileSubnavActions = useMemo(() => [refreshAction, ...detailActions], [detailActions, refreshAction]);
+  const mobileHeaderActions = useMemo(() => [refreshAction, ...detailActions], [detailActions, refreshAction]);
+  const stickyHeaderStyle = floatingHeaderLayout
+    ? {
+        left: `${floatingHeaderLayout.left}px`,
+        right: `${floatingHeaderLayout.right}px`,
+      }
+    : undefined;
 
   const renderActionButton = useCallback((action: TaskActionMenuAction, className?: string) => (
     <button
@@ -677,10 +879,10 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
           <p className="eyebrow">Notes</p>
           <h2>Project notes</h2>
         </div>
-        {renderActionButton(refreshAction, "settings-mobile-subnav-redundant-actions")}
+        {renderActionButton(refreshAction)}
       </div>
       {!tree?.roots.length ? <p className="empty-state">No project selected.</p> : null}
-      <div className="notes-page__nav-tree settings-mobile-subnav-list" data-role="notes-nav-tree">
+      <div className="notes-page__nav-tree" data-role="notes-nav-tree">
         {tree?.roots.map((root) => {
           const key = `root:${rootKey(root)}`;
           const expanded = expandedKeys.has(key);
@@ -733,23 +935,49 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
       <p>Select a project to browse project and repository notes.</p>
     </section>
   ) : (
-    <section className="panel notes-page__detail">
-      <div className="notes-page__detail-header">
-        <div>
-          <p className="eyebrow">{resolvedSelection ? formatScopeLabel(selection?.location ?? { scope: "project", repositoryId: null }) : "Notes"}</p>
-          <h2>
-            {resolvedSelection?.kind === "note"
-              ? resolvedSelection.node?.name
-              : resolvedSelection?.kind === "directory"
-                ? resolvedSelection.node?.name
-                : resolvedSelection?.root.label ?? "Notes"}
-          </h2>
-          {selection ? <p className="muted-copy">docs/{selection.location.path || ""}</p> : null}
+    <section className="panel notes-page__detail" ref={detailPageRef}>
+      <div className="panel__header panel__header--session-detail notes-page__detail-header" data-role="notes-detail-primary-header" ref={primaryHeaderRef}>
+        <div className="notes-page__detail-header-copy">
+          <p className="eyebrow">{detailEyebrow}</p>
+          <h2>{detailTitle}</h2>
+          {selectedPath ? <p className="muted-copy">{selectedPath}</p> : null}
         </div>
-        <div className="notes-page__actions settings-mobile-subnav-redundant-actions">
+        <div className="notes-page__actions">
           {detailActions.map((action) => renderActionButton(action))}
         </div>
+        {isMobileViewport ? (
+          <div className="notes-page__detail-header-controls">
+            <label className="notes-page__selection-picker">
+              <span className="notes-page__selection-picker-label">Location</span>
+              <select
+                className="select-input notes-page__selection-picker-control"
+                data-role="notes-detail-header-select-control"
+                aria-label="Note location"
+                value={notesSelectionValue}
+                onChange={(event) => {
+                  const nextSelection = notesSelectionMap.get(event.target.value);
+                  if (nextSelection) {
+                    void requestSelection(nextSelection);
+                  }
+                }}
+              >
+                <option value="">{loading ? "Loading notes…" : tree?.roots.length ? "Select note location" : "No notes available"}</option>
+                {notesSelectionOptions.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <TaskActionMenu
+              actions={mobileHeaderActions}
+              menuLabel="Note actions"
+              mobileTriggerVariant="icon"
+              mobileTriggerAriaLabel="Note actions"
+              mobileTriggerDataRole="notes-detail-header-actions-trigger"
+            />
+          </div>
+        ) : null}
       </div>
+      <div className="notes-page__detail-header-sentinel" ref={compactHeaderSentinelRef} aria-hidden="true" />
       {loading ? <p className="supporting-copy">Loading notes…</p> : null}
       {error ? <p className="supporting-copy">{error}</p> : null}
       {statusMessage ? <p className="supporting-copy">{statusMessage}</p> : null}
@@ -767,32 +995,34 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
                 aria-pressed={previewVisible}
                 onClick={() => setPreviewVisible((current) => !current)}
               >
-                {previewVisible ? "Hide preview" : "Show preview"}
+                {previewVisible ? "Edit note" : "Show preview"}
               </button>
               <button className="secondary-button" type="button" onClick={handleRevert} disabled={!dirty || saving}>Revert</button>
               <button className="primary-button" type="button" onClick={() => void handleSave()} disabled={!canWrite || !dirty || saving}>{saving ? "Saving…" : "Save"}</button>
             </div>
           </div>
-          <div className={previewVisible ? "notes-editor__panes" : "notes-editor__panes notes-editor__panes--preview-hidden"}>
-            <div className="notes-editor__pane">
-              <label className="notes-editor__label" htmlFor="notes-markdown-editor">Markdown</label>
-              <SyntaxHighlightedMarkdownEditor
-                id="notes-markdown-editor"
-                dataRole="notes-markdown-editor"
-                value={draftMarkdown}
-                onChange={setDraftMarkdown}
-                readOnly={!canWrite}
-                spellCheck={false}
-              />
-            </div>
+          <div className="notes-editor__body" data-role={previewVisible ? "notes-preview-surface" : "notes-editor-surface"}>
             {previewVisible ? (
-              <div className="notes-editor__pane">
+              <div className="notes-editor__pane notes-editor__pane--preview-only">
                 <p className="notes-editor__label">Preview</p>
                 <div className="notes-editor__preview" data-role="notes-preview-panel">
                   {draftMarkdown.trim() ? <MarkdownContent message={draftMarkdown} /> : <p className="empty-state">Nothing to preview yet.</p>}
                 </div>
               </div>
-            ) : null}
+            ) : (
+              <div className="notes-editor__pane">
+                <label className="notes-editor__label" htmlFor="notes-markdown-editor">Markdown</label>
+                <SyntaxHighlightedMarkdownEditor
+                  id="notes-markdown-editor"
+                  dataRole="notes-markdown-editor"
+                  value={draftMarkdown}
+                  onChange={setDraftMarkdown}
+                  readOnly={!canWrite}
+                  spellCheck={false}
+                  autoGrow={isMobileViewport}
+                />
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -805,35 +1035,44 @@ export function NotesPage({ projectId, canWrite }: NotesPageProps) {
 
   return (
     <>
-      {projectId ? (
-        <SettingsMobileSubnavHeader
-          dataRolePrefix="notes"
-          selectLabel={null}
-          ariaLabel="Note location"
-          value={notesMobileSubnavValue}
-          emptyOptionLabel={loading ? "Loading notes…" : tree?.roots.length ? "Select note location" : "No notes available"}
-          options={notesMobileSubnavOptions.map(({ id, label }) => ({ id, label }))}
-          onChange={(value) => {
-            const nextSelection = notesMobileSubnavSelectionMap.get(value);
-            if (nextSelection) {
-              void requestSelection(nextSelection);
-            }
-          }}
-          actions={mobileSubnavActions}
-          actionMenuLabel="Note actions"
-        />
-      ) : null}
       <ResizableSidebarLayout
         className="notes-page"
         storageKey="orchestra.notes.secondary-nav-width"
         navigation={navigation}
         detail={detail}
-        navigationClassName="notes-page__navigation settings-mobile-subnav-panel"
+        navigationClassName="notes-page__navigation"
         detailClassName="notes-page__detail-shell"
         minWidth={240}
         maxWidth={420}
         defaultWidth={280}
       />
+      {projectId && isMobileViewport && compactHeaderEligible && stickyHeaderStyle ? (
+        <div
+          className={`notes-page__floating-header${compactHeaderShown ? "" : " notes-page__floating-header--hidden"}`}
+          data-role="notes-detail-compact-header"
+          data-scroll-state={compactHeaderShown ? "visible" : "hidden"}
+          style={{ ...stickyHeaderStyle, top: `${floatingHeaderLayout?.top ?? 0}px` }}
+        >
+          <div className="notes-page__floating-header-copy">
+            <div className="notes-page__floating-header-title-row">
+              <span className="status-badge status-badge--neutral">{resolvedSelection?.kind ?? "root"}</span>
+              <h3>{detailTitle}</h3>
+            </div>
+            {compactMeta.length ? (
+              <div className="notes-page__floating-header-meta">
+                {compactMeta.map((item) => <span key={item}>{item}</span>)}
+              </div>
+            ) : null}
+          </div>
+          <TaskActionMenu
+            actions={mobileHeaderActions}
+            menuLabel="Sticky note actions"
+            mobileTriggerVariant="icon"
+            mobileTriggerAriaLabel="Sticky note actions"
+            mobileTriggerDataRole="notes-detail-compact-header-actions-trigger"
+          />
+        </div>
+      ) : null}
       {createDialogMode && tree?.roots.length ? (
         <NotesCreateDialog
           mode={createDialogMode}
