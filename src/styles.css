@@ -6614,6 +6614,60 @@ strong {
   .task-action-menu__mobile {
     display: block;
   }
+
+  .task-detail-shell,
+  .task-page.task-detail-page.panel,
+  .task-detail-tabs-panel {
+    overflow-x: hidden;
+  }
+
+  .task-detail-primary-header,
+  .task-detail-primary-header > *,
+  .task-detail-primary-header__copy,
+  .task-detail-primary-header__copy > *,
+  .task-detail-summary,
+  .task-detail-summary > *,
+  .task-detail-summary__header,
+  .task-detail-summary__header > *,
+  .task-detail-summary__history-header,
+  .task-detail-summary__history-header > *,
+  .task-detail-summary__comments-footer,
+  .task-detail-tabs__body,
+  .task-detail-tabs__body > *,
+  .task-section,
+  .task-section > *,
+  .task-section-list,
+  .task-section-list > *,
+  .task-history-card,
+  .workflow-section__header,
+  .workflow-section__header > *,
+  .task-detail-header-actions,
+  .task-detail-header-action-row,
+  .task-detail-floating-header,
+  .task-detail-floating-header__copy,
+  .task-detail-floating-header__title-row,
+  .task-comment-thread,
+  .task-comment-thread__parent,
+  .task-comment-thread__reply,
+  .task-comment-thread__replies,
+  .task-comment-composer,
+  .task-comment-composer__grid {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .task-detail-summary__header,
+  .task-detail-summary__history-header,
+  .workflow-section__header {
+    flex-wrap: wrap;
+  }
+
+  .task-detail-shell :where(h2, h3, h4, p, li, strong, span, a, .muted-copy, .session-detail__meta),
+  .task-comment-thread__quote {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
 }
 
 .app-shell[data-mobile-navigation="true"] .settings-mobile-subnav-shell {

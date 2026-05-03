@@ -194,6 +194,138 @@ async function revealTaskDetailDock(page: Page) {
   await expect(tabDock).toBeVisible();
 }
 
+async function seedMobileTaskDetailOverflowFixture(page: Page) {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    const taskId = "task-mobile-overflow";
+    const longPathSegment = "mobileoverflowsegment".repeat(14);
+    const longCommentToken = "MOBILECOMMENTTOKEN".repeat(32);
+    const relativePath = `docs/${longPathSegment}/notes.md`;
+    const absolutePath = `/mock/projects/orchestra/repository/${relativePath}`;
+    const comments = [
+      {
+        id: "comment-mobile-overflow-parent",
+        taskId,
+        parentCommentId: null,
+        author: "Reviewer",
+        message: `A long unbroken mobile task-detail token should wrap instead of widening the outer content scroller: ${longCommentToken}`,
+        interruptAgent: false,
+        repositoryId: null,
+        relativePath: null,
+        lineStart: null,
+        lineEnd: null,
+        columnStart: null,
+        columnEnd: null,
+        selectedText: null,
+        anchorCommitHash: null,
+        anchorHasUncommittedChanges: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+    ];
+
+    window.localStorage.setItem("orchestra.mock.tasks", JSON.stringify([
+      {
+        id: taskId,
+        projectId: "orchestra",
+        number: "ORC-222",
+        title: "Mobile task detail overflow regression fixture",
+        description: "Seeds long task-detail content so mobile layout regressions cannot reintroduce right-side horizontal overflow.",
+        type: "bug",
+        status: "in_progress",
+        priority: "P1",
+        workflowId: null,
+        currentLaneId: null,
+        assigneeType: "unassigned",
+        assigneeId: null,
+        repositoryId: "repo-mobile-overflow",
+        repositoryIds: ["repo-mobile-overflow"],
+        parentTaskId: null,
+        archived: false,
+        tags: ["mobile", "regression"],
+        commentCount: comments.length,
+        unreadCommentCount: 0,
+        laneRunCount: 0,
+        childCount: 0,
+        completedChildCount: 0,
+        inProgressChildCount: 0,
+        blockedChildCount: 0,
+        blockedByCount: 0,
+        blockingCount: 0,
+        attachmentCount: 0,
+        dependencyBlocked: false,
+        readyForDispatch: false,
+        parent: null,
+        lineage: [],
+        children: [],
+        blockedBy: [],
+        blocking: [],
+        attachments: [],
+        taskRepositories: [
+          {
+            taskId,
+            repositoryId: "repo-mobile-overflow",
+            repositoryName: "Orchestra repository",
+            repositorySlug: "orchestra",
+            managedRepositoryPath: "/mock/projects/orchestra/repository",
+            sourcePath: "/mock/projects/orchestra/repository",
+            sourceKind: "local",
+            taskWorktreePath: null,
+            createdAt: timestamp,
+          },
+        ],
+        fileReferences: [
+          {
+            id: "task-file-reference-mobile-overflow-default",
+            taskId,
+            repositoryId: "repo-mobile-overflow",
+            repositoryName: "Orchestra repository",
+            repositorySlug: "orchestra",
+            relativePath,
+            absolutePath,
+            exists: true,
+            isDefault: true,
+            createdAt: timestamp,
+          },
+        ],
+        comments,
+        todos: [],
+        laneRuns: [],
+        activeLaneAssignment: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      },
+    ]));
+
+    window.localStorage.setItem(
+      "orchestra.mock.file-contents",
+      JSON.stringify({
+        [absolutePath]: [
+          "Alpha line",
+          "Beta line with ordinary preview content.",
+          "Gamma line keeps the default file viewer mounted without relying on horizontal overflow.",
+        ].join("\n"),
+      }),
+    );
+  });
+}
+
+async function readMobileTaskDetailOverflowMetrics(page: Page) {
+  return page.evaluate(() => {
+    const content = document.querySelector(".content") as HTMLElement | null;
+    if (!content) {
+      throw new Error("Expected the main `.content` scroller to exist.");
+    }
+    return {
+      clientWidth: content.clientWidth,
+      scrollWidth: content.scrollWidth,
+      documentScrollWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+    };
+  });
+}
+
 async function seedClickableTagNavigationData(page: Page) {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -4868,6 +5000,37 @@ test("task detail hides the mobile section dock on scroll down and restores it o
   await mobileSectionSelect.selectOption("comments");
   await expect(mobileSectionSelect).toHaveValue("comments");
   await expect(page.locator('[data-role="task-detail-summary-comments"]')).toBeVisible();
+});
+
+test("task detail on mobile keeps the outer content scroller contained across long repo-file and comment content", async ({ page }) => {
+  await seedMobileTaskDetailOverflowFixture(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openTasksOverviewOnMobile(page);
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Mobile task detail overflow regression fixture" }).first().click();
+
+  await expect(page.locator('[data-role="task-detail-panel"]')).toBeVisible();
+  await expect(page.locator('[data-role="default-file-code-viewer"]')).toBeVisible();
+
+  let metrics = await readMobileTaskDetailOverflowMetrics(page);
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+  expect(metrics.documentScrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1);
+
+  const mobileSectionSelect = page.locator('[data-role="task-detail-section-select-control"]');
+  await mobileSectionSelect.selectOption("comments");
+  await expect(mobileSectionSelect).toHaveValue("comments");
+  await expect(page.locator('[data-role="task-detail-summary-comments"]')).toBeVisible();
+
+  metrics = await readMobileTaskDetailOverflowMetrics(page);
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+  expect(metrics.documentScrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1);
+
+  await mobileSectionSelect.selectOption("repo-files");
+  await expect(mobileSectionSelect).toHaveValue("repo-files");
+  await expect(page.locator('[data-role="task-detail-tabpanel-repo-files"]')).toBeVisible();
+
+  metrics = await readMobileTaskDetailOverflowMetrics(page);
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+  expect(metrics.documentScrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1);
 });
 
 test("task detail edit mode exposes bottom-right Save and Cancel FABs on mobile", async ({ page }) => {
