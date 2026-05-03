@@ -1594,6 +1594,7 @@ export interface TaskRepository {
   repositoryName: string;
   repositorySlug: string;
   managedRepositoryPath?: string | null;
+  defaultBranch?: string | null;
   sourcePath?: string | null;
   sourceKind?: "local" | "remote" | null;
   taskWorktreePath?: string | null;

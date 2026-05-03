@@ -838,6 +838,7 @@ export function ProjectsPanel() {
               <label className="field-group">
                 <span className="field-group__label">Default branch</span>
                 <input className="text-input" data-role="repository-default-branch" value={repositoryDraft.defaultBranch ?? ""} onChange={(event) => setRepositoryDraft((current) => ({ ...current, defaultBranch: event.target.value }))} />
+                <span className="field-group__hint">Merge/mainline branch used for task worktrees. Orchestra keeps the managed checkout on a separate workspace branch.</span>
               </label>
               <div className="task-editor-grid__full">
                 <button className="secondary-button" data-role="add-repository" type="button" disabled={saving} onClick={() => void handleAddRepository()}>

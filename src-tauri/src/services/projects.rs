@@ -680,35 +680,78 @@ pub fn get_repository(
 }
 
 const DEFAULT_REPOSITORY_ID: &str = "repo-orchestra";
+const MANAGED_CHECKOUT_WORKSPACE_BRANCH: &str = "project";
 
 fn ensure_default_project(connection: &Connection) -> Result<(), String> {
     let count: i64 = connection
         .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
         .map_err(|error| format!("Unable to count projects: {error}"))?;
-    if count > 0 {
+
+    let default_repository_path = discover_dev_checkout_root();
+    if count == 0 {
+        let now = now_iso();
+        let default_repository_id = default_repository_path
+            .as_ref()
+            .map(|_| DEFAULT_REPOSITORY_ID);
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, 'orchestra', 'Orchestra', 'Default Orchestra project', 'ORC', ?2, ?3, ?3)",
+                params!["orchestra", default_repository_id, now],
+            )
+            .map_err(|error| format!("Unable to seed default project: {error}"))?;
+    } else if !connection
+        .query_row(
+            "SELECT 1 FROM projects WHERE id = 'orchestra' LIMIT 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query default project: {error}"))?
+        .is_some()
+    {
         return Ok(());
     }
 
-    let now = now_iso();
-    let default_repository_path = discover_dev_checkout_root();
-    let default_repository_id = default_repository_path
-        .as_ref()
-        .map(|_| DEFAULT_REPOSITORY_ID);
-    connection
-        .execute(
-            "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, 'orchestra', 'Orchestra', 'Default Orchestra project', 'ORC', ?2, ?3, ?3)",
-            params!["orchestra", default_repository_id, now],
-        )
-        .map_err(|error| format!("Unable to seed default project: {error}"))?;
+    let Some(default_path) = default_repository_path else {
+        return Ok(());
+    };
 
-    if let Some(default_path) = default_repository_path {
+    let project = get_project(connection, "orchestra")?;
+    let source_path = default_path.display().to_string();
+    let managed_checkout_dir =
+        ensure_managed_repository_checkout(&project, "orchestra", Some(&source_path), "main")?;
+    let now = now_iso();
+    let existing_repository_id = connection
+        .query_row(
+            "SELECT id FROM repositories WHERE id = ?1 LIMIT 1",
+            [DEFAULT_REPOSITORY_ID],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to query default repository: {error}"))?;
+
+    if existing_repository_id.is_some() {
         connection
             .execute(
-                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at) VALUES (?1, ?2, 'orchestra', 'Orchestra repository', ?3, NULL, 'existing', 'main', ?4, ?4)",
-                params![DEFAULT_REPOSITORY_ID, "orchestra", default_path.display().to_string(), now],
+                "UPDATE repositories SET slug = 'orchestra', name = 'Orchestra repository', local_path = ?2, remote_url = ?3, mode = 'existing', default_branch = 'main', updated_at = ?4 WHERE id = ?1",
+                params![DEFAULT_REPOSITORY_ID, managed_checkout_dir.display().to_string(), source_path, now],
+            )
+            .map_err(|error| format!("Unable to migrate default repository: {error}"))?;
+    } else {
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, mode, default_branch, created_at, updated_at) VALUES (?1, ?2, 'orchestra', 'Orchestra repository', ?3, ?4, 'existing', 'main', ?5, ?5)",
+                params![DEFAULT_REPOSITORY_ID, "orchestra", managed_checkout_dir.display().to_string(), source_path, now],
             )
             .map_err(|error| format!("Unable to seed default repository: {error}"))?;
     }
+
+    connection
+        .execute(
+            "UPDATE projects SET default_repository_id = ?2, updated_at = ?3 WHERE id = ?1",
+            params!["orchestra", DEFAULT_REPOSITORY_ID, now],
+        )
+        .map_err(|error| format!("Unable to update default project repository pointer: {error}"))?;
 
     Ok(())
 }
@@ -850,6 +893,180 @@ fn ensure_project_root_exists(project_slug: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+pub(crate) fn normalize_managed_checkout_branch(
+    managed_checkout_dir: &std::path::Path,
+    default_branch: &str,
+    force_normalize: bool,
+) -> Result<(), String> {
+    let default_branch = default_branch.trim();
+    if default_branch.is_empty() || default_branch == MANAGED_CHECKOUT_WORKSPACE_BRANCH {
+        return Ok(());
+    }
+
+    let current_branch = git_current_branch(managed_checkout_dir)?;
+    if !git_worktree_is_clean(managed_checkout_dir)? {
+        if current_branch.as_deref() == Some(default_branch) {
+            return Err(managed_checkout_normalization_blocked_error(
+                managed_checkout_dir,
+                default_branch,
+            ));
+        }
+        return Ok(());
+    }
+
+    if !force_normalize {
+        let Some(current_branch) = current_branch.as_deref() else {
+            return Ok(());
+        };
+        if current_branch == MANAGED_CHECKOUT_WORKSPACE_BRANCH || current_branch != default_branch {
+            return Ok(());
+        }
+    }
+
+    let base_ref = match resolve_managed_checkout_base_ref(managed_checkout_dir, default_branch) {
+        Ok(reference) => reference,
+        Err(_) if !force_normalize => return Ok(()),
+        Err(error) => return Err(error),
+    };
+
+    let workspace_branch_ref = format!("refs/heads/{MANAGED_CHECKOUT_WORKSPACE_BRANCH}");
+    let mut command = std::process::Command::new("git");
+    command.arg("-C").arg(managed_checkout_dir).arg("checkout");
+    if force_normalize || !git_has_ref(managed_checkout_dir, &workspace_branch_ref)? {
+        command
+            .arg("-B")
+            .arg(MANAGED_CHECKOUT_WORKSPACE_BRANCH)
+            .arg(&base_ref);
+    } else {
+        command.arg(MANAGED_CHECKOUT_WORKSPACE_BRANCH);
+    }
+    let status = command.status().map_err(|error| {
+        format!(
+            "Unable to switch managed repository {} onto {}: {error}",
+            managed_checkout_dir.display(),
+            MANAGED_CHECKOUT_WORKSPACE_BRANCH
+        )
+    })?;
+    if !status.success() {
+        return Err(format!(
+            "Unable to switch managed repository {} onto {}",
+            managed_checkout_dir.display(),
+            MANAGED_CHECKOUT_WORKSPACE_BRANCH
+        ));
+    }
+
+    if git_has_ref(
+        managed_checkout_dir,
+        &format!("refs/remotes/origin/{default_branch}"),
+    )? {
+        let _ = std::process::Command::new("git")
+            .arg("-C")
+            .arg(managed_checkout_dir)
+            .args([
+                "branch",
+                "--set-upstream-to",
+                &format!("origin/{default_branch}"),
+                MANAGED_CHECKOUT_WORKSPACE_BRANCH,
+            ])
+            .status();
+    }
+
+    Ok(())
+}
+
+fn managed_checkout_normalization_blocked_error(
+    managed_checkout_dir: &std::path::Path,
+    default_branch: &str,
+) -> String {
+    format!(
+        "Managed repository {} is still checked out on default branch {} with uncommitted changes. Orchestra cannot move it onto {} safely until you commit, stash, or discard those changes (or manually switch the checkout off {}). Until you repair that checkout, it still blocks worktrees that need {}.",
+        managed_checkout_dir.display(),
+        default_branch,
+        MANAGED_CHECKOUT_WORKSPACE_BRANCH,
+        default_branch,
+        default_branch
+    )
+}
+
+fn git_current_branch(repository_path: &std::path::Path) -> Result<Option<String>, String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repository_path)
+        .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .output()
+        .map_err(|error| {
+            format!(
+                "Unable to inspect current branch for {}: {error}",
+                repository_path.display()
+            )
+        })?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
+}
+
+fn git_worktree_is_clean(repository_path: &std::path::Path) -> Result<bool, String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repository_path)
+        .args(["status", "--porcelain"])
+        .output()
+        .map_err(|error| {
+            format!(
+                "Unable to inspect managed repository status for {}: {error}",
+                repository_path.display()
+            )
+        })?;
+    if !output.status.success() {
+        return Err(format!(
+            "Unable to inspect managed repository status for {}",
+            repository_path.display()
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().is_empty())
+}
+
+fn git_has_ref(repository_path: &std::path::Path, reference: &str) -> Result<bool, String> {
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repository_path)
+        .args(["show-ref", "--verify", "--quiet", reference])
+        .status()
+        .map_err(|error| {
+            format!(
+                "Unable to inspect git ref {reference} in {}: {error}",
+                repository_path.display()
+            )
+        })?;
+    Ok(status.success())
+}
+
+fn resolve_managed_checkout_base_ref(
+    repository_path: &std::path::Path,
+    default_branch: &str,
+) -> Result<String, String> {
+    let local_ref = format!("refs/heads/{default_branch}");
+    if git_has_ref(repository_path, &local_ref)? {
+        return Ok(local_ref);
+    }
+
+    let remote_ref = format!("refs/remotes/origin/{default_branch}");
+    if git_has_ref(repository_path, &remote_ref)? {
+        return Ok(remote_ref);
+    }
+
+    Err(format!(
+        "Managed repository {} does not have default branch {}",
+        repository_path.display(),
+        default_branch
+    ))
+}
+
 fn ensure_managed_repository_checkout(
     project: &ProjectDetail,
     repository_slug: &str,
@@ -869,6 +1086,7 @@ fn ensure_managed_repository_checkout(
     }
 
     if managed_checkout_dir.join(".git").exists() {
+        normalize_managed_checkout_branch(&managed_checkout_dir, default_branch, false)?;
         return Ok(managed_checkout_dir);
     }
 
@@ -888,6 +1106,7 @@ fn ensure_managed_repository_checkout(
                     managed_checkout_dir.display()
                 ));
             }
+            normalize_managed_checkout_branch(&managed_checkout_dir, default_branch, true)?;
             return Ok(managed_checkout_dir);
         }
 
@@ -911,6 +1130,7 @@ fn ensure_managed_repository_checkout(
                     managed_checkout_dir.display()
                 ));
             }
+            normalize_managed_checkout_branch(&managed_checkout_dir, default_branch, true)?;
             return Ok(managed_checkout_dir);
         }
     }
@@ -966,6 +1186,7 @@ fn ensure_managed_repository_checkout(
         .args(["commit", "-m", "Initialize managed repository"])
         .current_dir(&managed_checkout_dir)
         .status();
+    normalize_managed_checkout_branch(&managed_checkout_dir, default_branch, true)?;
 
     Ok(managed_checkout_dir)
 }
@@ -1090,6 +1311,59 @@ mod tests {
         std::env::temp_dir().join(suffix)
     }
 
+    fn init_test_repo(label: &str) -> PathBuf {
+        let repository_root = unique_temp_path(label);
+        fs::create_dir_all(&repository_root).expect("repository root should exist");
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repository_root)
+            .args(["init", "-b", "main"])
+            .status()
+            .expect("git init should run")
+            .success());
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repository_root)
+            .args(["config", "user.email", "test@example.com"])
+            .status()
+            .expect("git config email should run")
+            .success());
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repository_root)
+            .args(["config", "user.name", "Test User"])
+            .status()
+            .expect("git config name should run")
+            .success());
+        fs::write(repository_root.join("README.md"), "# test\n").expect("README should write");
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repository_root)
+            .args(["add", "README.md"])
+            .status()
+            .expect("git add should run")
+            .success());
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repository_root)
+            .args(["commit", "-m", "init"])
+            .status()
+            .expect("git commit should run")
+            .success());
+        repository_root
+    }
+
+    fn current_branch(repository_root: &PathBuf) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repository_root)
+            .args(["symbolic-ref", "--short", "HEAD"])
+            .output()
+            .expect("git symbolic-ref should run");
+        assert!(output.status.success());
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
     #[test]
     fn test_is_remote_repository_path_detects_https() {
         assert!(is_remote_repository_path(
@@ -1159,6 +1433,30 @@ mod tests {
     fn test_is_remote_repository_path_rejects_plain_strings_without_colon_or_path_separator() {
         assert!(!is_remote_repository_path("just-a-string"));
         assert!(!is_remote_repository_path("repo"));
+    }
+
+    #[test]
+    fn normalize_managed_checkout_branch_moves_clean_default_branch_checkout_to_project() {
+        let repository_root = init_test_repo("projects-managed-branch-normalize");
+        normalize_managed_checkout_branch(&repository_root, "main", true)
+            .expect("managed checkout should normalize");
+
+        assert_eq!(current_branch(&repository_root), "project");
+        assert!(git_has_ref(&repository_root, "refs/heads/main").expect("main ref should resolve"));
+    }
+
+    #[test]
+    fn normalize_managed_checkout_branch_rejects_dirty_default_branch_checkout_with_repair_path() {
+        let repository_root = init_test_repo("projects-managed-branch-dirty");
+        fs::write(repository_root.join("README.md"), "# dirty\n").expect("README should update");
+
+        let error = normalize_managed_checkout_branch(&repository_root, "main", false)
+            .expect_err("dirty default-branch checkout should require repair");
+
+        assert_eq!(current_branch(&repository_root), "main");
+        assert!(error.contains("still checked out on default branch main"));
+        assert!(error.contains("commit, stash, or discard"));
+        assert!(error.contains("blocks worktrees that need main"));
     }
 
     #[test]

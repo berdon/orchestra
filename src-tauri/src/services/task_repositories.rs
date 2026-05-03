@@ -17,6 +17,7 @@ pub fn load_task_repositories(
                 repo.name,
                 repo.slug,
                 repo.local_path,
+                repo.default_branch,
                 repo.remote_url,
                 tr.created_at
             FROM task_repositories tr
@@ -36,7 +37,8 @@ pub fn load_task_repositories(
                 row.get::<_, String>(3)?,
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, Option<String>>(5)?,
-                row.get::<_, String>(6)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, String>(7)?,
             ))
         })
         .map_err(|error| format!("Unable to query task repositories for {task_id}: {error}"))?;
@@ -51,6 +53,7 @@ pub fn load_task_repositories(
                 repository_name,
                 repository_slug,
                 managed_repository_path,
+                default_branch,
                 source_path,
                 created_at,
             )| {
@@ -63,6 +66,7 @@ pub fn load_task_repositories(
                     repository_name,
                     repository_slug,
                     managed_repository_path,
+                    default_branch,
                     source_kind: source_path
                         .as_deref()
                         .map(|value| {

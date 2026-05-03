@@ -50,6 +50,10 @@ Keep `tasks.repository_id` temporarily as a compatibility/primary repository fie
 For each task-associated repository:
 
 - use the repository's managed checkout path as the source git repo
+- keep the long-lived managed checkout on a dedicated workspace branch so it does not occupy the integration branch by default
+- attempt to normalize legacy clean managed checkouts onto that workspace branch before creating task worktrees
+- if a managed checkout is still dirty while checked out on `defaultBranch`, fail with a repair message instead of silently leaving that branch occupied; the user must commit/stash/discard or manually move the checkout off `defaultBranch` first
+- resolve the detached task worktree base from the repository's `defaultBranch` ref (local branch first, then `origin/<defaultBranch>`), not from the managed checkout `HEAD`
 - create a detached worktree at the task workspace destination
 - reuse the worktree if it already exists
 

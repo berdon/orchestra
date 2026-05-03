@@ -2052,6 +2052,7 @@ pub struct TaskRepository {
     pub repository_name: String,
     pub repository_slug: String,
     pub managed_repository_path: Option<String>,
+    pub default_branch: Option<String>,
     pub source_path: Option<String>,
     pub source_kind: Option<String>,
     pub task_worktree_path: Option<String>,

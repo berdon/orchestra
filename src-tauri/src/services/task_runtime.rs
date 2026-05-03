@@ -2144,6 +2144,52 @@ pub fn ensure_task_repository_workspaces(
     Ok(())
 }
 
+fn resolve_task_repository_base_ref(repository: &TaskRepository) -> Result<String, String> {
+    let managed_repository_path =
+        repository
+            .managed_repository_path
+            .as_deref()
+            .ok_or_else(|| {
+                format!(
+                    "Repository {} does not have a managed repository path",
+                    repository.repository_slug
+                )
+            })?;
+    let default_branch = repository
+        .default_branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("main");
+
+    let local_ref = format!("refs/heads/{default_branch}");
+    if git_ref_exists(managed_repository_path, &local_ref)? {
+        return Ok(local_ref);
+    }
+
+    let remote_ref = format!("refs/remotes/origin/{default_branch}");
+    if git_ref_exists(managed_repository_path, &remote_ref)? {
+        return Ok(remote_ref);
+    }
+
+    Err(format!(
+        "Unable to resolve default branch {} for repository {}",
+        default_branch, repository.repository_slug
+    ))
+}
+
+fn git_ref_exists(repository_path: &str, reference: &str) -> Result<bool, String> {
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repository_path)
+        .args(["show-ref", "--verify", "--quiet", reference])
+        .status()
+        .map_err(|error| {
+            format!("Unable to inspect git ref {reference} in {repository_path}: {error}")
+        })?;
+    Ok(status.success())
+}
+
 fn ensure_task_repository_worktree(
     _task: &TaskDetail,
     task_workspace_root: &str,
@@ -2152,6 +2198,18 @@ fn ensure_task_repository_worktree(
     let Some(managed_repository_path) = repository.managed_repository_path.as_deref() else {
         return Ok(());
     };
+    let default_branch = repository
+        .default_branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("main");
+    projects::normalize_managed_checkout_branch(
+        Path::new(managed_repository_path),
+        default_branch,
+        false,
+    )?;
+    let base_ref = resolve_task_repository_base_ref(repository)?;
 
     let destination = task_repositories::task_repository_worktree_path(
         task_workspace_root,
@@ -2178,7 +2236,7 @@ fn ensure_task_repository_worktree(
         .arg("add")
         .arg("--detach")
         .arg(&destination_path)
-        .arg("HEAD")
+        .arg(&base_ref)
         .status()
         .map_err(|error| {
             format!(
@@ -5487,6 +5545,110 @@ mod tests {
             .success());
 
         repo
+    }
+
+    fn current_commit(repository_path: &Path) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repository_path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("git rev-parse should run");
+        assert!(output.status.success());
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn ensure_task_repository_workspaces_uses_repository_default_branch_instead_of_head() {
+        let managed_repository = init_test_repo("task-runtime-default-branch-worktree");
+        let main_commit = current_commit(&managed_repository);
+
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&managed_repository)
+            .args(["checkout", "-b", "project"])
+            .status()
+            .expect("git checkout should run")
+            .success());
+        fs::write(managed_repository.join("README.md"), "project branch\n")
+            .expect("README should update");
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&managed_repository)
+            .args(["add", "README.md"])
+            .status()
+            .expect("git add should run")
+            .success());
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&managed_repository)
+            .args(["commit", "-m", "project branch"])
+            .status()
+            .expect("git commit should run")
+            .success());
+        let project_commit = current_commit(&managed_repository);
+        assert_ne!(project_commit, main_commit);
+
+        let workspace_root = unique_temp_dir("task-runtime-default-branch-workspace");
+        let task_repository = TaskRepository {
+            task_id: "task-default-branch".into(),
+            repository_id: "repo-default-branch".into(),
+            repository_name: "Runtime Repo".into(),
+            repository_slug: "runtime-repo".into(),
+            managed_repository_path: Some(managed_repository.display().to_string()),
+            default_branch: Some("main".into()),
+            source_path: None,
+            source_kind: None,
+            task_worktree_path: None,
+            created_at: now_iso(),
+        };
+        let mut task = build_test_task_detail("ready", "unassigned", Some("lane-implement"));
+        task.task_repositories = vec![task_repository];
+
+        ensure_task_repository_workspaces(&task, workspace_root.to_str().unwrap())
+            .expect("task worktree should materialize");
+
+        let worktree_path = PathBuf::from(task_repositories::task_repository_worktree_path(
+            workspace_root.to_str().unwrap(),
+            "runtime-repo",
+        ));
+        assert_eq!(current_commit(&worktree_path), main_commit);
+    }
+
+    #[test]
+    fn ensure_task_repository_workspaces_reports_dirty_default_branch_managed_checkout() {
+        let managed_repository = init_test_repo("task-runtime-dirty-default-branch");
+        fs::write(managed_repository.join("README.md"), "dirty checkout\n")
+            .expect("README should update");
+
+        let workspace_root = unique_temp_dir("task-runtime-dirty-default-branch-workspace");
+        let task_repository = TaskRepository {
+            task_id: "task-dirty-default-branch".into(),
+            repository_id: "repo-dirty-default-branch".into(),
+            repository_name: "Runtime Repo".into(),
+            repository_slug: "runtime-repo".into(),
+            managed_repository_path: Some(managed_repository.display().to_string()),
+            default_branch: Some("main".into()),
+            source_path: None,
+            source_kind: None,
+            task_worktree_path: None,
+            created_at: now_iso(),
+        };
+        let mut task = build_test_task_detail("ready", "unassigned", Some("lane-implement"));
+        task.task_repositories = vec![task_repository];
+
+        let error = ensure_task_repository_workspaces(&task, workspace_root.to_str().unwrap())
+            .expect_err("dirty default-branch checkout should block worktree creation");
+
+        assert!(error.contains("still checked out on default branch main"));
+        assert!(error.contains("commit, stash, or discard"));
+        assert!(
+            !PathBuf::from(task_repositories::task_repository_worktree_path(
+                workspace_root.to_str().unwrap(),
+                "runtime-repo",
+            ))
+            .exists()
+        );
     }
 
     fn build_test_task_detail(
