@@ -375,8 +375,69 @@ a {
 .github-inline-cards,
 .github-story__list,
 .github-operate__grid,
-.github-duo {
+.github-duo,
+.github-quickstart__grid {
   display: grid;
+}
+
+.github-quickstart__grid {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(18rem, 0.86fr);
+  gap: 1rem;
+}
+
+.github-quickstart-card,
+.github-quickstart-meta article {
+  padding: 1rem 1.05rem;
+  border: 1px solid var(--github-border);
+  border-radius: var(--github-radius-md);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.github-quickstart-card {
+  display: grid;
+  gap: 1rem;
+}
+
+.github-quickstart-card__prompt {
+  display: grid;
+  gap: 0.6rem;
+  padding: 1rem;
+  border: 1px solid var(--github-border-strong);
+  border-radius: var(--github-radius-md);
+  background: linear-gradient(180deg, rgba(75, 153, 255, 0.12), rgba(75, 153, 255, 0.03));
+}
+
+.github-quickstart-card__prompt span {
+  color: #8dbbff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.github-quickstart-card__prompt strong {
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+.github-quickstart-card__prompt a {
+  color: #9fc7ff;
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+}
+
+.github-quickstart-meta {
+  display: grid;
+  gap: 1rem;
+}
+
+.github-quickstart-meta h3 {
+  margin: 0 0 0.45rem;
+}
+
+.github-bullet-list--compact {
+  margin-top: 0;
+  gap: 0.75rem;
 }
 
 .github-pillars {
@@ -595,7 +656,8 @@ a {
   .github-story__list,
   .github-inline-cards,
   .github-security__grid,
-  .github-workflow-gallery {
+  .github-workflow-gallery,
+  .github-quickstart__grid {
     grid-template-columns: 1fr;
   }
 

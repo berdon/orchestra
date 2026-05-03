@@ -27,6 +27,11 @@ test("github landing page exposes the required product story and public CTAs", a
     await expect(page.getByText(copy, { exact: true }).first()).toBeVisible();
   }
 
+  await expect(page.getByText("Ask the supervisor to set up the project and create the work")).toBeVisible();
+  await expect(page.getByText(/Create a new orchestra project and add the/i)).toBeVisible();
+  await expect(page.getByText(/Create a dev workflow task to fix the bug/i)).toBeVisible();
+  await expect(page.getByText("Works with local or cloud models")).toBeVisible();
+  await expect(page.getByText("Coordinate across tasks and repositories")).toBeVisible();
   await expect(page.locator('[data-role="github-workflow-gallery"]')).toBeVisible();
   await expect(page.locator('[data-role="github-workflow-gallery-image"]')).toHaveCount(3);
   await expect(page.getByText("See how work moves from lane definition to task execution")).toBeVisible();

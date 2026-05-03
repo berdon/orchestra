@@ -46,8 +46,13 @@ const featureCards: FeatureCard[] = [
   },
   {
     title: "Pi underneath",
-    body: "Orchestra is built on Pi, so extensions, plugin support, prompt/runtime composition, and deeper customization stay first-class.",
+    body: "Orchestra is built on Pi, so it can run with local or cloud models while keeping extensions, plugin support, prompt/runtime composition, and deeper customization first-class.",
     label: "Extensible core",
+  },
+  {
+    title: "Agent-to-agent coordination",
+    body: "Let agents communicate across tasks and repositories so handoffs, follow-up work, and cross-project coordination stay inside the product instead of leaking into side channels.",
+    label: "Coordination",
   },
   {
     title: "Rich permissions",
@@ -216,9 +221,9 @@ export function GitHubLandingPage() {
         </a>
 
         <nav className="github-topbar__nav" aria-label="Page sections">
+          <a href="#quickstart">Quick start</a>
           <a href="#workflow">Workflow</a>
           <a href="#features">Features</a>
-          <a href="#operate">Operate anywhere</a>
         </nav>
 
         <div className="github-topbar__actions">
@@ -312,6 +317,61 @@ export function GitHubLandingPage() {
               <p className="github-eyebrow">What makes it different</p>
               <strong>Workflow definitions, lane movement, task detail, repo state, and approvals all stay connected.</strong>
             </div>
+          </div>
+        </section>
+
+        <section className="github-quickstart github-shell-section" id="quickstart">
+          <div className="github-section-heading">
+            <p className="github-eyebrow">Quick start</p>
+            <h2>Ask the supervisor to set up the project and create the work</h2>
+            <p>
+              Orchestra is designed so a fresh workspace can begin with plain-English requests instead of a long sequence of setup clicks.
+            </p>
+          </div>
+
+          <div className="github-quickstart__grid">
+            <article className="github-quickstart-card">
+              <p className="github-eyebrow">Step 1</p>
+              <div className="github-quickstart-card__prompt">
+                <span>Message the supervisor</span>
+                <strong>
+                  “Create a new orchestra project and add the <a href="https://github.com/berdon/orchestra" target="_blank" rel="noreferrer">https://github.com/berdon/orchestra</a> repository to it.”
+                </strong>
+              </div>
+              <ul className="github-bullet-list github-bullet-list--compact">
+                <li>Creates the project scaffold in Orchestra</li>
+                <li>Adds the GitHub repository into the project context</li>
+                <li>Keeps the repo ready for task-linked work and worktree-aware execution</li>
+              </ul>
+            </article>
+
+            <article className="github-quickstart-card">
+              <p className="github-eyebrow">Step 2</p>
+              <div className="github-quickstart-card__prompt">
+                <span>Follow up with the supervisor</span>
+                <strong>
+                  “Create a dev workflow task to fix the bug where new projects don’t automatically show in the nav project switcher.”
+                </strong>
+              </div>
+              <ul className="github-bullet-list github-bullet-list--compact">
+                <li>Creates a Development workflow task with the bug context attached</li>
+                <li>Routes the task into the right workflow lane for implementation</li>
+                <li>Keeps the next worker focused on the actual fix instead of setup overhead</li>
+              </ul>
+            </article>
+
+            <aside className="github-quickstart-meta">
+              <article>
+                <p className="github-eyebrow">Model freedom</p>
+                <h3>Works with local or cloud models</h3>
+                <p>Because Orchestra uses the Pi coding agent underneath, the orchestration layer is not tied to a single hosted provider.</p>
+              </article>
+              <article>
+                <p className="github-eyebrow">Cross-agent collaboration</p>
+                <h3>Coordinate across tasks and repositories</h3>
+                <p>Agents can hand work to other agents, share context across related tasks, and coordinate multi-repo delivery without leaving the system.</p>
+              </article>
+            </aside>
           </div>
         </section>
 
