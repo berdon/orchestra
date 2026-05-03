@@ -124,7 +124,6 @@ import type {
   SessionMessageability,
   SessionModelState,
   SessionRecord,
-  SessionRuntimeDetails,
   SessionStats,
   SessionScrollState,
   SessionStatus,
@@ -1254,8 +1253,6 @@ export function App() {
   const [changingModelSessionId, setChangingModelSessionId] = useState<
     string | null
   >(null);
-  const [loadingRuntimeDetailsSessionId, setLoadingRuntimeDetailsSessionId] =
-    useState<string | null>(null);
   const [sessionScrollState, setSessionScrollState] =
     useState<SessionScrollState>({ lockedToBottom: true });
   const [tasksCreateToken, setTasksCreateToken] = useState(0);
@@ -2888,19 +2885,6 @@ export function App() {
     },
     [activeProjectId],
   );
-
-  async function loadSelectedSessionRuntimeDetails(
-    sessionId: string,
-  ): Promise<SessionRuntimeDetails> {
-    setLoadingRuntimeDetailsSessionId(sessionId);
-    try {
-      return await orchestraClient.sessions.getRuntimeDetails(sessionId);
-    } finally {
-      setLoadingRuntimeDetailsSessionId((current) =>
-        current === sessionId ? null : current,
-      );
-    }
-  }
 
   async function runSessionAction(
     action: () => Promise<SessionRecord>,
@@ -6070,9 +6054,6 @@ export function App() {
                   loadingStatsSessionId={loadingStatsSessionId}
                   loadingModelSessionId={loadingModelSessionId}
                   changingModelSessionId={changingModelSessionId}
-                  loadingRuntimeDetailsSessionId={
-                    loadingRuntimeDetailsSessionId
-                  }
                   draftMessage={selectedSessionDraftMessage}
                   piSetupState={piSetupState}
                   connection={connection}
@@ -6119,7 +6100,6 @@ export function App() {
                   }
                   onCompactSession={handleSelectedSessionCompact}
                   onReloadSession={handleSelectedSessionReload}
-                  onLoadRuntimeDetails={loadSelectedSessionRuntimeDetails}
                 />
               ) : activePage === "notes" ? (
                 <NotesPage

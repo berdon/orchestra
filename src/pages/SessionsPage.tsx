@@ -8,7 +8,7 @@ import type { OrchestraConnectionSnapshot } from "../lib/orchestraClient";
 import type { UiErrorState } from "../lib/orchestraData/errors";
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
-import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionRuntimeDetails, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
+import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
 
 function formatListControlLabel(session: SessionRecord) {
   if (session.controlOperation?.status !== "running") {
@@ -48,18 +48,6 @@ function getActivityTone(activityState?: SessionActivityState) {
   }
 }
 
-function formatCapability(value?: { status: string; reason?: string | null } | null) {
-  if (!value) {
-    return "Unknown";
-  }
-  const status = value.status.charAt(0).toUpperCase() + value.status.slice(1);
-  return value.reason ? `${status} · ${value.reason}` : status;
-}
-
-function formatManagedSkillsStateLabel(state?: string | null) {
-  return state === "error" ? "Error" : "Resolved";
-}
-
 interface SessionsPageProps {
   sessions: SessionRecord[];
   referenceTasks: TaskSummary[];
@@ -80,7 +68,6 @@ interface SessionsPageProps {
   loadingStatsSessionId: string | null;
   loadingModelSessionId: string | null;
   changingModelSessionId: string | null;
-  loadingRuntimeDetailsSessionId: string | null;
   draftMessage: string;
   piSetupState?: PiSetupState | null;
   connection: OrchestraConnectionSnapshot;
@@ -110,7 +97,6 @@ interface SessionsPageProps {
   onOpenPiSettings?: () => void;
   onCompactSession: () => void;
   onReloadSession: () => void;
-  onLoadRuntimeDetails: (sessionId: string) => Promise<SessionRuntimeDetails>;
 }
 
 export function SessionsPage({
@@ -133,7 +119,6 @@ export function SessionsPage({
   loadingStatsSessionId,
   loadingModelSessionId,
   changingModelSessionId,
-  loadingRuntimeDetailsSessionId,
   draftMessage,
   piSetupState,
   connection,
@@ -163,11 +148,8 @@ export function SessionsPage({
   onOpenPiSettings,
   onCompactSession,
   onReloadSession,
-  onLoadRuntimeDetails,
 }: SessionsPageProps) {
   const [showDebugInfo, setShowDebugInfo] = useState(false);
-  const [runtimeDetails, setRuntimeDetails] = useState<SessionRuntimeDetails | null>(null);
-  const [runtimeDetailsError, setRuntimeDetailsError] = useState<string | null>(null);
   const [revealedDeleteSessionId, setRevealedDeleteSessionId] = useState<string | null>(null);
   const [mobileSessionPickerOpen, setMobileSessionPickerOpen] = useState(false);
   const [mobileTranscriptControlsOpen, setMobileTranscriptControlsOpen] = useState(false);
@@ -188,8 +170,6 @@ export function SessionsPage({
 
   useEffect(() => {
     setShowDebugInfo(false);
-    setRuntimeDetails(null);
-    setRuntimeDetailsError(null);
   }, [selectedSession?.id]);
 
   useEffect(() => () => {
@@ -402,24 +382,6 @@ export function SessionsPage({
     );
   }
 
-  async function handleOpenRuntimeDetails() {
-    if (!selectedSession) {
-      return;
-    }
-    setRuntimeDetailsError(null);
-    try {
-      setRuntimeDetails(await onLoadRuntimeDetails(selectedSession.id));
-    } catch (error) {
-      setRuntimeDetails(null);
-      setRuntimeDetailsError(error instanceof Error ? error.message : "Unable to load session runtime details.");
-    }
-  }
-
-  function handleCloseRuntimeDetails() {
-    setRuntimeDetails(null);
-    setRuntimeDetailsError(null);
-  }
-
   const selectedSessionPickerLabel = selectedSession ? getSessionListTitle(selectedSession) : `Choose ${sessionFilter} session`;
   const showCreateSessionFab = Boolean(onCreateSession && (!compactSessionLayout || mobileSessionPickerOpen || !selectedSession));
 
@@ -521,30 +483,18 @@ export function SessionsPage({
             surface="page-mobile-detail"
           />
 
-          {selectedSession ? (
+          {canShowDebugInfo && !showDebugInfo ? (
             <div className="session-detail-actions-row">
               <button
                 type="button"
                 className="session-debug-toggle"
-                data-role="open-session-runtime-details"
-                onClick={() => void handleOpenRuntimeDetails()}
+                data-role="show-session-debug"
+                onClick={() => setShowDebugInfo(true)}
               >
-                {loadingRuntimeDetailsSessionId === selectedSession.id ? "Loading runtime details…" : "Runtime details"}
+                Show debug information
               </button>
-              {canShowDebugInfo && !showDebugInfo ? (
-                <button
-                  type="button"
-                  className="session-debug-toggle"
-                  data-role="show-session-debug"
-                  onClick={() => setShowDebugInfo(true)}
-                >
-                  Show debug information
-                </button>
-              ) : null}
             </div>
           ) : null}
-
-          {runtimeDetailsError ? <p className="error-copy">{runtimeDetailsError}</p> : null}
 
           {canShowDebugInfo && showDebugInfo && selectedSession?.debugInfo ? (
             <section className="panel session-debug-panel" data-role="session-debug-paths">
@@ -575,256 +525,6 @@ export function SessionsPage({
             </section>
           ) : null}
 
-          {runtimeDetails ? (
-            <div className="quick-chat-overlay" data-role="session-runtime-details-overlay" onClick={handleCloseRuntimeDetails}>
-              <section className="quick-chat-modal panel session-runtime-details-dialog" data-role="session-runtime-details-dialog" onClick={(event) => event.stopPropagation()}>
-                <div className="panel__header panel__header--stacked">
-                  <div>
-                    <p className="eyebrow">Session</p>
-                    <h4>Runtime details</h4>
-                    <p className="muted-copy">See the extension/runtime metadata Orchestra currently knows for this session.</p>
-                  </div>
-                  <div className="action-cluster action-cluster--wrap">
-                    <button className="secondary-button" type="button" data-role="close-session-runtime-details" onClick={handleCloseRuntimeDetails}>
-                      Close
-                    </button>
-                  </div>
-                </div>
-
-                <div className="session-debug-grid">
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Runtime source</p>
-                    <p className="session-debug-value">{runtimeDetails.source === "live_runtime" ? "Live runtime active" : "Expected next runtime spawn"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Extension load mode</p>
-                    <p className="session-debug-value">{runtimeDetails.extensionLoadMode}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Automatic extensions/plugins</p>
-                    <p className="session-debug-value">{runtimeDetails.automaticExtensionsDisabled ? "Disabled by --no-extensions" : "Enabled"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Subscribed</p>
-                    <p className="session-debug-value">{runtimeDetails.subscribed ? "Yes" : "No"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Reload control</p>
-                    <p className="session-debug-value">{formatCapability(runtimeDetails.controlCapabilities?.reload)}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Compact control</p>
-                    <p className="session-debug-value">{formatCapability(runtimeDetails.controlCapabilities?.compact)}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Auto-compaction</p>
-                    <p className="session-debug-value">{formatCapability(runtimeDetails.controlCapabilities?.autoCompact)}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Effective compaction window</p>
-                    <p className="session-debug-value">{runtimeDetails.controlCapabilities?.effectiveCompactionWindow ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Compaction window source</p>
-                    <p className="session-debug-value">{runtimeDetails.controlCapabilities?.effectiveCompactionWindowSource ?? "—"}</p>
-                  </section>
-                </div>
-
-                <div className="session-runtime-details-grid">
-                  <section className="session-debug-item" data-role="session-runtime-loaded-extensions">
-                    <p className="eyebrow">Loaded extensions</p>
-                    {runtimeDetails.loadedExtensions.length ? (
-                      <ul className="session-runtime-details-list">
-                        {runtimeDetails.loadedExtensions.map((extension) => (
-                          <li className="session-debug-value" key={extension}>{extension}</li>
-                        ))}
-                      </ul>
-                    ) : <p className="session-debug-value">—</p>}
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Extra configured extensions</p>
-                    {runtimeDetails.extraExtensions.length ? (
-                      <ul className="session-runtime-details-list">
-                        {runtimeDetails.extraExtensions.map((extension) => (
-                          <li className="session-debug-value" key={extension}>{extension}</li>
-                        ))}
-                      </ul>
-                    ) : <p className="session-debug-value">None</p>}
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Blocked extra extensions</p>
-                    {runtimeDetails.blockedExtraExtensions.length ? (
-                      <ul className="session-runtime-details-list">
-                        {runtimeDetails.blockedExtraExtensions.map((extension) => (
-                          <li className="session-debug-value" key={extension}>{extension}</li>
-                        ))}
-                      </ul>
-                    ) : <p className="session-debug-value">None</p>}
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Pi runtime source</p>
-                    <p className="session-debug-value">{runtimeDetails.piRuntimeSource ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Pi runtime mode</p>
-                    <p className="session-debug-value">{runtimeDetails.piRuntimeMode ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Pi runtime status</p>
-                    <p className="session-debug-value">{runtimeDetails.piRuntimeStatus ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Pi runtime version</p>
-                    <p className="session-debug-value">{runtimeDetails.piRuntimeVersion ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">PI executable</p>
-                    <p className="session-debug-value">{runtimeDetails.piExecutablePath ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Pi package directory</p>
-                    <p className="session-debug-value">{runtimeDetails.piPackageDir ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Pi agent directory</p>
-                    <p className="session-debug-value">{runtimeDetails.piAgentDir ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Pi runtime manifest</p>
-                    <p className="session-debug-value">{runtimeDetails.piRuntimeManifestPath ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Pi runtime build</p>
-                    <p className="session-debug-value">{runtimeDetails.piRuntimeBuiltAt ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Pi runtime error</p>
-                    <p className="session-debug-value">{runtimeDetails.piRuntimeErrorMessage ?? runtimeDetails.piRuntimeErrorKind ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Shell PATH source</p>
-                    <p className="session-debug-value">{runtimeDetails.shellPath ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Project root</p>
-                    <p className="session-debug-value">{runtimeDetails.projectRoot ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Session directory</p>
-                    <p className="session-debug-value">{runtimeDetails.sessionDir ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Session file</p>
-                    <p className="session-debug-value">{runtimeDetails.sessionPath ?? "—"}</p>
-                  </section>
-                  <section className="session-debug-item">
-                    <p className="eyebrow">Orchestra extension</p>
-                    <p className="session-debug-value">{runtimeDetails.orchestraExtensionPath ?? "—"}</p>
-                  </section>
-                </div>
-
-                {runtimeDetails.managedSkills ? (
-                  <>
-                    <div className="session-debug-grid" data-role="session-managed-skills-summary">
-                      <section className="session-debug-item">
-                        <p className="eyebrow">Managed skills state</p>
-                        <p className="session-debug-value">{formatManagedSkillsStateLabel(runtimeDetails.managedSkills.state)}</p>
-                      </section>
-                      <section className="session-debug-item">
-                        <p className="eyebrow">Context source</p>
-                        <p className="session-debug-value">{runtimeDetails.managedSkills.context.contextSource}</p>
-                      </section>
-                      <section className="session-debug-item">
-                        <p className="eyebrow">Context hash</p>
-                        <p className="session-debug-value">{runtimeDetails.managedSkills.contextHash}</p>
-                      </section>
-                      <section className="session-debug-item">
-                        <p className="eyebrow">Scoped snapshot</p>
-                        <p className="session-debug-value">{runtimeDetails.managedSkills.scopedSnapshot?.snapshotId ?? "None"}</p>
-                      </section>
-                    </div>
-
-                    <div className="session-runtime-details-grid">
-                      <section className="session-debug-item" data-role="session-managed-skills-ambient">
-                        <p className="eyebrow">Ambient skills</p>
-                        {runtimeDetails.managedSkills.ambientSkills.length ? (
-                          <ul className="session-runtime-details-list">
-                            {runtimeDetails.managedSkills.ambientSkills.map((skill) => (
-                              <li className="session-debug-value" key={`${skill.sourceKind}-${skill.slug}-${skill.skillId ?? "ambient"}`}>
-                                {skill.slug} · {skill.sourceKind}{skill.relativeSourcePath ? ` · ${skill.relativeSourcePath}` : ""}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : <p className="session-debug-value">None</p>}
-                      </section>
-                      <section className="session-debug-item" data-role="session-managed-skills-resolved">
-                        <p className="eyebrow">Resolved skills</p>
-                        {runtimeDetails.managedSkills.resolvedSkills.length ? (
-                          <ul className="session-runtime-details-list">
-                            {runtimeDetails.managedSkills.resolvedSkills.map((skill) => (
-                              <li className="session-debug-value" key={`${skill.bindingId}-${skill.skillId}`}>
-                                {skill.slug} · {skill.scopeKind} · {skill.loadMode}{skill.materializedDir ? ` · ${skill.materializedDir}` : ""}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : <p className="session-debug-value">None</p>}
-                      </section>
-                      <section className="session-debug-item" data-role="session-managed-skills-suppressed">
-                        <p className="eyebrow">Suppressed skills</p>
-                        {runtimeDetails.managedSkills.suppressedSkills.length ? (
-                          <ul className="session-runtime-details-list">
-                            {runtimeDetails.managedSkills.suppressedSkills.map((skill) => (
-                              <li className="session-debug-value" key={`${skill.bindingId}-${skill.skillId}-${skill.suppressionReason}`}>
-                                {skill.slug || skill.name} · {skill.suppressionReason} · {skill.explanation}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : <p className="session-debug-value">None</p>}
-                      </section>
-                      <section className="session-debug-item" data-role="session-managed-skills-snapshot">
-                        <p className="eyebrow">Snapshot and publication</p>
-                        <ul className="session-runtime-details-list">
-                          <li className="session-debug-value">Global manifest · {runtimeDetails.managedSkills.globalPublicationManifestPath ?? "—"}</li>
-                          <li className="session-debug-value">Snapshot dir · {runtimeDetails.managedSkills.scopedSnapshot?.snapshotDir ?? "—"}</li>
-                          <li className="session-debug-value">Snapshot manifest · {runtimeDetails.managedSkills.scopedSnapshot?.manifestPath ?? "—"}</li>
-                        </ul>
-                      </section>
-                    </div>
-
-                    {runtimeDetails.managedSkills.warnings.length || runtimeDetails.managedSkills.errorMessage ? (
-                      <section className="session-debug-item" data-role="session-managed-skills-warnings">
-                        <p className="eyebrow">Managed skills warnings</p>
-                        <ul className="session-runtime-details-list">
-                          {runtimeDetails.managedSkills.warnings.map((warning) => (
-                            <li className="session-debug-value" key={warning}>{warning}</li>
-                          ))}
-                          {runtimeDetails.managedSkills.errorMessage ? <li className="session-debug-value">{runtimeDetails.managedSkills.errorMessage}</li> : null}
-                        </ul>
-                      </section>
-                    ) : null}
-
-                    <section className="session-debug-item" data-role="session-managed-skills-notes">
-                      <p className="eyebrow">Managed skills notes</p>
-                      <ul className="session-runtime-details-list">
-                        {runtimeDetails.managedSkills.notes.map((note) => (
-                          <li className="session-debug-value" key={note}>{note}</li>
-                        ))}
-                      </ul>
-                    </section>
-                  </>
-                ) : null}
-
-                <section className="session-debug-item" data-role="session-runtime-notes">
-                  <p className="eyebrow">Notes</p>
-                  <ul className="session-runtime-details-list">
-                    {runtimeDetails.notes.map((note) => (
-                      <li className="session-debug-value" key={note}>{note}</li>
-                    ))}
-                  </ul>
-                </section>
-              </section>
-            </div>
-          ) : null}
         </>
         )}
       />

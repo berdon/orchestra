@@ -2128,16 +2128,6 @@ strong {
   overflow-wrap: anywhere;
 }
 
-.session-runtime-details-dialog {
-  width: min(920px, calc(100vw - 48px));
-}
-
-.session-runtime-details-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-}
-
 .session-runtime-details-list {
   margin: 0;
   padding-left: 18px;

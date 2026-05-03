@@ -1775,7 +1775,7 @@ test("sessions page hides debug paths behind a dev-only toggle below the chat pa
   await expect(debugHeading).toBeVisible();
 });
 
-test("sessions page can open runtime details and show loaded extensions for the selected session", async ({ page }) => {
+test("sessions page removes runtime details from the chat surface while keeping debug actions usable", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
     const timestamp = new Date().toISOString();
@@ -1815,20 +1815,17 @@ test("sessions page can open runtime details and show loaded extensions for the 
 
   await page.goto("/");
   await page.getByRole("link", { name: "Runtime details session" }).click();
-  await page.locator('[data-role="open-session-runtime-details"]').click();
 
-  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toBeVisible();
-  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText("Disabled by --no-extensions");
-  await expect(page.locator('[data-role="session-runtime-loaded-extensions"]')).toContainText("extensions/orchestra-tools.ts");
-  await expect(page.locator('[data-role="session-runtime-loaded-extensions"]')).toContainText("npm:pi-example");
-  await expect(page.locator('[data-role="session-runtime-loaded-extensions"]')).toContainText("./extensions/local-extra.ts");
-  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText("Disabled by --no-extensions");
+  await expect(page.locator('[data-role="open-session-runtime-details"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="show-session-debug"]')).toBeVisible();
 
-  await page.locator('[data-role="close-session-runtime-details"]').click();
-  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toHaveCount(0);
+  await page.locator('[data-role="show-session-debug"]').click();
+  await expect(page.locator('[data-role="show-session-debug"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="session-debug-paths"]')).toContainText("/tmp/orchestra/projects/demo");
+  await expect(page.locator('[data-role="session-debug-paths"]')).toContainText("/tmp/orchestra/projects/demo/worktrees/agent-02");
 });
 
-test("sessions page surfaces unsupported reload failures and runtime capability reasons", async ({ page }) => {
+test("sessions page surfaces unsupported reload failures without a runtime details control", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
     const timestamp = new Date().toISOString();
@@ -1941,12 +1938,7 @@ test("sessions page surfaces unsupported reload failures and runtime capability 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText('runtime_control_unsupported');
   await expect(page.locator('[data-role="session-transcript"]')).not.toContainText('/reload');
 
-  await page.locator('[data-role="open-session-runtime-details"]').click();
-  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText('Unsupported · runtime_control_unsupported');
-  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText('Unsupported · compaction_window_disabled');
-  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText('Effective compaction window');
-  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText('off');
-  await expect(page.locator('[data-role="session-runtime-details-dialog"]')).toContainText('role');
+  await expect(page.locator('[data-role="open-session-runtime-details"]')).toHaveCount(0);
 });
 
 test("sessions transcript wraps long lines by default and can toggle to no-wrap", async ({ page }) => {
