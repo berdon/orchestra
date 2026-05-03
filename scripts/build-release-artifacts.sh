@@ -26,14 +26,6 @@ append_remap() {
   fi
 }
 
-regex_escape() {
-  python3 - <<'PY' "$1"
-import re
-import sys
-print(re.escape(sys.argv[1]))
-PY
-}
-
 repo_root="$(canonical_path "$repo_root")"
 home_path="${HOME:-}"
 cargo_home="${CARGO_HOME:-${HOME:-}/.cargo}"
@@ -67,10 +59,8 @@ echo "🦀 Building packaged Tauri release"
 
 artifact_path="$repo_root/src-tauri/target/release/bundle/macos/Orchestra.app"
 
-echo "🔎 Scanning packaged artifacts"
-"$repo_root/scripts/scan-artifact-leaks.sh" \
-  --artifact "$artifact_path" \
-  --pattern "$(regex_escape "$repo_root")"
+echo "🔎 Scanning packaged artifacts with the canonical release artifact scan"
+"$repo_root/scripts/scan-release-artifacts.sh" release
 
-echo "✅ Release artifacts are built and sanitized"
+echo "✅ Release artifacts are built and scanned"
 echo "   app bundle: $artifact_path"

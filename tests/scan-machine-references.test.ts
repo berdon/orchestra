@@ -7,6 +7,9 @@ import { describe, expect, it } from "vitest";
 import { loadMatcherConfig, scanTextContent } from "../scripts/scan-machine-references.mjs";
 
 const matcherConfig = loadMatcherConfig();
+const artifactMatcherConfig = loadMatcherConfig({
+  allowlistPath: join(process.cwd(), "guardrails", "artifact-machine-reference-allowlist.json"),
+});
 
 describe("machine-reference guardrail scanner", () => {
   it("flags concrete macOS Orchestra paths", () => {
@@ -96,5 +99,28 @@ describe("machine-reference guardrail scanner", () => {
     expect(result.findings).toEqual([]);
     expect(result.suppressed).toHaveLength(1);
     expect(result.suppressed[0]?.reason).toMatch(/project slug/i);
+  });
+
+  it("suppresses documented third-party runtime path findings in bundled runtime payloads", () => {
+    const result = scanTextContent(
+      'upstream build path: /Users/runner/work/_temp/webkit-release\n',
+      "src-tauri/target/release/bundle/macos/Orchestra.app/Contents/Resources/pi-runtime/bun/bin/bun.strings.txt",
+      artifactMatcherConfig,
+    );
+
+    expect(result.findings).toEqual([]);
+    expect(result.suppressed).toHaveLength(1);
+    expect(result.suppressed[0]?.reason).toMatch(/third-party/i);
+  });
+
+  it("keeps first-party app-bundle path leaks release-blocking", () => {
+    const result = scanTextContent(
+      'cwd = "/Users/alice/workspace/orchestra"\n',
+      "src-tauri/target/release/bundle/macos/Orchestra.app/Contents/MacOS/orc.strings.txt",
+      artifactMatcherConfig,
+    );
+
+    expect(result.findings.map((finding) => finding.ruleId)).toContain("unix-home-path");
+    expect(result.suppressed).toEqual([]);
   });
 });

@@ -82,7 +82,7 @@ That command runs:
 - `gitleaks` against reachable git history
 - the repo-local machine-reference scanner for usernames and concrete local paths
 - a sanitized release-mode adhoc bundle build with Rust path remapping enabled
-- a post-build artifact scan over the built app/resources using extracted text plus `strings`
+- a post-build artifact scan that snapshots built app/resources text plus `strings`, then runs artifact-specific `gitleaks` and machine-reference classification over that snapshot
 
 If `gitleaks` is not already installed, the wrapper script will download the repo-pinned version into `.tmp/tools/gitleaks/` for repeatable local use.
 
@@ -95,6 +95,12 @@ npm run scan:machine-refs
 npm run scan:artifacts
 npm run scan:artifacts:release
 ```
+
+`npm run scan:artifacts:release` is the canonical built-app leak scan. It fails on:
+- any unsuppressed `gitleaks` hit in the extracted artifact snapshot
+- any unsuppressed first-party machine/path finding in Orchestra-owned bundle files
+
+It may also print documented third-party findings separately for bundled upstream runtime payloads under `Contents/Resources/pi-runtime/runtime/**` and `Contents/Resources/pi-runtime/bun/**` when those assets still embed upstream build paths.
 
 To audit specific local usernames without committing them, set `ORCHESTRA_MACHINE_REFERENCE_SEED_USERNAMES` for the scan invocation, for example:
 

@@ -1,0 +1,26 @@
+{
+  "entries": [
+    {
+      "pathGlob": "src-tauri/target/**/bundle/macos/Orchestra.app/Contents/Resources/pi-runtime/runtime/**",
+      "ruleIds": [
+        "configured-username",
+        "unix-home-path",
+        "windows-home-path",
+        "unix-orchestra-machine-path",
+        "windows-orchestra-machine-path"
+      ],
+      "reason": "Bundled upstream Pi runtime payload files can still embed upstream build-path strings. Treat matches under the vendored runtime subtree as documented third-party findings unless they escape this path scope."
+    },
+    {
+      "pathGlob": "src-tauri/target/**/bundle/macos/Orchestra.app/Contents/Resources/pi-runtime/bun/**",
+      "ruleIds": [
+        "configured-username",
+        "unix-home-path",
+        "windows-home-path",
+        "unix-orchestra-machine-path",
+        "windows-orchestra-machine-path"
+      ],
+      "reason": "Bundled upstream Bun payload files can still embed upstream build-path strings. Treat matches under the vendored Bun subtree as documented third-party findings unless they escape this path scope."
+    }
+  ]
+}

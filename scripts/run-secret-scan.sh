@@ -3,14 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPORT_DIR="${ROOT_DIR}/.tmp/guardrails"
-CONFIG_PATH="${ROOT_DIR}/.gitleaks.toml"
+DEFAULT_CONFIG_PATH="${ROOT_DIR}/.gitleaks.toml"
 MODE="${1:-all}"
 mkdir -p "${REPORT_DIR}"
-
-if [[ ! -f "${CONFIG_PATH}" ]]; then
-  echo "Missing gitleaks config at ${CONFIG_PATH}" >&2
-  exit 1
-fi
 
 GITLEAKS_BIN="${GITLEAKS_BIN:-$(${ROOT_DIR}/scripts/ensure-gitleaks.sh)}"
 SOURCE_SNAPSHOT_DIR="${REPORT_DIR}/source-snapshot"
@@ -38,14 +33,20 @@ run_scan() {
   local scan_mode="$1"
   local target="$2"
   local report_stem="$3"
+  local config_path="${4:-${DEFAULT_CONFIG_PATH}}"
   local json_report="${REPORT_DIR}/${report_stem}.json"
   local sarif_report="${REPORT_DIR}/${report_stem}.sarif"
   local json_status=0
   local sarif_status=0
 
+  if [[ ! -f "${config_path}" ]]; then
+    echo "Missing gitleaks config at ${config_path}" >&2
+    exit 1
+  fi
+
   echo "[guardrails] running gitleaks ${scan_mode} scan -> ${report_stem}" >&2
   "${GITLEAKS_BIN}" "${scan_mode}" "${target}" \
-    --config "${CONFIG_PATH}" \
+    --config "${config_path}" \
     --no-banner \
     --redact \
     --report-format json \
@@ -53,7 +54,7 @@ run_scan() {
     --exit-code 1 || json_status=$?
 
   "${GITLEAKS_BIN}" "${scan_mode}" "${target}" \
-    --config "${CONFIG_PATH}" \
+    --config "${config_path}" \
     --no-banner \
     --redact \
     --report-format sarif \
@@ -81,13 +82,23 @@ case "${MODE}" in
   history)
     run_scan git "${ROOT_DIR}" "gitleaks-history"
     ;;
+  dir)
+    TARGET_DIR="${2:-}"
+    REPORT_STEM="${3:-gitleaks-dir}"
+    CONFIG_PATH="${4:-${DEFAULT_CONFIG_PATH}}"
+    if [[ -z "${TARGET_DIR}" ]]; then
+      echo "Usage: $0 dir <target-dir> [report-stem] [config-path]" >&2
+      exit 1
+    fi
+    run_scan dir "${TARGET_DIR}" "${REPORT_STEM}" "${CONFIG_PATH}"
+    ;;
   all)
     prepare_source_snapshot
     run_scan dir "${SOURCE_SNAPSHOT_DIR}" "gitleaks-source"
     run_scan git "${ROOT_DIR}" "gitleaks-history"
     ;;
   *)
-    echo "Usage: $0 [source|history|all]" >&2
+    echo "Usage: $0 [source|history|dir <target-dir> [report-stem] [config-path]|all]" >&2
     exit 1
     ;;
 esac

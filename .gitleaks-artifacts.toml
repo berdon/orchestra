@@ -1,0 +1,4 @@
+title = "Orchestra artifact gitleaks configuration"
+
+[extend]
+useDefault = true

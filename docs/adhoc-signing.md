@@ -80,9 +80,17 @@ That verified command runs repository guardrails before and after the bundle bui
 - `npm run scan:history` for reachable git-history secret scanning via gitleaks
 - `npm run scan:machine-refs` for usernames and concrete local/workspace path checks
 - a sanitized release-mode adhoc bundle build with Rust path remapping enabled
-- `npm run scan:artifacts:release` for post-build bundle/resource scanning using extracted text plus `strings`
+- `npm run scan:artifacts:release` for post-build bundle/resource scanning that snapshots extracted text plus `strings`, then runs artifact-specific gitleaks and machine-reference classification
 
 If `gitleaks` is not already installed, the wrapper will fetch the repo-pinned version into `.tmp/tools/gitleaks/` so developers and future CI can run the same scanner version.
+
+`npm run scan:artifacts:release` is the canonical built-app leak scan. Treat these results as release-blocking:
+- any unsuppressed artifact `gitleaks` finding
+- any unsuppressed first-party machine/path finding in Orchestra-owned bundle files such as `Contents/MacOS/*`, packaged first-party resources, or generated bundle metadata
+
+The scan may also print documented third-party findings separately for bundled upstream runtime payloads under `Contents/Resources/pi-runtime/runtime/**` and `Contents/Resources/pi-runtime/bun/**`. Those findings should stay path-scoped and reasoned; do not broaden the allowlist to cover first-party files.
+
+If the artifact scan fails on a first-party path leak, fix the source/build configuration (for example by extending path remapping or bundle sanitization) instead of allowlisting it. Only allowlist vetted third-party findings with a concrete bundle-path scope and a human-readable reason.
 
 To audit specific local usernames without committing them, set `ORCHESTRA_MACHINE_REFERENCE_SEED_USERNAMES` for the guardrail run, for example:
 
@@ -215,7 +223,7 @@ While adhoc signing enables features like notifications, it:
 - Does not provide the same security guarantees as proper Apple signing
 - Should not be used for public distribution
 - Is appropriate for development and internal testing
-- Should be paired with `npm run build:adhoc:verified` before a release so source, git history, and built artifacts are scanned for secrets and machine-specific references
+- Should be paired with `npm run build:adhoc:verified` before a release so source, git history, and built artifacts are scanned for secrets plus first-party machine/path leaks
 
 ## References
 
