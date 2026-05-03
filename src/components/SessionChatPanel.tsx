@@ -202,10 +202,13 @@ interface SessionComposerProps {
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onStopSession: () => void;
+  showOpenTaskAction: boolean;
+  onOpenActiveTask?: () => void;
   onCreateNewSession?: () => void;
   onOpenPiSettings?: () => void;
   onCompactSession?: () => void;
   onReloadSession?: () => void;
+  surface: "default" | "page-mobile-detail";
 }
 
 interface SessionTranscriptProps {
@@ -262,7 +265,7 @@ function SessionStatsStrip({
   );
 }
 
-const SessionComposer = memo(function SessionComposer({
+function SessionComposer({
   session,
   referenceTasks,
   referenceAgents,
@@ -281,10 +284,13 @@ const SessionComposer = memo(function SessionComposer({
   onDraftChange,
   onSendMessage,
   onStopSession,
+  showOpenTaskAction,
+  onOpenActiveTask,
   onCreateNewSession,
   onOpenPiSettings,
   onCompactSession,
   onReloadSession,
+  surface,
 }: SessionComposerProps) {
   const [showSessionActions, setShowSessionActions] = useState(false);
   const sessionControlBusy = session.controlOperation?.status === "running";
@@ -297,6 +303,7 @@ const SessionComposer = memo(function SessionComposer({
   const canReloadSession = Boolean(onReloadSession)
     && !sessionActionsDisabled
     && session.controlCapabilities?.reload.status !== "unsupported";
+  const shouldShowOpenTaskAction = surface === "page-mobile-detail" && showOpenTaskAction && Boolean(onOpenActiveTask);
 
   useEffect(() => {
     setShowSessionActions(false);
@@ -376,7 +383,7 @@ const SessionComposer = memo(function SessionComposer({
             </div>
           </div>
           <div className="composer__actions">
-            {onCreateNewSession || onCompactSession || onReloadSession ? (
+            {shouldShowOpenTaskAction || onCreateNewSession || onCompactSession || onReloadSession ? (
               <div className="session-actions-menu">
                 <button
                   className="secondary-button session-actions-menu__trigger"
@@ -390,6 +397,20 @@ const SessionComposer = memo(function SessionComposer({
                 </button>
                 {showSessionActions ? (
                   <div className="session-actions-menu__dropdown" data-role="session-actions-menu" role="menu">
+                    {shouldShowOpenTaskAction && onOpenActiveTask ? (
+                      <button
+                        className="secondary-button session-actions-menu__item"
+                        data-role="session-action-open-task"
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setShowSessionActions(false);
+                          onOpenActiveTask();
+                        }}
+                      >
+                        Open task
+                      </button>
+                    ) : null}
                     {onCreateNewSession ? (
                       <button
                         className="secondary-button session-actions-menu__item"
@@ -497,7 +518,7 @@ const SessionComposer = memo(function SessionComposer({
       </form>
     </>
   );
-});
+}
 
 const SessionTranscript = memo(function SessionTranscript({
   sessionId,
@@ -666,6 +687,7 @@ export function SessionChatPanel({
   const getTooltipProps = useExplanatoryTooltipProps();
   const activeTaskId = session?.activeTaskId ?? null;
   const activeTaskProjectId = session?.activeTaskProjectId ?? session?.taskProjectId ?? null;
+  const showMobileOpenTaskAction = surface === "page-mobile-detail" && Boolean(activeTaskId);
 
   return (
     <section
@@ -752,10 +774,15 @@ export function SessionChatPanel({
             onDraftChange={onDraftChange}
             onSendMessage={onSendMessage}
             onStopSession={onStopSession}
+            showOpenTaskAction={showMobileOpenTaskAction}
+            onOpenActiveTask={showMobileOpenTaskAction && activeTaskId
+              ? () => onOpenTask(activeTaskId, activeTaskProjectId)
+              : undefined}
             onCreateNewSession={onCreateNewSession}
             onOpenPiSettings={onOpenPiSettings}
             onCompactSession={onCompactSession}
             onReloadSession={onReloadSession}
+            surface={surface}
           />
         </>
       ) : (
