@@ -5,20 +5,23 @@ import { describe, expect, it } from "vitest";
 
 const notesPageSource = readFileSync(join(process.cwd(), "src/pages/NotesPage.tsx"), "utf8");
 
-describe("NotesPage mobile sub-navigation contract", () => {
-  it("uses the shared mobile sub-navigation header and hides the desktop sidebar on mobile", () => {
-    expect(notesPageSource).toContain("<SettingsMobileSubnavHeader");
-    expect(notesPageSource).toContain('dataRolePrefix="notes"');
-    expect(notesPageSource).toContain('navigationClassName="notes-page__navigation settings-mobile-subnav-panel"');
-    expect(notesPageSource).toContain('className="notes-page__nav-tree settings-mobile-subnav-list"');
+describe("NotesPage mobile header contract", () => {
+  it("owns its mobile header instead of reusing the shared settings sub-navigation shell", () => {
+    expect(notesPageSource).not.toContain("SettingsMobileSubnavHeader");
+    expect(notesPageSource).toContain('data-role="notes-detail-primary-header"');
+    expect(notesPageSource).toContain("notes-page__detail-header-sentinel");
+    expect(notesPageSource).toContain('data-role="notes-detail-compact-header"');
   });
 
-  it("uses a compact mobile header for notes so the selector does not spend extra vertical space", () => {
-    expect(notesPageSource).toContain("selectLabel={null}");
+  it("keeps selection and actions inside the notes header on mobile", () => {
+    expect(notesPageSource).toContain('data-role="notes-detail-header-select-control"');
+    expect(notesPageSource).toContain('mobileTriggerDataRole="notes-detail-header-actions-trigger"');
+    expect(notesPageSource).toContain("mobileHeaderActions");
   });
 
-  it("marks redundant desktop actions so the mobile header becomes the primary action surface", () => {
-    const redundantActionClassCount = notesPageSource.match(/settings-mobile-subnav-redundant-actions/g)?.length ?? 0;
-    expect(redundantActionClassCount).toBeGreaterThanOrEqual(2);
+  it("switches the main note surface between editor and preview instead of rendering both panes together", () => {
+    expect(notesPageSource).toContain('data-role={previewVisible ? "notes-preview-surface" : "notes-editor-surface"}');
+    expect(notesPageSource).toContain("autoGrow={isMobileViewport}");
+    expect(notesPageSource).not.toContain("notes-editor__panes");
   });
 });

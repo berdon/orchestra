@@ -5627,13 +5627,13 @@ export function App() {
         )}
 
         <main
-          className={`${activePage === "chat" || activePage === "sessions" || activePage === "notes" ? "content content--fill-page" : "content"}${showMobileSupervisorChatFab ? " content--with-mobile-fab" : ""}`}
+          className={`${activePage === "chat" || activePage === "sessions" || (activePage === "notes" && !isMobileNavigation) ? "content content--fill-page" : "content"}${showMobileSupervisorChatFab ? " content--with-mobile-fab" : ""}`}
         >
           <div
             className={
               activePage === "chat" ||
               activePage === "sessions" ||
-              activePage === "notes"
+              (activePage === "notes" && !isMobileNavigation)
                 ? "content__body content__body--fill"
                 : "content__body"
             }
