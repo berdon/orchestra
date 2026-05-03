@@ -2318,6 +2318,8 @@ test("sessions route restoration opens at the latest message with auto-scroll en
   const transcript = page.locator('[data-role="session-transcript"]');
   const toggle = page.locator('[data-role="session-scroll-lock-toggle"]');
 
+  await expect.poll(async () => page.evaluate(() => window.location.search)).toContain(`selectedSessionId=${sessionId}`);
+  await expect(page.locator('.session-list-link--active[data-role="session-link"]')).toHaveAttribute("data-session-id", sessionId);
   await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", sessionId);
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Route restored session");
   await expectTranscriptAutoScrollOn(transcript, toggle);

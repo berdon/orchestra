@@ -162,4 +162,33 @@ describe("sessionListMerge", () => {
     expect(merged).toHaveLength(2);
     expect(merged.find((session) => session.id === existing.id)).toEqual(existing);
   });
+
+  it("preserves an exactly requested session when the list response briefly lags behind the detail fetch", () => {
+    const requested = makeSession({
+      id: "session-requested",
+      title: "Requested task session",
+      status: "active",
+      updatedAt: "2026-04-08T00:00:08Z",
+      events: [
+        {
+          id: "assistant-requested-1",
+          kind: "assistant",
+          message: "Keep the requested session selected until the list catches up.",
+          timestamp: "2026-04-08T00:00:08Z",
+        },
+      ],
+    });
+    const listed = makeSession({
+      id: "session-other",
+      title: "Another listed session",
+    });
+
+    const merged = reconcileListedSessions([requested], [listed], {
+      preserveDetailedSessionIds: [requested.id],
+      preserveMissingSessionIds: [requested.id],
+    });
+
+    expect(merged).toHaveLength(2);
+    expect(merged.find((session) => session.id === requested.id)).toEqual(requested);
+  });
 });

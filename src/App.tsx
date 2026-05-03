@@ -1366,6 +1366,7 @@ export function App() {
   const scheduledSessionRefreshRef = useRef<number | null>(null);
   const backgroundSessionRefreshInFlightRef = useRef(false);
   const pendingSessionRecordRequestKeyRef = useRef<string | null>(null);
+  const previousProjectIdRef = useRef<string | null>(activeProjectId);
   const sessionListRefreshCountRef = useRef(0);
   const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
   const testPinnedSessionIdsRef = useRef<Set<string>>(new Set());
@@ -2759,6 +2760,12 @@ export function App() {
       setSessionActionError(null);
 
       try {
+        const pendingSessionOpenRequest =
+          pendingSessionOpenRequestRef.current;
+        const requestedSessionId =
+          pendingSessionOpenRequest?.projectId === activeProjectId
+            ? pendingSessionOpenRequest.sessionId
+            : null;
         const listedSessions = sortSessionRecords(
           (
             await retryOrchestraRead(() =>
@@ -2771,11 +2778,14 @@ export function App() {
             preserveDetailedSessionIds: [
               viewedSessionIdRef.current,
               selectedSessionIdRef.current,
+              requestedSessionId,
               chatSessionIdStateRef.current,
               supervisorSessionIdRef.current,
             ].filter((value): value is string => Boolean(value)),
             preserveMissingSessionIds: [
               viewedSessionIdRef.current,
+              selectedSessionIdRef.current,
+              requestedSessionId,
               supervisorSessionIdRef.current,
               ...Array.from(testPinnedSessionIdsRef.current),
             ].filter((value): value is string => Boolean(value)),
@@ -2785,12 +2795,6 @@ export function App() {
 
         replaceSessions(nextSessions);
         setSelectedSessionId((current) => {
-          const pendingSessionOpenRequest =
-            pendingSessionOpenRequestRef.current;
-          const requestedSessionId =
-            pendingSessionOpenRequest?.projectId === activeProjectId
-              ? pendingSessionOpenRequest.sessionId
-              : null;
           if (requestedSessionId) {
             return current === requestedSessionId
               ? current
@@ -3298,6 +3302,12 @@ export function App() {
     } else {
       setActiveProjectId(null, null);
     }
+
+    if (previousProjectIdRef.current === activeProjectId) {
+      return;
+    }
+
+    previousProjectIdRef.current = activeProjectId;
     replaceSessions([]);
     replacePendingRuns({});
     pendingSessionRecordRequestKeyRef.current = null;

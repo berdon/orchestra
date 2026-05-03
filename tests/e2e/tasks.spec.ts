@@ -3653,7 +3653,16 @@ test("task detail only shows session navigation when the task has an active sess
   await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("session-task-linked");
   await expect(page.locator('[data-role="task-runtime-session-link"]')).toBeVisible();
   await expect(page.locator('[data-role="task-open-session"]')).toBeVisible();
-  await page.locator('[data-role="task-runtime-session-link"]').click();
+  await page.locator('[data-role="task-open-session"]').click();
+  await expect
+    .poll(async () => page.evaluate(() => window.location.search))
+    .toContain("page=sessions");
+  await expect
+    .poll(async () => page.evaluate(() => window.location.search))
+    .toContain("selectedSessionId=session-task-linked");
+  await expect(
+    page.locator('.session-list-link--active[data-role="session-link"]'),
+  ).toHaveAttribute("data-session-id", "session-task-linked");
   await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", "session-task-linked");
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Active task session");
 
