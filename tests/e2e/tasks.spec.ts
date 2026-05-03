@@ -4121,8 +4121,8 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
   const primaryMobileRootLabels = await primaryMobileActions.locator('.task-action-menu__dropdown > button').evaluateAll((nodes) =>
     nodes.map((node) => (node.textContent ?? '').trim()).filter(Boolean),
   );
-  expect(primaryMobileRootLabels).toEqual(['Open session', 'Approve', 'Needs work', 'Move to …', 'Stop', 'Whip']);
-  await expect(primaryMobileActions.locator('.task-detail-mobile-action-menu__divider')).toHaveCount(2);
+  expect(primaryMobileRootLabels).toEqual(['Approve', 'Needs work', 'Move to …', 'Stop', 'Whip', 'Open session']);
+  await expect(primaryMobileActions.locator('.task-detail-mobile-action-menu__divider')).toHaveCount(3);
   await expect(primaryMobileActions.locator('[data-role="task-relane-option"][data-lane-id="lane-review-pass"]')).toHaveCount(0);
   await primaryMobileActions.getByRole('button', { name: 'Move to …' }).click();
   await expect(primaryMobileActions.locator('[data-role="task-relane-option"][data-lane-id="lane-review-pass"]')).toBeVisible();

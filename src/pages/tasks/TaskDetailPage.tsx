@@ -1886,13 +1886,23 @@ export function TaskDetailPage({
     return [...actionEntries, ...(actionEntries.length ? [dividerBefore] : []), relaneEntry];
   }
 
-  const primaryHeaderMobileActionMenuEntries = buildMobileHeaderActionMenuEntries([
-    ...(activeSessionId
-      ? [{ id: "open-session", label: "Open session", onClick: () => onOpenSession(activeSessionId, task.projectId), variant: "secondary" as const, dataRole: "task-open-session" }]
-      : []),
-    ...headerActionMenuActions,
-  ]);
   const compactHeaderMobileActionMenuEntries = buildMobileHeaderActionMenuEntries(compactHeaderActionMenuActions);
+  const primaryHeaderMobileActionMenuEntries = [
+    ...buildMobileHeaderActionMenuEntries(headerActionMenuActions),
+    ...(activeSessionId
+      ? [
+          ...(headerActionMenuActions.length ? [{ kind: "divider", id: "mobile-open-session-divider" } satisfies TaskDetailMobileActionMenuEntry] : []),
+          {
+            kind: "action",
+            id: "open-session",
+            label: "Open session",
+            onClick: () => onOpenSession(activeSessionId, task.projectId),
+            variant: "secondary" as const,
+            dataRole: "task-open-session",
+          } satisfies TaskDetailMobileActionMenuEntry,
+        ]
+      : []),
+  ];
 
   function renderHeaderActions(compact = false) {
     const desktopActionMenuActions = compact ? compactHeaderActionMenuActions : headerActionMenuActions;

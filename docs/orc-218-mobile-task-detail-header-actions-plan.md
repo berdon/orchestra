@@ -3,14 +3,14 @@
 ## tl;dr
 - On mobile, replace the task-detail header’s separate `Open session` / `Re-lane` / lane-action controls with one `Actions` menu in both the primary header and the floating header.
 - Keep desktop behavior functionally unchanged.
-- Build the unified mobile menu in `TaskDetailPage` from the existing header action list plus mobile-only session access and a nested `Move to …` re-lane entry.
+- Build the unified mobile menu in `TaskDetailPage` from the existing header action list plus a nested `Move to …` re-lane entry, while keeping lower-priority `Open session` access available in a trailing mobile group.
 - Add small responsive wrappers in `TaskDetailPage`/`styles.css` so both mobile header variants share the same single-button pattern.
 - Update task-detail e2e coverage to assert the consolidated mobile menu while preserving session-open and re-lane access.
 
 ## Executive summary
 `src/pages/tasks/TaskDetailPage.tsx` already renders both task-detail header variants through the shared `renderHeaderActions(compact)` helper, but today that helper composes three separate controls: a standalone `Open session` button, a standalone `TaskRelaneMenu`, and `TaskActionMenu`. `TaskActionMenu` already collapses into a single dropdown on mobile, but the other two controls remain visible, which is why mobile still shows multiple header actions.
 
-The lowest-risk fix is to keep the existing desktop layout intact and add a dedicated mobile header action surface inside `renderHeaderActions()`. That mobile surface should feed one unified action menu with the existing task/lane actions plus mobile-only `Open session` access and a nested `Move to …` entry that opens the available re-lane targets. This keeps the change scoped to task detail, reuses the existing action-menu pattern, and guarantees the main header and floating header stay aligned because they continue sharing one render path.
+The lowest-risk fix is to keep the existing desktop layout intact and add a dedicated mobile header action surface inside `renderHeaderActions()`. That mobile surface should feed one unified action menu with the existing task/lane actions plus a nested `Move to …` entry that opens the available re-lane targets, while keeping `Open session` accessible in a separate lower-priority mobile group when it exists. This keeps the change scoped to task detail, reuses the existing action-menu pattern, and guarantees the main header and floating header stay aligned because they continue sharing one render path.
 
 ## Current-state findings
 - `renderHeaderActions(compact)` is the shared render path for both the main task-detail header and the floating header.
@@ -27,10 +27,10 @@ In `src/pages/tasks/TaskDetailPage.tsx`:
 - keep one shared `renderHeaderActions(compact = false)` path for both header variants.
 - add a helper/derived list that builds the unified mobile menu from:
   - existing `headerActionMenuActions`
-  - `Open session` when `!compact && activeSessionId`
   - one nested `Move to …` entry that opens the existing `availableRelaneTarget` choices and then calls `openRelaneConfirm(lane)`
+  - `Open session` when `!compact && activeSessionId`, but grouped after the core workflow actions instead of leading the menu
 
-For approval-paused review states, place `Move to …` below `Approve` / `Needs work`, separated from those review actions and from the trailing `Stop` / `Whip` actions with dividers.
+For approval-paused review states, place `Move to …` below `Approve` / `Needs work`, separated from those review actions and from the trailing `Stop` / `Whip` actions with dividers. Keep `Open session` available, but in a final lower-priority group so the workflow decision actions stay first.
 
 ### 2. Split desktop and mobile header action surfaces
 Still in `TaskDetailPage.tsx`:
