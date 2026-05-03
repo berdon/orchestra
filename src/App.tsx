@@ -1402,12 +1402,44 @@ export function App() {
   }, [supervisorSessionId]);
 
   useEffect(() => {
-    pendingRunsRef.current = pendingRuns;
-  }, [pendingRuns]);
-
-  useEffect(() => {
     pendingSessionOpenRequestRef.current = pendingSessionOpenRequest;
   }, [pendingSessionOpenRequest]);
+
+  const replacePendingRuns = useCallback(
+    (
+      updater:
+        | Record<string, PendingSessionRun>
+        | ((
+            current: Record<string, PendingSessionRun>,
+          ) => Record<string, PendingSessionRun>),
+    ) => {
+      const current = pendingRunsRef.current;
+      const next = typeof updater === "function" ? updater(current) : updater;
+      if (current === next) {
+        return current;
+      }
+      pendingRunsRef.current = next;
+      setPendingRuns(next);
+      return next;
+    },
+    [],
+  );
+
+  const replaceSessions = useCallback(
+    (
+      updater: SessionRecord[] | ((current: SessionRecord[]) => SessionRecord[]),
+    ) => {
+      const current = sessionsRef.current;
+      const next = typeof updater === "function" ? updater(current) : updater;
+      if (areSessionListsEqual(current, next)) {
+        return current;
+      }
+      sessionsRef.current = next;
+      setSessions(next);
+      return next;
+    },
+    [],
+  );
 
   const logStartupTiming = useCallback(
     (stage: string, startedAt?: number, details?: Record<string, unknown>) => {
@@ -1804,10 +1836,6 @@ export function App() {
     : undefined;
 
   useEffect(() => {
-    sessionsRef.current = sessions;
-  }, [sessions]);
-
-  useEffect(() => {
     if (
       liveChatSession &&
       chatSessionAgentIdRef.current === selectedChatAgentId
@@ -2012,30 +2040,26 @@ export function App() {
 
   const mergeSessionRecord = useCallback(
     (updatedSession: SessionRecord, options?: { select?: boolean }) => {
-      setSessions((current) => {
-        const existingSession = current.find(
-          (session) => session.id === updatedSession.id,
-        );
-        const normalizedSession = normalizeSessionRecord(
-          existingSession &&
-            updatedSession.events.length === 0 &&
-            existingSession.events.length > 0
-            ? {
-                ...updatedSession,
-                events: existingSession.events,
-                debugInfo:
-                  updatedSession.debugInfo ?? existingSession.debugInfo,
-              }
-            : updatedSession,
-        );
-        const nextSessions = sortSessionRecords([
-          normalizedSession,
-          ...current.filter((session) => session.id !== normalizedSession.id),
-        ]);
-        return areSessionListsEqual(current, nextSessions)
-          ? current
-          : nextSessions;
-      });
+      const current = sessionsRef.current;
+      const existingSession = current.find(
+        (session) => session.id === updatedSession.id,
+      );
+      const normalizedSession = normalizeSessionRecord(
+        existingSession &&
+          updatedSession.events.length === 0 &&
+          existingSession.events.length > 0
+          ? {
+              ...updatedSession,
+              events: existingSession.events,
+              debugInfo: updatedSession.debugInfo ?? existingSession.debugInfo,
+            }
+          : updatedSession,
+      );
+      const nextSessions = sortSessionRecords([
+        normalizedSession,
+        ...current.filter((session) => session.id !== normalizedSession.id),
+      ]);
+      replaceSessions(nextSessions);
 
       if (options?.select) {
         setSelectedSessionId((current) =>
@@ -2043,7 +2067,7 @@ export function App() {
         );
       }
     },
-    [],
+    [replaceSessions],
   );
 
   const applySessionUpdate = useCallback(
@@ -2095,45 +2119,42 @@ export function App() {
     sessions,
   ]);
 
-  const removePendingRun = useCallback((sessionId: string, runId?: string) => {
-    setPendingRuns((current) => {
+  const removePendingRun = useCallback(
+    (sessionId: string, runId?: string) => {
+      const current = pendingRunsRef.current;
       const existing = current[sessionId];
       if (!existing || (runId && existing.runId !== runId)) {
-        return current;
+        return;
       }
 
       const next = { ...current };
       delete next[sessionId];
-      return next;
-    });
-  }, []);
+      replacePendingRuns(next);
+    },
+    [replacePendingRuns],
+  );
 
   const patchSessionRecord = useCallback(
     (sessionId: string, patch: (session: SessionRecord) => SessionRecord) => {
-      setSessions((current) => {
-        const currentSession = current.find(
-          (session) => session.id === sessionId,
-        );
-        if (!currentSession) {
-          return current;
-        }
+      const current = sessionsRef.current;
+      const currentSession = current.find((session) => session.id === sessionId);
+      if (!currentSession) {
+        return;
+      }
 
-        const patchedSession = normalizeSessionRecord(patch(currentSession));
-        if (areSessionRecordsEqual(currentSession, patchedSession)) {
-          return current;
-        }
+      const patchedSession = normalizeSessionRecord(patch(currentSession));
+      if (areSessionRecordsEqual(currentSession, patchedSession)) {
+        return;
+      }
 
-        const nextSessions = sortSessionRecords(
-          current.map((session) =>
-            session.id === sessionId ? patchedSession : session,
-          ),
-        );
-        return areSessionListsEqual(current, nextSessions)
-          ? current
-          : nextSessions;
-      });
+      const nextSessions = sortSessionRecords(
+        current.map((session) =>
+          session.id === sessionId ? patchedSession : session,
+        ),
+      );
+      replaceSessions(nextSessions);
     },
-    [],
+    [replaceSessions],
   );
 
   const updateDraftMessage = useCallback((sessionId: string, value: string) => {
@@ -2233,27 +2254,17 @@ export function App() {
       sessionId: string,
       updater: (run: PendingSessionRun) => PendingSessionRun,
     ) => {
-      let nextRun: PendingSessionRun | undefined;
-
-      setPendingRuns((current) => {
-        const existing = current[sessionId];
-        if (!existing) {
-          return current;
-        }
-
-        const updatedRun = updater(existing);
-        nextRun = updatedRun;
-        return {
-          ...current,
-          [sessionId]: updatedRun,
-        };
-      });
-
-      if (!nextRun) {
+      const existing = pendingRunsRef.current[sessionId];
+      if (!existing) {
         return;
       }
 
-      const resolvedRun = nextRun;
+      const resolvedRun = updater(existing);
+      replacePendingRuns({
+        ...pendingRunsRef.current,
+        [sessionId]: resolvedRun,
+      });
+
       patchSessionRecord(sessionId, (session) => {
         const persistedEvents = session.events.filter(
           (event) => event.runId !== resolvedRun.runId,
@@ -2270,7 +2281,7 @@ export function App() {
         };
       });
     },
-    [patchSessionRecord],
+    [patchSessionRecord, replacePendingRuns],
   );
 
   async function loadLogs() {
@@ -2771,10 +2782,7 @@ export function App() {
           }),
         );
 
-        sessionsRef.current = nextSessions;
-        setSessions((current) =>
-          areSessionListsEqual(current, nextSessions) ? current : nextSessions,
-        );
+        replaceSessions(nextSessions);
         setSelectedSessionId((current) => {
           const pendingSessionOpenRequest =
             pendingSessionOpenRequestRef.current;
@@ -2822,7 +2830,13 @@ export function App() {
         backgroundSessionRefreshInFlightRef.current = false;
       }
     },
-    [activePage, activeProjectId, logStartupTiming, orchestraClient],
+    [
+      activePage,
+      activeProjectId,
+      logStartupTiming,
+      orchestraClient,
+      replaceSessions,
+    ],
   );
 
   const loadChatAgents = useCallback(
@@ -2924,7 +2938,7 @@ export function App() {
 
     try {
       await orchestraClient.sessions.remove(sessionId);
-      setSessions((current) =>
+      replaceSessions((current) =>
         current.filter((session) => session.id !== sessionId),
       );
       setSelectedSessionId((current) =>
@@ -2934,7 +2948,7 @@ export function App() {
       if (chatSessionId === sessionId) {
         chatSessionAgentIdRef.current = null;
       }
-      setPendingRuns((current) => {
+      replacePendingRuns((current) => {
         const next = { ...current };
         delete next[sessionId];
         return next;
@@ -2977,7 +2991,7 @@ export function App() {
       const closedSessionIds = new Set(
         closedSessions.map((session) => session.id),
       );
-      setSessions((current) =>
+      replaceSessions((current) =>
         current.filter((session) => !closedSessionIds.has(session.id)),
       );
       setSelectedSessionId((current) =>
@@ -2989,7 +3003,7 @@ export function App() {
       if (chatSessionId && closedSessionIds.has(chatSessionId)) {
         chatSessionAgentIdRef.current = null;
       }
-      setPendingRuns((current) => {
+      replacePendingRuns((current) => {
         const next = { ...current };
         for (const session of closedSessions) {
           delete next[session.id];
@@ -3034,9 +3048,10 @@ export function App() {
         return;
       }
 
+      const currentPendingRun = pendingRunsRef.current[payload.sessionId];
       const reduction = reduceSessionTranscriptEvent(
         currentSession,
-        pendingRuns[payload.sessionId],
+        currentPendingRun,
         payload,
       );
       if (!reduction) {
@@ -3045,12 +3060,12 @@ export function App() {
 
       patchSessionRecord(payload.sessionId, () => reduction.session);
       if (reduction.pendingRun) {
-        setPendingRuns((current) => ({
-          ...current,
-          [payload.sessionId]: reduction.pendingRun!,
-        }));
+        replacePendingRuns({
+          ...pendingRunsRef.current,
+          [payload.sessionId]: reduction.pendingRun,
+        });
       } else if (
-        pendingRuns[payload.sessionId] &&
+        currentPendingRun &&
         (reduction.refreshFromBackend || reduction.session.status === "failed")
       ) {
         removePendingRun(payload.sessionId, payload.runId ?? undefined);
@@ -3248,9 +3263,9 @@ export function App() {
     } else {
       setActiveProjectId(null, null);
     }
-    sessionsRef.current = [];
+    replaceSessions([]);
+    replacePendingRuns({});
     pendingSessionRecordRequestKeyRef.current = null;
-    setSessions([]);
     setSelectedSessionId(
       pendingSessionOpenRequest?.projectId === activeProjectId
         ? pendingSessionOpenRequest.sessionId
@@ -3262,7 +3277,13 @@ export function App() {
     lastKnownChatSessionIdRef.current = null;
     lastKnownChatSessionAgentIdRef.current = null;
     lastKnownChatSessionDraftRef.current = "";
-  }, [activeProject?.slug, activeProjectId, pendingSessionOpenRequest]);
+  }, [
+    activeProject?.slug,
+    activeProjectId,
+    pendingSessionOpenRequest,
+    replacePendingRuns,
+    replaceSessions,
+  ]);
 
   useNotificationController({
     disabled: isDetachedWindow || isLogsWindow || isAgentTerminalWindow,
@@ -4434,11 +4455,7 @@ export function App() {
         apply: (value) => {
           const nextSessions = value as SessionRecord[];
           commandPaletteState.sessions = nextSessions;
-          setSessions((current) =>
-            areSessionListsEqual(current, nextSessions)
-              ? current
-              : nextSessions,
-          );
+          replaceSessions(nextSessions);
         },
       },
       {
@@ -4728,10 +4745,10 @@ export function App() {
       if (clearDraft) {
         updateDraftMessage(sessionId, "");
       }
-      setPendingRuns((current) => ({
-        ...current,
+      replacePendingRuns({
+        ...pendingRunsRef.current,
         [sessionId]: pendingRun,
-      }));
+      });
       patchSessionRecord(sessionId, (record) =>
         applyPendingRunToSession(record, pendingRun),
       );
@@ -4763,6 +4780,7 @@ export function App() {
       patchSessionRecord,
       piSetupState?.status,
       removePendingRun,
+      replacePendingRuns,
       sessions,
       updateDraftMessage,
     ],

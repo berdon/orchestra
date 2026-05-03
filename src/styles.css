@@ -2925,10 +2925,7 @@ strong {
   font-size: 0.82rem;
   line-height: 1.45;
   white-space: pre-wrap;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  overflow-wrap: anywhere;
 }
 
 .panel--session-hero,

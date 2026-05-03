@@ -1066,6 +1066,8 @@ test("sessions UI shows compact live thinking updates while assistant text strea
   await page.goto("/");
   await page.getByRole("link", { name: "Thinking stream" }).click();
 
+  const baselineRefreshCount = await readSessionRefreshCount(page);
+
   await page.evaluate(() => {
     const receivedAt = new Date().toISOString();
     window.dispatchEvent(
@@ -1095,6 +1097,18 @@ test("sessions UI shows compact live thinking updates while assistant text strea
         },
       }),
     );
+
+    for (let index = 0; index < 3; index += 1) {
+      window.dispatchEvent(new CustomEvent("orchestra:session-change", {
+        detail: { sessionIds: ["session-thinking"], reason: `thinking-burst-${index}` },
+      }));
+    }
+  });
+
+  await expect.poll(() => readSessionRefreshCount(page)).toBe(baselineRefreshCount + 1);
+
+  await page.evaluate(() => {
+    const receivedAt = new Date().toISOString();
     window.dispatchEvent(
       new CustomEvent("orchestra:session-stream", {
         detail: {
@@ -1113,11 +1127,7 @@ test("sessions UI shows compact live thinking updates while assistant text strea
 
   const thinkingPreview = page.locator('[data-role="transcript-thinking-preview"]').last();
   await expect(thinkingPreview).toContainText("Fourth line");
-  const previewTextContent = await thinkingPreview.evaluate((node) => node.textContent || "");
-  expect(previewTextContent).toContain("Third line");
-  expect(previewTextContent).toContain("Fourth line");
-  const webkitLineClamp = await thinkingPreview.evaluate((node) => getComputedStyle(node).getPropertyValue("-webkit-line-clamp"));
-  expect(webkitLineClamp.trim()).toBe("3");
+  expect(await thinkingPreview.evaluate((node) => node.textContent || "")).toBe("… Second line\nThird line\nFourth line");
 
   await page.evaluate(() => {
     const receivedAt = new Date().toISOString();
@@ -1164,6 +1174,7 @@ test("sessions UI shows compact live thinking updates while assistant text strea
 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Visible answer");
   await expect(thinkingPreview).toContainText("Fifth line");
+  expect(await thinkingPreview.evaluate((node) => node.textContent || "")).toBe("… Third line\nFourth line\nFifth line");
 });
 
 test("sessions UI shows streamed assistant text when rejoining an active session", async ({ page }) => {

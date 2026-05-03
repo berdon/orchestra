@@ -477,6 +477,7 @@ export function reduceSessionTranscriptEvent(
     const rpcEvent = isObject(payload.event) ? payload.event : null;
     const message = rpcEvent?.message;
     const delta = isObject(rpcEvent?.assistantMessageEvent) ? rpcEvent?.assistantMessageEvent : null;
+    const messageText = extractRpcMessageText(message);
     const thinkingText = extractRpcThinkingText(message);
 
     switch (deltaType) {
@@ -527,7 +528,7 @@ export function reduceSessionTranscriptEvent(
               ...base,
               thinking: true,
               pending: true,
-              thinkingText: `${base.thinkingText ?? ""}${chunk}`,
+              thinkingText: thinkingText || `${base.thinkingText ?? ""}${chunk}`,
               timestamp: eventTimestamp,
             },
           };
@@ -538,7 +539,7 @@ export function reduceSessionTranscriptEvent(
             ...event,
             thinking: true,
             pending: true,
-            thinkingText: `${event.thinkingText ?? ""}${chunk}`,
+            thinkingText: thinkingText || `${event.thinkingText ?? ""}${chunk}`,
             timestamp: eventTimestamp,
           })),
         };
@@ -611,7 +612,7 @@ export function reduceSessionTranscriptEvent(
             },
             assistantEvent: {
               ...base,
-              message: hasVisibleAssistantText(base) ? `${base.message}${chunk}` : chunk,
+              message: messageText || (hasVisibleAssistantText(base) ? `${base.message}${chunk}` : chunk),
               pending: true,
               thinking: false,
               timestamp: eventTimestamp,
@@ -622,7 +623,7 @@ export function reduceSessionTranscriptEvent(
         return {
           session: patchStreamingAssistantEvent(session, runId, eventTimestamp, (event) => ({
             ...event,
-            message: hasVisibleAssistantText(event) ? `${event.message}${chunk}` : chunk,
+            message: messageText || (hasVisibleAssistantText(event) ? `${event.message}${chunk}` : chunk),
             pending: true,
             thinking: false,
             thinkingText: thinkingText || event.thinkingText,

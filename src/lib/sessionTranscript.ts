@@ -34,7 +34,7 @@ export function isToolCallTranscriptEvent(event: SessionEvent) {
   return event.presentation === "tool_call";
 }
 
-export function buildCollapsedPreview(message: string, lineCount = TRANSCRIPT_PREVIEW_LINE_COUNT) {
+function trimPreviewLines(message: string) {
   const normalized = message.replace(/\r\n/g, "\n");
   const lines = normalized.split("\n");
   const previewLines = [...lines];
@@ -48,6 +48,12 @@ export function buildCollapsedPreview(message: string, lineCount = TRANSCRIPT_PR
     break;
   }
 
+  return { lines, previewLines };
+}
+
+export function buildCollapsedPreview(message: string, lineCount = TRANSCRIPT_PREVIEW_LINE_COUNT) {
+  const { lines, previewLines } = trimPreviewLines(message);
+
   if (previewLines.length <= lineCount) {
     return {
       text: previewLines.join("\n"),
@@ -57,6 +63,24 @@ export function buildCollapsedPreview(message: string, lineCount = TRANSCRIPT_PR
 
   return {
     text: ["…", ...previewLines.slice(-lineCount)].join("\n"),
+    truncated: true,
+  };
+}
+
+export function buildThinkingPreview(message: string, lineCount = TRANSCRIPT_PREVIEW_LINE_COUNT) {
+  const { lines, previewLines } = trimPreviewLines(message);
+
+  if (previewLines.length <= lineCount) {
+    return {
+      text: previewLines.join("\n"),
+      truncated: previewLines.length < lines.length,
+    };
+  }
+
+  const visibleLines = previewLines.slice(-lineCount);
+  const [firstLine, ...rest] = visibleLines;
+  return {
+    text: [`… ${firstLine ?? ""}`.trimEnd(), ...rest].join("\n"),
     truncated: true,
   };
 }

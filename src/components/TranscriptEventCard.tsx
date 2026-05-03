@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useState } from "react";
 import hljs from "highlight.js";
 
 import { MarkdownContent, type MarkdownMentionResolver } from "./MarkdownContent";
-import { buildCollapsedPreview, detectTranscriptContent, isFoldableTranscriptEvent, isToolCallTranscriptEvent } from "../lib/sessionTranscript";
+import { buildCollapsedPreview, buildThinkingPreview, detectTranscriptContent, isFoldableTranscriptEvent, isToolCallTranscriptEvent } from "../lib/sessionTranscript";
 import type { SessionEvent } from "../types";
 
 interface TranscriptEventCardProps {
@@ -74,7 +74,10 @@ export const TranscriptEventCard = memo(function TranscriptEventCard({
 }: TranscriptEventCardProps) {
   const [expanded, setExpanded] = useState(() => !isFoldableTranscriptEvent(event));
   const [copied, setCopied] = useState(false);
-  const thinkingPreview = (event.thinkingText ?? "").trim() || (event.kind === "assistant" && event.thinking ? "Thinking…" : "");
+  const thinkingPreview = useMemo(() => {
+    const preview = buildThinkingPreview(event.thinkingText ?? "").text;
+    return preview || (event.kind === "assistant" && event.thinking ? "Thinking…" : "");
+  }, [event.kind, event.thinking, event.thinkingText]);
   const message = event.message || (event.kind === "assistant" ? (thinkingPreview ? "" : "…") : "Queued…");
   const foldable = isFoldableTranscriptEvent(event);
   const toolCall = isToolCallTranscriptEvent(event);

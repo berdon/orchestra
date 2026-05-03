@@ -25,7 +25,25 @@ describe("sessionTranscriptReducer", () => {
     const session = makeSession();
     const pendingRun = createPendingUserRun("run-1", "hello", "2026-04-08T00:00:01Z");
 
-    const thinkingEnvelope: SessionStreamEnvelope = {
+    const thinkingStartEnvelope: SessionStreamEnvelope = {
+      sessionId: session.id,
+      runId: "run-1",
+      receivedAt: "2026-04-08T00:00:02Z",
+      event: {
+        type: "message_update",
+        message: {
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "Line one\nLine two" }],
+        },
+        assistantMessageEvent: { type: "thinking_start", contentIndex: 0, partial: {} },
+      },
+    };
+
+    const afterThinkingStart = reduceSessionTranscriptEvent(session, pendingRun, thinkingStartEnvelope);
+    expect(afterThinkingStart?.pendingRun?.assistantEvent?.thinkingText).toBe("Line one\nLine two");
+    expect(afterThinkingStart?.pendingRun?.assistantEvent?.message).toBe("");
+
+    const thinkingDeltaEnvelope: SessionStreamEnvelope = {
       sessionId: session.id,
       runId: "run-1",
       receivedAt: "2026-04-08T00:00:02Z",
@@ -35,12 +53,12 @@ describe("sessionTranscriptReducer", () => {
           role: "assistant",
           content: [{ type: "thinking", thinking: "Line one\nLine two\nLine three\nLine four" }],
         },
-        assistantMessageEvent: { type: "thinking_start", contentIndex: 0, partial: {} },
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "\nLine three\nLine four", partial: {} },
       },
     };
 
-    const afterThinking = reduceSessionTranscriptEvent(session, pendingRun, thinkingEnvelope);
-    expect(afterThinking?.pendingRun?.assistantEvent?.thinkingText).toContain("Line one");
+    const afterThinking = reduceSessionTranscriptEvent(afterThinkingStart!.session, afterThinkingStart!.pendingRun, thinkingDeltaEnvelope);
+    expect(afterThinking?.pendingRun?.assistantEvent?.thinkingText).toBe("Line one\nLine two\nLine three\nLine four");
     expect(afterThinking?.pendingRun?.assistantEvent?.message).toBe("");
 
     const answerEnvelope: SessionStreamEnvelope = {
@@ -62,6 +80,57 @@ describe("sessionTranscriptReducer", () => {
     const afterTurnEnd = reduceSessionTranscriptEvent(afterThinking!.session, afterThinking!.pendingRun, answerEnvelope);
     expect(afterTurnEnd?.pendingRun?.assistantEvent?.thinkingText).toContain("Line four");
     expect(afterTurnEnd?.pendingRun?.assistantEvent?.message).toBe("Visible answer");
+  });
+
+  it("prefers the authoritative message snapshot during assistant streaming deltas", () => {
+    const session = makeSession();
+
+    const afterMessageStart = reduceSessionTranscriptEvent(session, undefined, {
+      sessionId: session.id,
+      runId: "run-stream",
+      receivedAt: "2026-04-08T00:00:10Z",
+      event: {
+        type: "message_start",
+        message: { role: "assistant" },
+      },
+    });
+
+    const afterThinkingDelta = reduceSessionTranscriptEvent(afterMessageStart!.session, undefined, {
+      sessionId: session.id,
+      runId: "run-stream",
+      receivedAt: "2026-04-08T00:00:11Z",
+      event: {
+        type: "message_update",
+        message: {
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "First line\nSecond line\nThird line\nFourth line" }],
+        },
+        assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "\nThird line\nFourth line", partial: {} },
+      },
+    });
+
+    expect(afterThinkingDelta?.session.events.find((event) => event.runId === "run-stream" && event.kind === "assistant")?.thinkingText).toBe(
+      "First line\nSecond line\nThird line\nFourth line",
+    );
+
+    const afterTextDelta = reduceSessionTranscriptEvent(afterThinkingDelta!.session, undefined, {
+      sessionId: session.id,
+      runId: "run-stream",
+      receivedAt: "2026-04-08T00:00:12Z",
+      event: {
+        type: "message_update",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "First line\nSecond line\nThird line\nFourth line" },
+            { type: "text", text: "Visible answer" },
+          ],
+        },
+        assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Visible answer", partial: {} },
+      },
+    });
+
+    expect(afterTextDelta?.session.events.find((event) => event.runId === "run-stream" && event.kind === "assistant")?.message).toBe("Visible answer");
   });
 
   it("creates a pending tool transcript row from toolcall composition events", () => {

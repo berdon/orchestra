@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildCollapsedPreview, detectTranscriptContent, isFoldableTranscriptEvent } from "../src/lib/sessionTranscript";
+import { buildCollapsedPreview, buildThinkingPreview, detectTranscriptContent, isFoldableTranscriptEvent } from "../src/lib/sessionTranscript";
 
 describe("session transcript helpers", () => {
   it("folds system events by default", () => {
@@ -15,6 +15,21 @@ describe("session transcript helpers", () => {
     });
     expect(buildCollapsedPreview("### Tool\n\n```json\nline a\nline b\nline c\n```\n")).toEqual({
       text: "…\nline a\nline b\nline c",
+      truncated: true,
+    });
+  });
+
+  it("builds a stable three-line thinking preview for streaming updates", () => {
+    expect(buildThinkingPreview("First line\nSecond line")).toEqual({
+      text: "First line\nSecond line",
+      truncated: false,
+    });
+    expect(buildThinkingPreview("First line\nSecond line\nThird line\nFourth line")).toEqual({
+      text: "… Second line\nThird line\nFourth line",
+      truncated: true,
+    });
+    expect(buildThinkingPreview("First line\nSecond line\nThird line\nFourth line\nFifth line\n")).toEqual({
+      text: "… Third line\nFourth line\nFifth line",
       truncated: true,
     });
   });
