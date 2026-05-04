@@ -212,11 +212,11 @@ export function GitHubLandingPage() {
       <div className="github-landing__backdrop" aria-hidden="true" />
 
       <header className="github-topbar">
-        <a className="github-brand" href="#top" aria-label="Orchestra GitHub landing page">
+        <a className="github-brand" href="#top" aria-label="Orchestra - Agent Orchestration landing page">
           <MarkIcon />
           <span>
             <strong>Orchestra</strong>
-            <small>Operator workbench</small>
+            <small>Agent Orchestration</small>
           </span>
         </a>
 
