@@ -212,7 +212,7 @@ export function GitHubLandingPage() {
       <div className="github-landing__backdrop" aria-hidden="true" />
 
       <header className="github-topbar">
-        <a className="github-brand" href="#top" aria-label="Orchestra - Agent Orchestration landing page">
+        <a className="github-brand" href="#top" aria-label="Orchestra Launch Page">
           <MarkIcon />
           <span>
             <strong>Orchestra</strong>
@@ -245,7 +245,7 @@ export function GitHubLandingPage() {
       <main id="top">
         <section className="github-hero github-shell-section">
           <div className="github-hero__copy">
-            <p className="github-eyebrow">Standalone GitHub landing page</p>
+            <p className="github-eyebrow">Orchestra Launch Page</p>
             <h1>Run a company, organization, or project with customizable workflows, agents, and live human control.</h1>
             <p className="github-lead">
               Orchestra keeps tasks, workflows, repos, worktrees, permissions, sessions, channels, and operator oversight in one workbench.
@@ -276,7 +276,7 @@ export function GitHubLandingPage() {
                 target="_blank"
                 rel="noreferrer"
               >
-                View the GitHub mirror
+                GitHub repo
               </a>
             </div>
 
@@ -634,7 +634,7 @@ export function GitHubLandingPage() {
               <ArrowIcon />
             </a>
             <a className="github-button github-button--ghost" href="https://github.com/berdon/orchestra" target="_blank" rel="noreferrer">
-              Open GitHub mirror
+              GitHub repo
             </a>
           </div>
         </section>
