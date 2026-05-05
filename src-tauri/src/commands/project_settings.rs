@@ -34,7 +34,10 @@ pub async fn update_session_prompt_settings(
     template: Option<String>,
 ) -> Result<ProjectSessionPromptSettings, String> {
     spawn_blocking(move || {
-        project_settings::update_session_prompt_settings(&resolve_project_slug(project_slug)?, template)
+        project_settings::update_session_prompt_settings(
+            &resolve_project_slug(project_slug)?,
+            template,
+        )
     })
     .await
     .map_err(|error| format!("Unable to update session prompt settings: {error}"))?
@@ -131,7 +134,9 @@ pub async fn update_worker_overlay(
 }
 
 #[tauri::command]
-pub async fn get_project_secrets(project_slug: Option<String>) -> Result<ProjectSecretsState, String> {
+pub async fn get_project_secrets(
+    project_slug: Option<String>,
+) -> Result<ProjectSecretsState, String> {
     spawn_blocking(move || {
         project_secrets::get_project_secrets(&resolve_project_slug(project_slug)?)
     })

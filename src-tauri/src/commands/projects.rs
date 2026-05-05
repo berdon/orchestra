@@ -120,7 +120,9 @@ pub fn delete_project(
 }
 
 #[tauri::command]
-pub async fn list_repositories(project_id: Option<String>) -> Result<Vec<RepositoryRecord>, String> {
+pub async fn list_repositories(
+    project_id: Option<String>,
+) -> Result<Vec<RepositoryRecord>, String> {
     spawn_blocking(move || {
         let connection = database::open_connection()?;
         projects::list_repositories(&connection, project_id.as_deref())

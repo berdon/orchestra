@@ -15,13 +15,14 @@ use tauri::AppHandle;
 use crate::{
     models::{
         HarnessModelLimitMetricValue, HarnessModelLimitPolicy, HarnessModelLimitState,
-        HarnessModelLimitsSnapshot, HarnessModelRef, HarnessUsageSource,
-        SessionModel,
+        HarnessModelLimitsSnapshot, HarnessModelRef, HarnessUsageSource, SessionModel,
     },
     services::{
         app_events, database, domain_events, harness_settings,
         live_sessions::maybe_runtime,
-        orchestra_paths::{default_orchestra_root, orchestra_pi_auth_path, orchestra_pi_models_path},
+        orchestra_paths::{
+            default_orchestra_root, orchestra_pi_auth_path, orchestra_pi_models_path,
+        },
         task_runtime,
     },
     state::AppState,
@@ -106,7 +107,9 @@ pub fn get_harness_model_limits_snapshot() -> Result<HarnessModelLimitsSnapshot,
         if policy.usage_source.adapter == "unsupported"
             && !persisted_keys.contains(&model_key(&policy.model_ref))
         {
-            states.push(harness_settings::unsupported_model_limit_state(&policy.model_ref));
+            states.push(harness_settings::unsupported_model_limit_state(
+                &policy.model_ref,
+            ));
         }
     }
 
@@ -174,7 +177,10 @@ pub fn process_usage_checks(app: AppHandle, state: &AppState) -> Result<usize, S
 
         match adapter.as_str() {
             "zai_quota" => {
-                match fetch_zai_usage_snapshot(&orchestra_root, &group_policies[0].model_ref.provider) {
+                match fetch_zai_usage_snapshot(
+                    &orchestra_root,
+                    &group_policies[0].model_ref.provider,
+                ) {
                     Ok(snapshot) => {
                         save_provider_usage_snapshot(
                             &connection,
@@ -186,9 +192,11 @@ pub fn process_usage_checks(app: AppHandle, state: &AppState) -> Result<usize, S
                             success_poll_interval_seconds(),
                         )?;
                         for policy in group_policies {
-                            let previous_state = load_model_limit_state(&connection, &policy.model_ref)?;
+                            let previous_state =
+                                load_model_limit_state(&connection, &policy.model_ref)?;
                             let evaluation = evaluate_policy(&policy, &snapshot)?;
-                            let next_state = build_next_state(&policy, previous_state.as_ref(), &evaluation);
+                            let next_state =
+                                build_next_state(&policy, previous_state.as_ref(), &evaluation);
                             save_model_limit_state(&connection, &next_state)?;
                             if evaluation.capped {
                                 actions += enforce_capped_model(
@@ -196,7 +204,10 @@ pub fn process_usage_checks(app: AppHandle, state: &AppState) -> Result<usize, S
                                     state,
                                     &connection,
                                     &policy.model_ref,
-                                    next_state.reason.as_deref().unwrap_or("Harness model limit exceeded."),
+                                    next_state
+                                        .reason
+                                        .as_deref()
+                                        .unwrap_or("Harness model limit exceeded."),
                                 )?;
                             }
                         }
@@ -212,8 +223,10 @@ pub fn process_usage_checks(app: AppHandle, state: &AppState) -> Result<usize, S
                             failure_poll_interval_seconds(),
                         )?;
                         for policy in group_policies {
-                            let previous_state = load_model_limit_state(&connection, &policy.model_ref)?;
-                            let next_state = preserve_state_with_error(&policy, previous_state.as_ref(), &error);
+                            let previous_state =
+                                load_model_limit_state(&connection, &policy.model_ref)?;
+                            let next_state =
+                                preserve_state_with_error(&policy, previous_state.as_ref(), &error);
                             save_model_limit_state(&connection, &next_state)?;
                         }
                         state.log(
@@ -325,10 +338,17 @@ fn scope_poll_due(connection: &Connection, adapter: &str, scope_key: &str) -> Re
     Ok(next_poll_after <= Utc::now().to_rfc3339())
 }
 
-fn fetch_zai_usage_snapshot(orchestra_root: &Path, provider_id: &str) -> Result<UsageSnapshot, String> {
+fn fetch_zai_usage_snapshot(
+    orchestra_root: &Path,
+    provider_id: &str,
+) -> Result<UsageSnapshot, String> {
     let api_key = load_provider_api_key(orchestra_root, provider_id)?;
     let base_url = resolve_zai_usage_base_url(orchestra_root, provider_id)?;
-    let url = format!("{}{}", base_url.trim_end_matches('/'), ZAI_USAGE_ENDPOINT_PATH);
+    let url = format!(
+        "{}{}",
+        base_url.trim_end_matches('/'),
+        ZAI_USAGE_ENDPOINT_PATH
+    );
     let client = Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
@@ -370,7 +390,9 @@ fn fetch_zai_usage_snapshot(orchestra_root: &Path, provider_id: &str) -> Result<
     })
 }
 
-fn normalize_zai_quota_metrics(payload: &Value) -> Result<Vec<HarnessModelLimitMetricValue>, String> {
+fn normalize_zai_quota_metrics(
+    payload: &Value,
+) -> Result<Vec<HarnessModelLimitMetricValue>, String> {
     let limits = payload
         .pointer("/data/limits")
         .and_then(Value::as_array)
@@ -378,7 +400,10 @@ fn normalize_zai_quota_metrics(payload: &Value) -> Result<Vec<HarnessModelLimitM
     let mut metrics = Vec::new();
     for limit in limits {
         let limit_type = limit.get("type").and_then(Value::as_str).unwrap_or("");
-        let unit = limit.get("unit").and_then(Value::as_i64).unwrap_or_default();
+        let unit = limit
+            .get("unit")
+            .and_then(Value::as_i64)
+            .unwrap_or_default();
         let Some(percentage) = parse_integer_metric(limit.get("percentage")) else {
             continue;
         };
@@ -511,17 +536,38 @@ fn enforce_capped_model(
 
     let mut actions = 0;
     for candidate in task_candidates {
-        let previous_assignment = task_runtime::get_current_lane_assignment(connection, &candidate.task_id)?;
-        let task = task_runtime::pause_task_lane(connection, &candidate.task_id, Some(reason.to_string()))?;
+        let previous_assignment =
+            task_runtime::get_current_lane_assignment(connection, &candidate.task_id)?;
+        let task = task_runtime::pause_task_lane(
+            connection,
+            &candidate.task_id,
+            Some(reason.to_string()),
+        )?;
         if let Some(session_id) = previous_assignment
             .as_ref()
             .and_then(|assignment| assignment.session_id.as_deref())
         {
             stop_live_session_runtime(state, session_id)?;
-            let _ = app_events::emit_session_change(app, "harness.model_limits.task_paused", [session_id.to_string()]);
+            let _ = app_events::emit_session_change(
+                app,
+                "harness.model_limits.task_paused",
+                [session_id.to_string()],
+            );
         }
-        record_task_pause_event(connection, &task.id, &task.project_id, previous_assignment.as_ref().map(|assignment| assignment.id.clone()), reason);
-        let _ = app_events::emit_task_change(app, "harness.model_limits.task_paused", [task.id.clone()]);
+        record_task_pause_event(
+            connection,
+            &task.id,
+            &task.project_id,
+            previous_assignment
+                .as_ref()
+                .map(|assignment| assignment.id.clone()),
+            reason,
+        );
+        let _ = app_events::emit_task_change(
+            app,
+            "harness.model_limits.task_paused",
+            [task.id.clone()],
+        );
         state.log(
             "warn",
             "harness.model_limits.task_paused",
@@ -536,11 +582,18 @@ fn enforce_capped_model(
         }
         if stop_live_session_runtime(state, &session_id)? {
             record_session_pause_event(connection, &session_id, reason);
-            let _ = app_events::emit_session_change(app, "harness.model_limits.session_paused", [session_id.clone()]);
+            let _ = app_events::emit_session_change(
+                app,
+                "harness.model_limits.session_paused",
+                [session_id.clone()],
+            );
             state.log(
                 "warn",
                 "harness.model_limits.session_paused",
-                &format!("Paused standalone session {} because {}", session_id, reason),
+                &format!(
+                    "Paused standalone session {} because {}",
+                    session_id, reason
+                ),
             );
             actions += 1;
         }
@@ -577,14 +630,24 @@ fn find_task_enforcement_candidates(
 
     let mut matches = Vec::new();
     for row in rows {
-        let candidate = row.map_err(|error| format!("Unable to read model-limit task candidate: {error}"))?;
+        let candidate =
+            row.map_err(|error| format!("Unable to read model-limit task candidate: {error}"))?;
         let matched = if let Some(session_id) = candidate.session_id.as_deref() {
             load_session_model_snapshot(connection, session_id)?
-                .map(|snapshot| snapshot.provider == model_ref.provider && snapshot.model_id == model_ref.model_id)
+                .map(|snapshot| {
+                    snapshot.provider == model_ref.provider
+                        && snapshot.model_id == model_ref.model_id
+                })
                 .unwrap_or(false)
         } else {
-            load_worker_default_model(connection, &candidate.worker_type, candidate.worker_id.as_deref())?
-                .is_some_and(|(provider, model_id)| provider == model_ref.provider && model_id == model_ref.model_id)
+            load_worker_default_model(
+                connection,
+                &candidate.worker_type,
+                candidate.worker_id.as_deref(),
+            )?
+            .is_some_and(|(provider, model_id)| {
+                provider == model_ref.provider && model_id == model_ref.model_id
+            })
         };
         if matched {
             matches.push(candidate);
@@ -608,7 +671,9 @@ fn find_standalone_session_ids(
         )
         .map_err(|error| format!("Unable to prepare standalone session model query: {error}"))?;
     let rows = statement
-        .query_map(params![model_ref.provider, model_ref.model_id], |row| row.get::<_, String>(0))
+        .query_map(params![model_ref.provider, model_ref.model_id], |row| {
+            row.get::<_, String>(0)
+        })
         .map_err(|error| format!("Unable to query standalone session model snapshots: {error}"))?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Unable to collect standalone session ids: {error}"))
@@ -627,7 +692,12 @@ fn load_worker_default_model(
             .query_row(
                 "SELECT provider, model FROM roles WHERE id = ?1 LIMIT 1",
                 [worker_id],
-                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
             )
             .optional()
             .map_err(|error| format!("Unable to load role model default {worker_id}: {error}"))
@@ -636,7 +706,12 @@ fn load_worker_default_model(
             .query_row(
                 "SELECT provider, model FROM agents WHERE id = ?1 LIMIT 1",
                 [worker_id],
-                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
             )
             .optional()
             .map_err(|error| format!("Unable to load agent model default {worker_id}: {error}"))
@@ -850,17 +925,30 @@ fn save_model_limit_state(
                 Utc::now().to_rfc3339(),
             ],
         )
-        .map_err(|error| format!("Unable to save model limit state {}: {error}", model_key(&state.model_ref)))?;
+        .map_err(|error| {
+            format!(
+                "Unable to save model limit state {}: {error}",
+                model_key(&state.model_ref)
+            )
+        })?;
     Ok(())
 }
 
-fn delete_model_limit_state(connection: &Connection, model_ref: &HarnessModelRef) -> Result<(), String> {
+fn delete_model_limit_state(
+    connection: &Connection,
+    model_ref: &HarnessModelRef,
+) -> Result<(), String> {
     connection
         .execute(
             "DELETE FROM model_limit_states WHERE model_key = ?1",
             [model_key(model_ref)],
         )
-        .map_err(|error| format!("Unable to delete model limit state {}: {error}", model_key(model_ref)))?;
+        .map_err(|error| {
+            format!(
+                "Unable to delete model limit state {}: {error}",
+                model_key(model_ref)
+            )
+        })?;
     Ok(())
 }
 
@@ -874,7 +962,8 @@ fn save_provider_usage_snapshot(
     next_poll_after_seconds: i64,
 ) -> Result<(), String> {
     let checked_at = Utc::now().to_rfc3339();
-    let next_poll_after = (Utc::now() + chrono::Duration::seconds(next_poll_after_seconds)).to_rfc3339();
+    let next_poll_after =
+        (Utc::now() + chrono::Duration::seconds(next_poll_after_seconds)).to_rfc3339();
     connection
         .execute(
             r#"
@@ -896,12 +985,16 @@ fn save_provider_usage_snapshot(
                 raw_json
                     .map(serde_json::to_string)
                     .transpose()
-                    .map_err(|error| format!("Unable to serialize provider usage snapshot JSON: {error}"))?,
+                    .map_err(|error| format!(
+                        "Unable to serialize provider usage snapshot JSON: {error}"
+                    ))?,
                 error_message,
                 next_poll_after,
             ],
         )
-        .map_err(|error| format!("Unable to save provider usage snapshot {adapter}/{scope_key}: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to save provider usage snapshot {adapter}/{scope_key}: {error}")
+        })?;
     Ok(())
 }
 
@@ -948,7 +1041,8 @@ fn record_session_pause_event(connection: &Connection, session_id: &str, reason:
 }
 
 fn session_project_id(connection: &Connection, session_id: &str) -> Option<String> {
-    let context = crate::services::pi_sessions::find_session_context_for_session(session_id).ok()?;
+    let context =
+        crate::services::pi_sessions::find_session_context_for_session(session_id).ok()?;
     connection
         .query_row(
             "SELECT id FROM projects WHERE slug = ?1 LIMIT 1",
@@ -968,15 +1062,24 @@ fn load_provider_api_key(orchestra_root: &Path, provider_id: &str) -> Result<Str
             auth_path.display()
         )
     })?;
-    let value: Value = serde_json::from_str(&content)
-        .map_err(|error| format!("Unable to parse Pi auth.json {}: {error}", auth_path.display()))?;
+    let value: Value = serde_json::from_str(&content).map_err(|error| {
+        format!(
+            "Unable to parse Pi auth.json {}: {error}",
+            auth_path.display()
+        )
+    })?;
     value
         .get(provider_id)
         .and_then(|entry| entry.get("key"))
         .and_then(Value::as_str)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("No API key is configured for provider {} in Settings → Harness.", provider_id))
+        .ok_or_else(|| {
+            format!(
+                "No API key is configured for provider {} in Settings → Harness.",
+                provider_id
+            )
+        })
 }
 
 fn resolve_zai_usage_base_url(orchestra_root: &Path, provider_id: &str) -> Result<String, String> {
@@ -1005,9 +1108,11 @@ fn derive_zai_usage_base_url(base_url: &str) -> String {
 }
 
 fn parse_integer_metric(value: Option<&Value>) -> Option<i64> {
-    value
-        .and_then(Value::as_i64)
-        .or_else(|| value.and_then(Value::as_f64).map(|value| value.round() as i64))
+    value.and_then(Value::as_i64).or_else(|| {
+        value
+            .and_then(Value::as_f64)
+            .map(|value| value.round() as i64)
+    })
 }
 
 fn truncate_error_body(body: &str) -> String {
@@ -1168,8 +1273,10 @@ mod tests {
     #[test]
     fn fetches_zai_usage_from_mock_server() {
         let root = unique_temp_dir("model-limits-zai");
-        fs::create_dir_all(crate::services::orchestra_paths::orchestra_pi_agent_dir(&root))
-            .expect("agent dir should create");
+        fs::create_dir_all(crate::services::orchestra_paths::orchestra_pi_agent_dir(
+            &root,
+        ))
+        .expect("agent dir should create");
         fs::write(
             orchestra_pi_auth_path(&root),
             serde_json::json!({"zai": {"type": "api_key", "key": "token-123"}}).to_string(),
@@ -1177,7 +1284,9 @@ mod tests {
         .expect("auth should write");
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
-        let address = listener.local_addr().expect("listener address should resolve");
+        let address = listener
+            .local_addr()
+            .expect("listener address should resolve");
         let server = tiny_http::Server::from_listener(listener, None).expect("server should start");
         let server_handle = thread::spawn(move || {
             if let Some(request) = server.incoming_requests().next() {

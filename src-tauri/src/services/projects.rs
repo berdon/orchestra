@@ -640,7 +640,10 @@ pub fn delete_project(connection: &Connection, project_id: &str) -> Result<Proje
         Some(&orchestra_root),
         project_id,
     ) {
-        eprintln!("[project.secret.cleanup.warning] project={} warning={warning}", project.slug);
+        eprintln!(
+            "[project.secret.cleanup.warning] project={} warning={warning}",
+            project.slug
+        );
     }
 
     connection

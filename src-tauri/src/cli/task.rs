@@ -469,6 +469,16 @@ fn run_create(
             "source": "orc"
         }),
     );
+    if let Err(error) = trigger_dispatcher_check_after_task_create(backend, &task.id) {
+        backend.state().log(
+            "warn",
+            "dispatcher.tick.request_failed",
+            &format!(
+                "Failed to trigger dispatcher check after creating task {} from the CLI: {}",
+                task.id, error
+            ),
+        );
+    }
 
     if args.json {
         print_json(&task)?;
@@ -476,6 +486,28 @@ fn run_create(
         println!("Created {}.", task.number);
     }
     Ok(0)
+}
+
+fn trigger_dispatcher_check_after_task_create(
+    backend: &CliBackend,
+    task_id: &str,
+) -> Result<(), String> {
+    if backend.state().dispatcher_thread_registered()? {
+        return crate::services::dispatcher::request_dispatcher_check(
+            &backend.app_handle(),
+            "task.created.cli",
+        );
+    }
+
+    backend.state().log(
+        "info",
+        "dispatcher.tick.inline",
+        &format!(
+            "Running dispatcher tick inline after CLI task creation because no dispatcher loop is registered for task {}",
+            task_id
+        ),
+    );
+    crate::services::dispatcher::run_dispatcher_tick(backend.app_handle())
 }
 
 fn run_update(
@@ -1818,6 +1850,77 @@ mod tests {
             assert_eq!(updated.whip_max_attempts, 5);
             assert_eq!(comments.len(), 1);
             assert_eq!(comments[0].message, "hello cli");
+        });
+    }
+
+    #[test]
+    fn create_command_runs_dispatcher_tick_inline_without_registered_dispatcher_loop() {
+        with_cli_home("cli-task-create-inline-dispatcher", || {
+            let backend = build_test_cli_backend("cli-task-create-inline-dispatcher");
+            assert!(!backend
+                .state()
+                .dispatcher_thread_registered()
+                .expect("dispatcher thread state should load"));
+
+            let mut connection = database::open_connection().expect("connection should open");
+            let project = create_service_project(&connection, "create-inline-dispatcher");
+            let role = create_service_role(&mut connection, "CLI Inline Dispatcher Role");
+            let workflow = create_runtime_workflow(
+                &mut connection,
+                "CLI Inline Dispatcher Flow",
+                &role.slug,
+                None,
+                false,
+                false,
+            );
+            drop(connection);
+
+            run_create(
+                TaskCreateArgs {
+                    title: "Dispatchable from CLI".into(),
+                    description: Some("should auto-dispatch via normal dispatcher tick".into()),
+                    task_type: "task".into(),
+                    status: "ready".into(),
+                    priority: "P2".into(),
+                    workflow_id: Some(workflow.id.clone()),
+                    lane_id: Some("lane-work".into()),
+                    assignee_type: "role".into(),
+                    assignee_id: Some(role.slug.clone()),
+                    repository_id: None,
+                    parent_task: None,
+                    tags: vec!["cli".into(), "dispatch".into()],
+                    whip_max_attempts: None,
+                    archived: false,
+                    json: false,
+                },
+                &backend,
+                Some(project.slug.as_str()),
+            )
+            .expect("task create should succeed");
+
+            let connection = database::open_connection().expect("connection should reopen");
+            let created = tasks::list_tasks_with_query(
+                &connection,
+                &project.id,
+                tasks::TaskListQuery::from_raw(None, None, None, None, None)
+                    .expect("query should build"),
+            )
+            .expect("tasks should list")
+            .into_iter()
+            .next()
+            .expect("created task should exist");
+            let reloaded =
+                tasks::get_task_context(&connection, &created.id).expect("task should reload");
+            assert_eq!(reloaded.status, "in_progress");
+            let assignment = reloaded
+                .active_lane_assignment
+                .as_ref()
+                .expect("inline dispatcher tick should create an assignment");
+            assert_eq!(assignment.task_id, reloaded.id);
+            assert!(
+                assignment.session_id.is_some(),
+                "normal dispatcher semantics should allocate a runtime session"
+            );
         });
     }
 

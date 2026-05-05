@@ -120,9 +120,11 @@ pub async fn update_source_control_settings(
     git_user_name_template: Option<String>,
     git_email_template: Option<String>,
 ) -> Result<SourceControlSettings, String> {
-    spawn_blocking(move || project_settings::update_source_control_settings(git_user_name_template, git_email_template))
-        .await
-        .map_err(|error| format!("Unable to update source control settings: {error}"))?
+    spawn_blocking(move || {
+        project_settings::update_source_control_settings(git_user_name_template, git_email_template)
+    })
+    .await
+    .map_err(|error| format!("Unable to update source control settings: {error}"))?
 }
 
 #[tauri::command]

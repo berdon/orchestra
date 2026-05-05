@@ -1,12 +1,15 @@
-use std::{thread, time::Duration};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 use chrono::{DateTime, Utc};
 use tauri::{AppHandle, Manager};
 
 use crate::{
     services::{
-        agent_dispatch, app_events, database, model_limits, pi_sessions, reminders,
-        role_dispatch, role_runtime, task_runtime, task_schedules,
+        agent_dispatch, app_events, database, model_limits, pi_sessions, reminders, role_dispatch,
+        role_runtime, task_runtime, task_schedules,
     },
     state::AppState,
 };
@@ -17,9 +20,13 @@ const STALE_ASSIGNMENT_GRACE_PERIOD_SECS: i64 = 30;
 
 pub fn start_dispatcher_loop(app: AppHandle) {
     thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let _ = state.register_dispatcher_thread(thread::current());
         let mut next_interval = DISPATCHER_MIN_INTERVAL;
+        let mut handled_request_count = state.dispatcher_check_request_count();
         loop {
-            thread::sleep(next_interval);
+            handled_request_count =
+                wait_for_dispatcher_check(&state, next_interval, handled_request_count);
             match run_dispatcher_tick_and_count(app.clone()) {
                 Ok(actions) => {
                     next_interval = next_dispatcher_interval(next_interval, actions);
@@ -30,6 +37,20 @@ pub fn start_dispatcher_loop(app: AppHandle) {
             }
         }
     });
+}
+
+pub fn request_dispatcher_check(app: &AppHandle, reason: &str) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let request_count = state.request_dispatcher_check()?;
+    state.log(
+        "info",
+        "dispatcher.tick.requested",
+        &format!(
+            "Requested dispatcher check {} after {}",
+            request_count, reason
+        ),
+    );
+    Ok(())
 }
 
 pub fn run_dispatcher_tick(app: AppHandle) -> Result<(), String> {
@@ -152,6 +173,32 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, 
         ),
     );
     Ok(total_actions)
+}
+
+fn wait_for_dispatcher_check(
+    state: &AppState,
+    next_interval: Duration,
+    handled_request_count: u64,
+) -> u64 {
+    let pending_request_count = state.dispatcher_check_request_count();
+    if pending_request_count != handled_request_count {
+        return pending_request_count;
+    }
+
+    let started_at = Instant::now();
+    let mut remaining = next_interval;
+    loop {
+        thread::park_timeout(remaining);
+        let pending_request_count = state.dispatcher_check_request_count();
+        if pending_request_count != handled_request_count {
+            return pending_request_count;
+        }
+        let elapsed = started_at.elapsed();
+        if elapsed >= next_interval {
+            return pending_request_count;
+        }
+        remaining = next_interval.saturating_sub(elapsed);
+    }
 }
 
 fn next_dispatcher_interval(current: Duration, actions: usize) -> Duration {
@@ -474,6 +521,183 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
 mod tests {
     use super::*;
 
+    use std::{
+        env, fs,
+        path::Path,
+        sync::{Arc, OnceLock},
+        thread,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use crate::{
+        commands::tasks as task_commands,
+        models::{
+            ProjectUpsertInput, RoleUpsertInput, TaskUpsertInput, WorkflowLaneInput,
+            WorkflowUpsertInput,
+        },
+        services::{database, projects, roles, tool_bridge, workflows},
+        state::AppState,
+    };
+
+    static DISPATCHER_TEST_APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+    #[ctor::ctor]
+    fn initialize_dispatcher_test_app_handle() {
+        let tool_bridge = tool_bridge::dummy_tool_bridge_config("dispatcher-tests-main-thread");
+        let app = tauri::Builder::default()
+            .manage(AppState::new(tool_bridge.clone()))
+            .build(crate::tauri_context())
+            .expect("main-thread dispatcher test app should build");
+        let leaked_app = Box::leak(Box::new(app));
+        let app_handle = leaked_app.handle().clone();
+        tool_bridge.attach_app_handle(app_handle.clone());
+        let _ = DISPATCHER_TEST_APP_HANDLE.set(app_handle);
+    }
+
+    fn test_app_handle() -> tauri::AppHandle {
+        DISPATCHER_TEST_APP_HANDLE
+            .get()
+            .expect("main-thread dispatcher test app should exist")
+            .clone()
+    }
+
+    fn with_test_home<T>(label: &str, action: impl FnOnce() -> T) -> T {
+        let _guard = crate::test_support::global_test_env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let previous_home = env::var_os("HOME");
+        let previous_project_root = env::var_os("ORCHESTRA_PROJECT_ROOT");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should move forward")
+            .as_nanos();
+        let root = env::temp_dir().join(format!("dispatcher-tests-{label}-{unique}"));
+        fs::create_dir_all(&root).expect("dispatcher test home should create");
+        let project_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri manifest should have repository parent")
+            .to_path_buf();
+        unsafe {
+            env::set_var("HOME", &root);
+            env::set_var("ORCHESTRA_PROJECT_ROOT", &project_root);
+        }
+        let result = action();
+        match previous_home {
+            Some(value) => unsafe {
+                env::set_var("HOME", value);
+            },
+            None => unsafe {
+                env::remove_var("HOME");
+            },
+        }
+        match previous_project_root {
+            Some(value) => unsafe {
+                env::set_var("ORCHESTRA_PROJECT_ROOT", value);
+            },
+            None => unsafe {
+                env::remove_var("ORCHESTRA_PROJECT_ROOT");
+            },
+        }
+        result
+    }
+
+    fn create_test_project(
+        connection: &rusqlite::Connection,
+        label: &str,
+    ) -> crate::models::ProjectDetail {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should move forward")
+            .as_nanos();
+        projects::create_project(
+            connection,
+            ProjectUpsertInput {
+                name: format!("Dispatcher {label} {unique}"),
+                description: None,
+                task_prefix: format!("D{:07X}", (unique & 0x0FFF_FFFF) as u64),
+            },
+        )
+        .expect("project should create")
+    }
+
+    fn create_test_role(
+        connection: &mut rusqlite::Connection,
+        name: &str,
+    ) -> crate::models::RoleDefinition {
+        roles::create_role(
+            connection,
+            RoleUpsertInput {
+                name: name.into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create")
+    }
+
+    fn create_role_workflow(
+        connection: &mut rusqlite::Connection,
+        role_slug: &str,
+    ) -> crate::models::WorkflowDefinition {
+        workflows::create_workflow(
+            connection,
+            WorkflowUpsertInput {
+                name: "Dispatcher Role Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-work".into()),
+                    key: "work".into(),
+                    name: "Work".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role_slug.into()),
+                    entry_prompt_template: None,
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    success_transition_type: "complete_task".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "stay_in_lane".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create")
+    }
+
+    fn dispatcher_task_input(
+        title: &str,
+        workflow_id: Option<String>,
+        current_lane_id: Option<String>,
+        assignee_type: &str,
+        assignee_id: Option<String>,
+    ) -> TaskUpsertInput {
+        TaskUpsertInput {
+            title: title.into(),
+            description: None,
+            task_type: "task".into(),
+            tags: Vec::new(),
+            status: "ready".into(),
+            priority: "P2".into(),
+            workflow_id,
+            current_lane_id,
+            assignee_type: assignee_type.into(),
+            assignee_id,
+            repository_id: None,
+            repository_ids: Vec::new(),
+            parent_task_id: None,
+            whip_max_attempts: None,
+            archived: Some(false),
+        }
+    }
+
     #[test]
     fn dispatcher_interval_resets_when_work_happens() {
         assert_eq!(
@@ -508,5 +732,149 @@ mod tests {
             next_dispatcher_interval(DISPATCHER_MAX_INTERVAL, 0),
             DISPATCHER_MAX_INTERVAL
         );
+    }
+
+    #[test]
+    fn dispatcher_wake_request_beats_passive_max_backoff_wait() {
+        let state = Arc::new(AppState::new(tool_bridge::dummy_tool_bridge_config(
+            "dispatcher-wake-request",
+        )));
+        let started_at = Instant::now();
+        let waiting_state = state.clone();
+        let waiter = thread::spawn(move || {
+            waiting_state
+                .register_dispatcher_thread(thread::current())
+                .expect("dispatcher thread should register");
+            wait_for_dispatcher_check(
+                waiting_state.as_ref(),
+                DISPATCHER_MAX_INTERVAL,
+                waiting_state.dispatcher_check_request_count(),
+            )
+        });
+
+        thread::sleep(Duration::from_millis(50));
+        state
+            .request_dispatcher_check()
+            .expect("dispatcher request should succeed");
+
+        let observed_request_count = waiter.join().expect("waiter thread should join");
+        assert_eq!(observed_request_count, 1);
+        assert!(started_at.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn dispatcher_wait_skips_sleep_when_request_is_already_pending() {
+        let state = AppState::new(tool_bridge::dummy_tool_bridge_config(
+            "dispatcher-pending-request",
+        ));
+        let handled_request_count = state.dispatcher_check_request_count();
+        state
+            .request_dispatcher_check()
+            .expect("dispatcher request should succeed");
+
+        let started_at = Instant::now();
+        let observed_request_count =
+            wait_for_dispatcher_check(&state, DISPATCHER_MAX_INTERVAL, handled_request_count);
+        assert_eq!(observed_request_count, handled_request_count + 1);
+        assert!(started_at.elapsed() < Duration::from_millis(50));
+    }
+
+    #[test]
+    fn create_dispatchable_task_requests_dispatcher_check_without_direct_dispatch() {
+        with_test_home("dispatchable-create", || {
+            database::initialize_database().expect("database should initialize");
+            let mut connection = database::open_connection().expect("connection should open");
+            let project = create_test_project(&connection, "dispatchable");
+            let role = create_test_role(&mut connection, "Dispatcher Role");
+            let workflow = create_role_workflow(&mut connection, &role.slug);
+            drop(connection);
+
+            let app = test_app_handle();
+            let state = app.state::<AppState>();
+            let initial_request_count = state.dispatcher_check_request_count();
+            let task = task_commands::create_task(
+                app.clone(),
+                app.state::<AppState>(),
+                Some(project.id.clone()),
+                dispatcher_task_input(
+                    "Dispatchable task",
+                    Some(workflow.id.clone()),
+                    Some("lane-work".into()),
+                    "role",
+                    Some(role.slug.clone()),
+                ),
+            )
+            .expect("task create should succeed");
+
+            assert_eq!(
+                state.dispatcher_check_request_count(),
+                initial_request_count + 1
+            );
+            assert!(task.active_lane_assignment.is_none());
+            assert!(task.ready_for_dispatch);
+
+            let context = crate::services::pi_sessions::session_context_for_project_id(&project.id)
+                .expect("project session context should resolve");
+            let mut connection = database::open_connection().expect("connection should reopen");
+            let assignment = crate::services::task_runtime::maybe_auto_dispatch_task(
+                &mut connection,
+                &context.project_root,
+                &context.session_dir,
+                &task.id,
+            )
+            .expect("dispatcher semantics should run")
+            .expect("dispatchable task should dispatch normally");
+            assert_eq!(assignment.task_id, task.id);
+
+            let refreshed = crate::services::tasks::get_task_context(&connection, &task.id)
+                .expect("task context should reload");
+            assert!(refreshed.active_lane_assignment.is_some());
+            assert!(!refreshed.ready_for_dispatch);
+        });
+    }
+
+    #[test]
+    fn create_non_dispatchable_task_only_requests_normal_dispatcher_check() {
+        with_test_home("non-dispatchable-create", || {
+            database::initialize_database().expect("database should initialize");
+            let connection = database::open_connection().expect("connection should open");
+            let project = create_test_project(&connection, "non-dispatchable");
+            drop(connection);
+
+            let app = test_app_handle();
+            let state = app.state::<AppState>();
+            let initial_request_count = state.dispatcher_check_request_count();
+            let task = task_commands::create_task(
+                app.clone(),
+                app.state::<AppState>(),
+                Some(project.id.clone()),
+                dispatcher_task_input("Standalone task", None, None, "unassigned", None),
+            )
+            .expect("task create should succeed");
+
+            assert_eq!(
+                state.dispatcher_check_request_count(),
+                initial_request_count + 1
+            );
+            assert!(task.active_lane_assignment.is_none());
+            assert!(!task.ready_for_dispatch);
+
+            let context = crate::services::pi_sessions::session_context_for_project_id(&project.id)
+                .expect("project session context should resolve");
+            let mut connection = database::open_connection().expect("connection should reopen");
+            let assignment = crate::services::task_runtime::maybe_auto_dispatch_task(
+                &mut connection,
+                &context.project_root,
+                &context.session_dir,
+                &task.id,
+            )
+            .expect("dispatcher semantics should run");
+            assert!(assignment.is_none());
+
+            let refreshed = crate::services::tasks::get_task_context(&connection, &task.id)
+                .expect("task context should reload");
+            assert!(refreshed.active_lane_assignment.is_none());
+            assert!(!refreshed.ready_for_dispatch);
+        });
     }
 }

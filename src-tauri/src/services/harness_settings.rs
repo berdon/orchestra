@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     models::{
-        HarnessModelLimitPolicy, HarnessModelRef, HarnessModelLimitRule, HarnessModelLimitsSnapshot,
-        HarnessModelLimitState, HarnessModelLimitMetricValue, HarnessUsageSource,
+        HarnessModelLimitMetricValue, HarnessModelLimitPolicy, HarnessModelLimitRule,
+        HarnessModelLimitState, HarnessModelLimitsSnapshot, HarnessModelRef, HarnessUsageSource,
         PiRuntimeSettings, PiSetupMetadata,
     },
     services::{
@@ -154,7 +154,10 @@ pub fn get_harness_model_limit_policies() -> Result<Vec<HarnessModelLimitPolicy>
 pub fn get_harness_model_limit_policies_in(
     orchestra_root: &Path,
 ) -> Result<Vec<HarnessModelLimitPolicy>, String> {
-    Ok(load_harness_settings(orchestra_root)?.harness.models.policies)
+    Ok(load_harness_settings(orchestra_root)?
+        .harness
+        .models
+        .policies)
 }
 
 pub fn save_harness_model_limit_policy(
@@ -181,9 +184,11 @@ pub fn save_harness_model_limit_policy_in(
     validate_percent_limit(weekly_percent, "weekly")?;
 
     let mut settings = load_harness_settings(orchestra_root)?;
-    settings.harness.models.policies.retain(|policy| {
-        !same_model_ref(&policy.model_ref, &model_ref)
-    });
+    settings
+        .harness
+        .models
+        .policies
+        .retain(|policy| !same_model_ref(&policy.model_ref, &model_ref));
 
     let mut rules = Vec::new();
     if let Some(value) = rolling_5h_percent {
@@ -204,19 +209,21 @@ pub fn save_harness_model_limit_policy_in(
     }
 
     if !rules.is_empty() {
-        settings.harness.models.policies.push(HarnessModelLimitPolicy {
-            usage_source: usage_source_for_model(&model_ref),
-            model_ref,
-            rules,
-            updated_at: Some(Utc::now().to_rfc3339()),
-        });
+        settings
+            .harness
+            .models
+            .policies
+            .push(HarnessModelLimitPolicy {
+                usage_source: usage_source_for_model(&model_ref),
+                model_ref,
+                rules,
+                updated_at: Some(Utc::now().to_rfc3339()),
+            });
     }
 
-    settings
-        .harness
-        .models
-        .policies
-        .sort_by(|left, right| model_ref_sort_key(&left.model_ref).cmp(&model_ref_sort_key(&right.model_ref)));
+    settings.harness.models.policies.sort_by(|left, right| {
+        model_ref_sort_key(&left.model_ref).cmp(&model_ref_sort_key(&right.model_ref))
+    });
     save_harness_settings(orchestra_root, &settings)?;
     Ok(settings.harness.models.policies)
 }

@@ -5,6 +5,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
+    thread,
 };
 
 use serde::Serialize;
@@ -52,6 +53,8 @@ pub struct AppState {
     pub channel_runtimes: Mutex<HashMap<String, ChannelRuntimeHandle>>,
     terminal_windows: Mutex<HashMap<String, String>>,
     terminal_sessions: Mutex<HashMap<String, Arc<AgentTerminalSession>>>,
+    dispatcher_thread: Mutex<Option<thread::Thread>>,
+    dispatcher_check_requests: AtomicU64,
     pub dispatcher_tick_active: Mutex<bool>,
     pi_dispatch_block_reason: Mutex<Option<String>>,
     pub tool_bridge: Arc<ToolBridgeConfig>,
@@ -106,6 +109,8 @@ impl AppState {
             channel_runtimes: Mutex::new(HashMap::new()),
             terminal_windows: Mutex::new(HashMap::new()),
             terminal_sessions: Mutex::new(HashMap::new()),
+            dispatcher_thread: Mutex::new(None),
+            dispatcher_check_requests: AtomicU64::new(0),
             dispatcher_tick_active: Mutex::new(false),
             pi_dispatch_block_reason: Mutex::new(None),
             tool_bridge,
@@ -151,6 +156,46 @@ impl AppState {
                 action, actor, permission, object, outcome
             ),
         );
+    }
+
+    pub fn register_dispatcher_thread(
+        &self,
+        dispatcher_thread: thread::Thread,
+    ) -> Result<(), String> {
+        let mut current = self
+            .dispatcher_thread
+            .lock()
+            .map_err(|_| "Unable to access dispatcher thread state".to_string())?;
+        *current = Some(dispatcher_thread);
+        Ok(())
+    }
+
+    pub fn dispatcher_thread_registered(&self) -> Result<bool, String> {
+        Ok(self
+            .dispatcher_thread
+            .lock()
+            .map_err(|_| "Unable to access dispatcher thread state".to_string())?
+            .is_some())
+    }
+
+    pub fn request_dispatcher_check(&self) -> Result<u64, String> {
+        let request_count = self
+            .dispatcher_check_requests
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
+        let dispatcher_thread = self
+            .dispatcher_thread
+            .lock()
+            .map_err(|_| "Unable to access dispatcher thread state".to_string())?
+            .clone();
+        if let Some(dispatcher_thread) = dispatcher_thread {
+            dispatcher_thread.unpark();
+        }
+        Ok(request_count)
+    }
+
+    pub fn dispatcher_check_request_count(&self) -> u64 {
+        self.dispatcher_check_requests.load(Ordering::SeqCst)
     }
 
     pub fn publish_remote_event<T: Serialize>(

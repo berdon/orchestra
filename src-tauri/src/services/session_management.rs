@@ -4,9 +4,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rusqlite::Connection;
 #[cfg(test)]
 use rusqlite::params;
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use uuid::Uuid;

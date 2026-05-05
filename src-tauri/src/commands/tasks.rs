@@ -14,7 +14,7 @@ use crate::{
         TaskTodo, TaskTodoInput, TaskUpsertInput,
     },
     services::{
-        app_events, database, domain_events, pi_sessions, pi_setup, task_attachments,
+        app_events, database, dispatcher, domain_events, pi_sessions, pi_setup, task_attachments,
         task_comment_file_mentions, task_file_references, task_repositories, task_runtime, tasks,
     },
     state::AppState,
@@ -62,6 +62,24 @@ fn record_task_domain_event(
             payload,
         },
     );
+}
+
+fn request_dispatcher_check_after_task_create(
+    app: &AppHandle,
+    state: &AppState,
+    reason: &str,
+    task_id: &str,
+) {
+    if let Err(error) = dispatcher::request_dispatcher_check(app, reason) {
+        state.log(
+            "warn",
+            "dispatcher.tick.request_failed",
+            &format!(
+                "Failed to request dispatcher check after creating task {}: {}",
+                task_id, error
+            ),
+        );
+    }
 }
 
 fn stop_live_session_runtime_for_task_control(
@@ -459,6 +477,7 @@ pub fn create_task(
         }),
     );
     emit_task_change(&app, "task.created", changed_task_ids);
+    request_dispatcher_check_after_task_create(&app, &state, "task.created", &task.id);
     Ok(task)
 }
 
@@ -509,6 +528,7 @@ pub fn create_subtask(
         }),
     );
     emit_task_change(&app, "task.created", changed_task_ids);
+    request_dispatcher_check_after_task_create(&app, &state, "task.created", &task.id);
     Ok(task)
 }
 

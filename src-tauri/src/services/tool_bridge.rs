@@ -1865,13 +1865,18 @@ fn invoke_bridge_command(
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_string);
-            let mut writable = database::open_connection()?;
-            serde_json::to_value(tasks::create_task(
-                &mut writable,
-                project_id.as_deref(),
-                input,
-            )?)
-            .map_err(|error| format!("Unable to serialize task: {error}"))
+            let task = if let Some(app) = config.clone_app_handle() {
+                crate::commands::tasks::create_task(
+                    app.clone(),
+                    app.state::<crate::state::AppState>(),
+                    project_id,
+                    input,
+                )?
+            } else {
+                let mut writable = database::open_connection()?;
+                tasks::create_task(&mut writable, project_id.as_deref(), input)?
+            };
+            serde_json::to_value(task).map_err(|error| format!("Unable to serialize task: {error}"))
         }
         "create_subtask" => {
             let parent_task_id = require_string(&payload, "parentTaskId")?;
@@ -1879,13 +1884,18 @@ fn invoke_bridge_command(
             let input: TaskUpsertInput =
                 serde_json::from_value(payload.get("input").cloned().unwrap_or(Value::Null))
                     .map_err(|error| format!("Unable to parse task input: {error}"))?;
-            let mut writable = database::open_connection()?;
-            serde_json::to_value(tasks::create_subtask(
-                &mut writable,
-                &parent_task_id,
-                input,
-            )?)
-            .map_err(|error| format!("Unable to serialize task: {error}"))
+            let task = if let Some(app) = config.clone_app_handle() {
+                crate::commands::tasks::create_subtask(
+                    app.clone(),
+                    app.state::<crate::state::AppState>(),
+                    parent_task_id,
+                    input,
+                )?
+            } else {
+                let mut writable = database::open_connection()?;
+                tasks::create_subtask(&mut writable, &parent_task_id, input)?
+            };
+            serde_json::to_value(task).map_err(|error| format!("Unable to serialize task: {error}"))
         }
         "add_task_todo" => {
             command_authorization::require_permission(connection, authorization, "tasks.update")?;

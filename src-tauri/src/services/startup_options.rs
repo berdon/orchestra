@@ -285,13 +285,9 @@ mod tests {
 
     #[test]
     fn resolve_startup_storage_root_uses_default_for_packaged_desktop_without_overrides() {
-        let resolved = resolve_startup_storage_root(
-            None,
-            None,
-            Some(PathBuf::from("/Users/test")),
-            false,
-        )
-        .expect("packaged desktop startup should keep the normal default storage root");
+        let resolved =
+            resolve_startup_storage_root(None, None, Some(PathBuf::from("/Users/test")), false)
+                .expect("packaged desktop startup should keep the normal default storage root");
 
         assert_eq!(resolved, StartupStorageRoot::Default);
     }

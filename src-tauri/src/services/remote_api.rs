@@ -6980,7 +6980,8 @@ where
     Sender: FnOnce(String, String, Option<String>) -> Fut,
     Fut: std::future::Future<Output = Result<QueuedSessionMessage, String>>,
 {
-    let (trimmed_message, run_id) = prepare_session_message_request(app, &headers, &session_id, input)?;
+    let (trimmed_message, run_id) =
+        prepare_session_message_request(app, &headers, &session_id, input)?;
     sender(session_id, trimmed_message, run_id)
         .await
         .map(Json)
