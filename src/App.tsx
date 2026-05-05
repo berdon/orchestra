@@ -1371,6 +1371,7 @@ export function App() {
   const backgroundSessionRefreshInFlightRef = useRef(false);
   const pendingSessionRecordRequestKeyRef = useRef<string | null>(null);
   const previousProjectIdRef = useRef<string | null>(activeProjectId);
+  const confirmedViewedSessionSubscriptionKeyRef = useRef<string | null>(null);
   const sessionListRefreshCountRef = useRef(0);
   const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
   const testPinnedSessionIdsRef = useRef<Set<string>>(new Set());
@@ -2789,6 +2790,10 @@ export function App() {
               chatSessionIdStateRef.current,
               supervisorSessionIdRef.current,
             ].filter((value): value is string => Boolean(value)),
+            preserveSubscriptionSessionIds: [
+              viewedSessionIdRef.current,
+              supervisorSessionIdRef.current,
+            ].filter((value): value is string => Boolean(value)),
             preserveMissingSessionIds: [
               viewedSessionIdRef.current,
               selectedSessionIdRef.current,
@@ -3162,6 +3167,10 @@ export function App() {
         sessionId: string;
         select?: boolean;
       }) => void;
+      __orchestraTestSetSessionSubscribed?: (
+        sessionId: string,
+        subscribed: boolean,
+      ) => void;
       __orchestraTestPinSessionIds?: (sessionIds: string[]) => void;
     };
     testWindow.__orchestraTestInjectSessionStream = handleSessionStreamEvent;
@@ -3206,6 +3215,13 @@ export function App() {
       chatSessionRecoveryMissRef.current = null;
       setSessionActionError(null);
     };
+    testWindow.__orchestraTestSetSessionSubscribed = (sessionId, subscribed) => {
+      patchSessionRecord(sessionId, (record) => ({
+        ...record,
+        subscribed,
+        updatedAt: nowIso(),
+      }));
+    };
     testWindow.__orchestraTestPinSessionIds = (sessionIds) => {
       testPinnedSessionIdsRef.current = new Set(
         sessionIds.filter((value) => value.trim().length > 0),
@@ -3216,9 +3232,10 @@ export function App() {
       delete testWindow.__orchestraTestApplySessionRecord;
       delete testWindow.__orchestraTestSessionRefreshStats;
       delete testWindow.__orchestraTestHydrateChatAgentSession;
+      delete testWindow.__orchestraTestSetSessionSubscribed;
       delete testWindow.__orchestraTestPinSessionIds;
     };
-  }, [applySessionUpdate, handleSessionStreamEvent]);
+  }, [applySessionUpdate, handleSessionStreamEvent, patchSessionRecord]);
 
   useEffect(() => {
     const refreshProjectCatalog = createProjectCatalogRefresher(
@@ -3833,17 +3850,58 @@ export function App() {
     }
 
     let cancelled = false;
+    const viewedSessionSubscriptionKey =
+      sessionSurfaceActive && viewedSession
+        ? `${activePage}:${viewedSession.id}`
+        : null;
+    const viewedSessionScheduledForSubscription =
+      viewedSession && sessionIdsToSubscribe.includes(viewedSession.id);
+    const shouldConfirmViewedSessionSubscription =
+      Boolean(
+        viewedSession &&
+          sessionSurfaceActive &&
+          !viewedSession.terminalAttached &&
+          !viewedSessionScheduledForSubscription &&
+          (confirmedViewedSessionSubscriptionKeyRef.current !==
+            viewedSessionSubscriptionKey ||
+            !viewedSession.subscribed),
+      );
+
+    if (!sessionSurfaceActive || !viewedSession) {
+      confirmedViewedSessionSubscriptionKeyRef.current = null;
+    } else if (viewedSessionScheduledForSubscription) {
+      confirmedViewedSessionSubscriptionKeyRef.current =
+        viewedSessionSubscriptionKey;
+    }
 
     for (const sessionId of sessionIdsToSubscribe) {
-      void orchestraClient.sessions
-        .subscribe(sessionId)
-        .then((record) => {
-          if (!cancelled) {
-            applySessionUpdate(record);
-          }
-        })
-        .catch(async (error) => {
-          liveSurfaceSubscribedSessionIdsRef.current.delete(sessionId);
+      void ensureLiveSurfaceSessionSubscription(sessionId).catch(async (error) => {
+        if (sessionId === viewedSession?.id) {
+          confirmedViewedSessionSubscriptionKeyRef.current = null;
+        }
+        if (!cancelled) {
+          setSessionActionError(
+            await reportUiError(
+              orchestraClient,
+              "ui.sessions.subscribe",
+              error,
+              "Unable to subscribe to session.",
+            ),
+          );
+        }
+      });
+    }
+
+    if (
+      shouldConfirmViewedSessionSubscription &&
+      viewedSession &&
+      viewedSessionSubscriptionKey
+    ) {
+      confirmedViewedSessionSubscriptionKeyRef.current =
+        viewedSessionSubscriptionKey;
+      void ensureLiveSurfaceSessionSubscription(viewedSession.id).catch(
+        async (error) => {
+          confirmedViewedSessionSubscriptionKeyRef.current = null;
           if (!cancelled) {
             setSessionActionError(
               await reportUiError(
@@ -3854,7 +3912,8 @@ export function App() {
               ),
             );
           }
-        });
+        },
+      );
     }
 
     for (const sessionId of sessionIdsToUnsubscribe) {
@@ -3876,7 +3935,7 @@ export function App() {
     };
   }, [
     activePage,
-    applySessionUpdate,
+    ensureLiveSurfaceSessionSubscription,
     isDetachedWindow,
     mergeSessionRecord,
     orchestraClient,
@@ -3884,6 +3943,7 @@ export function App() {
     supervisorSession?.id,
     supervisorSessionId,
     viewedSession?.id,
+    viewedSession?.subscribed,
     viewedSession?.terminalAttached,
   ]);
 
