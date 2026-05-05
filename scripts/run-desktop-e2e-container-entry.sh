@@ -23,7 +23,7 @@ DESKTOP_PREVIEW_URL="${ORCHESTRA_DESKTOP_E2E_PREVIEW_URL:-http://127.0.0.1:1420}
 echo "[desktop-e2e] preparing workspace copy"
 rm -rf "${WORKSPACE_ROOT}"
 mkdir -p "${WORKSPACE_DIR}/src-tauri"
-cp -a /src/package.json /src/package-lock.json /src/index.html /src/tsconfig.json /src/vite.config.ts /src/playwright.config.ts /src/README.md /src/.gitignore "${WORKSPACE_DIR}/"
+cp -a /src/package.json /src/package-lock.json /src/index.html /src/github.html /src/tsconfig.json /src/vite.config.ts /src/playwright.config.ts /src/README.md /src/.gitignore "${WORKSPACE_DIR}/"
 cp -a /workspace/orchestra/node_modules "${WORKSPACE_DIR}/node_modules"
 rm -rf "${WORKSPACE_DIR}/node_modules/.vite" "${WORKSPACE_DIR}/node_modules/.cache/vite" "${WORKSPACE_DIR}/node_modules/.cache/vitest" "${WORKSPACE_DIR}/.vitest"
 cp -a /src/src "${WORKSPACE_DIR}/src"

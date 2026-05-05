@@ -29,6 +29,7 @@ import {
   getSourceControlSettings,
   updateProjectSourceControlSettings,
 } from "../lib/sourceControlSettings";
+import { isTauriAvailable } from "../lib/mockOrchestra/host";
 import { normalizeTaskPrefix, suggestTaskPrefix, validateTaskPrefix } from "../lib/taskPrefixes";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import { SourceControlPreviewTable } from "./SourceControlPreviewTable";
@@ -296,6 +297,19 @@ export function ProjectsPanel() {
 
     const projectSlug = projectDetail.slug;
     const timeoutId = window.setTimeout(() => {
+      if (isTauriAvailable()) {
+        if (activeDetailTab === "automation" && !loadingAutomation && automationLoadedProjectSlug !== projectSlug) {
+          void loadAutomationSettings(projectSlug);
+        }
+        if (activeDetailTab === "source-control" && !loadingSourceControl && sourceControlLoadedProjectSlug !== projectSlug) {
+          void loadSourceControlTabSettings(projectSlug);
+        }
+        if (activeDetailTab === "secrets" && !loadingSecrets && secretsLoadedProjectSlug !== projectSlug) {
+          void loadSecrets(projectSlug);
+        }
+        return;
+      }
+
       if (!loadingAutomation && automationLoadedProjectSlug !== projectSlug) {
         void loadAutomationSettings(projectSlug);
       }
@@ -309,6 +323,7 @@ export function ProjectsPanel() {
 
     return () => window.clearTimeout(timeoutId);
   }, [
+    activeDetailTab,
     automationLoadedProjectSlug,
     loadingAutomation,
     loadingSecrets,
