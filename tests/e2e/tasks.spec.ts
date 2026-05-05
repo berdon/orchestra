@@ -4889,6 +4889,128 @@ test("task detail compact header follows scroll direction without jitter", async
   await expect(tabDock).toBeHidden();
 });
 
+test("task detail header metadata stays in sync across the primary and compact headers", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Implement task foundation shell" }).first().click();
+
+  const headerStates = await page.evaluate(() => {
+    const taskKey = "orchestra.mock.tasks";
+    const workflowKey = "orchestra.mock.workflows";
+    const roleKey = "orchestra.mock.roles";
+    const tasks = JSON.parse(window.localStorage.getItem(taskKey) ?? "[]");
+    const workflows = JSON.parse(window.localStorage.getItem(workflowKey) ?? "[]");
+    const roles = JSON.parse(window.localStorage.getItem(roleKey) ?? "[]");
+    const target = tasks.find((entry: { title?: string }) => entry.title === "Implement task foundation shell");
+    if (!target) {
+      throw new Error("Expected seeded task was not found");
+    }
+    const workflow = workflows.find((entry: { id?: string; lanes?: Array<{ id: string; name: string }> }) => entry.id === target.workflowId);
+    if (!workflow || !Array.isArray(workflow.lanes) || workflow.lanes.length < 2) {
+      throw new Error("Expected a seeded workflow with at least two lanes");
+    }
+    const seniorDeveloper = roles.find((entry: { slug?: string }) => entry.slug === "senior-developer");
+    const qa = roles.find((entry: { slug?: string }) => entry.slug === "qa");
+    const [initialLane, updatedLane] = workflow.lanes;
+    const updatedAt = new Date().toISOString();
+    target.description = Array.from({ length: 90 }, (_, index) => `Header metadata line ${index + 1}`).join("\n\n");
+    target.assigneeType = "role";
+    target.assigneeId = "senior-developer";
+    target.currentLaneId = initialLane.id;
+    target.status = "in_progress";
+    target.activeLaneAssignment = target.activeLaneAssignment
+      ? { ...target.activeLaneAssignment, laneId: initialLane.id, updatedAt }
+      : null;
+    target.updatedAt = updatedAt;
+    window.localStorage.setItem(taskKey, JSON.stringify(tasks));
+    window.dispatchEvent(new CustomEvent("orchestra:task-change", {
+      detail: {
+        taskIds: [target.id],
+        reason: "test.header-metadata.initial",
+      },
+    }));
+    return {
+      taskId: target.id,
+      initial: {
+        assignee: seniorDeveloper?.name ?? "senior-developer",
+        lane: initialLane.name,
+        status: "in progress",
+      },
+      updated: {
+        assignee: qa?.name ?? "qa",
+        lane: updatedLane.name,
+        status: "blocked",
+      },
+    };
+  });
+
+  const primaryHeader = page.locator('[data-role="task-detail-primary-header"]');
+  await expect(primaryHeader.locator('[data-role="task-detail-header-assignee"]')).toHaveText(headerStates.initial.assignee);
+  await expect(primaryHeader.locator('[data-role="task-detail-header-lane"]')).toHaveText(headerStates.initial.lane);
+  await expect(primaryHeader.locator('[data-role="task-detail-header-status"]')).toHaveText(headerStates.initial.status);
+
+  await page.waitForFunction(() => {
+    const content = document.querySelector('.content') as HTMLElement | null;
+    const documentElement = document.documentElement;
+    return Boolean(
+      (content && content.scrollHeight > content.clientHeight + 500)
+      || documentElement.scrollHeight > window.innerHeight + 500,
+    );
+  });
+
+  await scrollTaskDetailTo(page, 1400);
+  const compactHeader = page.locator('[data-role="task-detail-compact-header"]');
+  await expect(compactHeader).toHaveAttribute('data-scroll-state', 'hidden');
+  await scrollTaskDetailTo(page, 1332);
+  await expect(compactHeader).toHaveAttribute('data-scroll-state', 'visible');
+  await expect(compactHeader).toBeVisible();
+  await expect(compactHeader.locator('[data-role="task-detail-compact-header-assignee"]')).toHaveText(headerStates.initial.assignee);
+  await expect(compactHeader.locator('[data-role="task-detail-compact-header-lane"]')).toHaveText(headerStates.initial.lane);
+  await expect(compactHeader.locator('[data-role="task-detail-compact-header-status"]')).toHaveText(headerStates.initial.status);
+
+  await page.evaluate(({ taskId }) => {
+    const taskKey = "orchestra.mock.tasks";
+    const workflowKey = "orchestra.mock.workflows";
+    const tasks = JSON.parse(window.localStorage.getItem(taskKey) ?? "[]");
+    const workflows = JSON.parse(window.localStorage.getItem(workflowKey) ?? "[]");
+    const target = tasks.find((entry: { id?: string }) => entry.id === taskId);
+    if (!target) {
+      throw new Error("Expected task detail target to exist");
+    }
+    const workflow = workflows.find((entry: { id?: string; lanes?: Array<{ id: string }> }) => entry.id === target.workflowId);
+    if (!workflow || !Array.isArray(workflow.lanes) || workflow.lanes.length < 2) {
+      throw new Error("Expected updated workflow lanes to exist");
+    }
+    const updatedAt = new Date().toISOString();
+    target.assigneeType = "role";
+    target.assigneeId = "qa";
+    target.currentLaneId = workflow.lanes[1].id;
+    target.status = "blocked";
+    target.activeLaneAssignment = target.activeLaneAssignment
+      ? { ...target.activeLaneAssignment, laneId: workflow.lanes[1].id, updatedAt }
+      : null;
+    target.updatedAt = updatedAt;
+    window.localStorage.setItem(taskKey, JSON.stringify(tasks));
+    window.dispatchEvent(new CustomEvent("orchestra:task-change", {
+      detail: {
+        taskIds: [target.id],
+        reason: "test.header-metadata.updated",
+      },
+    }));
+  }, { taskId: headerStates.taskId });
+
+  await expect(primaryHeader.locator('[data-role="task-detail-header-assignee"]')).toHaveText(headerStates.updated.assignee);
+  await expect(primaryHeader.locator('[data-role="task-detail-header-lane"]')).toHaveText(headerStates.updated.lane);
+  await expect(primaryHeader.locator('[data-role="task-detail-header-status"]')).toHaveText(headerStates.updated.status);
+  await expect(compactHeader.locator('[data-role="task-detail-compact-header-assignee"]')).toHaveText(headerStates.updated.assignee);
+  await expect(compactHeader.locator('[data-role="task-detail-compact-header-lane"]')).toHaveText(headerStates.updated.lane);
+  await expect(compactHeader.locator('[data-role="task-detail-compact-header-status"]')).toHaveText(headerStates.updated.status);
+});
+
 test("task detail on mobile uses a section select for tab panels", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

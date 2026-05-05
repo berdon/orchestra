@@ -16,6 +16,8 @@ import { TaskEditorForm } from "./TaskEditorForm";
 import { getTaskTags } from "../../lib/taskListQuery";
 import { getEffectiveTaskDetailAssignmentStatus } from "./taskDetailActionState";
 import { buildTaskDetailHeaderActions } from "./taskDetailHeaderActions";
+import { resolveTaskAssigneeLabel } from "./taskBoardModel";
+import { formatTaskStatusLabel, getTaskStatusTone } from "./taskStatusBadges";
 import { getTaskDependencyTreeBranchLabel, type TaskDependencyTreeNode } from "./taskDependencyTree";
 
 interface TaskTimelineItem {
@@ -132,23 +134,60 @@ interface TaskDetailPageProps {
   onEditingStateChange?: (editing: boolean) => void;
 }
 
-function formatStatusLabel(status: string) {
-  return status.replace(/_/g, " ");
+function getTaskLaneLabel(
+  task: Pick<TaskDetail, "currentLaneId">,
+  workflowLanes: Array<{ id: string; name: string }>,
+) {
+  if (!task.currentLaneId) {
+    return "No lane";
+  }
+
+  return workflowLanes.find((lane) => lane.id === task.currentLaneId)?.name ?? task.currentLaneId;
 }
 
-function getStatusTone(status: string) {
-  switch (status) {
-    case "completed":
-      return "success";
-    case "blocked":
-      return "error";
-    case "in_review":
-      return "warning";
-    case "in_progress":
-      return "accent";
-    default:
-      return "neutral";
-  }
+function TaskHeaderMetadata({
+  assigneeLabel,
+  laneLabel,
+  status,
+  compact = false,
+}: {
+  assigneeLabel: string;
+  laneLabel: string;
+  status: string;
+  compact?: boolean;
+}) {
+  const className = [
+    "task-detail-header-metadata",
+    compact ? "task-detail-header-metadata--compact" : null,
+  ].filter(Boolean).join(" ");
+  const dataRolePrefix = compact ? "task-detail-compact-header" : "task-detail-header";
+
+  return (
+    <div className={className}>
+      <div className="task-detail-header-metadata__item">
+        <span className="task-detail-header-metadata__label">Assignee</span>
+        <span className="task-detail-header-metadata__value" data-role={`${dataRolePrefix}-assignee`}>
+          {assigneeLabel}
+        </span>
+      </div>
+      <div className="task-detail-header-metadata__item">
+        <span className="task-detail-header-metadata__label">Lane</span>
+        <span className="task-detail-header-metadata__value" data-role={`${dataRolePrefix}-lane`}>
+          {laneLabel}
+        </span>
+      </div>
+      <div className="task-detail-header-metadata__item">
+        <span className="task-detail-header-metadata__label">Status</span>
+        <span
+          className={`status-badge status-badge--${getTaskStatusTone(status)}${compact ? " status-badge--compact" : ""}`}
+          data-role={`${dataRolePrefix}-status`}
+          data-task-status={status}
+        >
+          {formatTaskStatusLabel(status)}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function createReplyDraft(author = "User", parentCommentId?: string | null): TaskCommentInput {
@@ -184,7 +223,7 @@ function TaskDependencyTreeCard({
       <button className={className} type="button" onClick={() => onOpenTask(node.task.id)}>
         <div className="workflow-section__header">
           <strong>{node.task.number} · {node.task.title}</strong>
-          <span className={`status-badge status-badge--${getStatusTone(node.task.status)}`}>{formatStatusLabel(node.task.status)}</span>
+          <span className={`status-badge status-badge--${getTaskStatusTone(node.task.status)}`}>{formatTaskStatusLabel(node.task.status)}</span>
         </div>
         <p className="muted-copy">{describeTaskDependencyTreeMeta(node.task, node.parent)}</p>
         {node.reference ? <p className="supporting-copy">Referenced elsewhere in this tree.</p> : null}
@@ -620,6 +659,8 @@ export function TaskDetailPage({
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
   const taskHeading = draft.title.trim() || task.title;
+  const headerAssigneeLabel = resolveTaskAssigneeLabel(task, agents, roles);
+  const headerLaneLabel = getTaskLaneLabel(task, workflowLanes);
   const commentThreads = sortTaskCommentThreadsByLatestActivityDesc(buildTaskCommentThreads(task.comments));
   const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
   const defaultFileAbsolutePath = defaultFile?.exists ? defaultFile.absolutePath ?? null : null;
@@ -1365,7 +1406,7 @@ export function TaskDetailPage({
                   <button className="task-child-card" key={child.id} type="button" onClick={() => onOpenTask(child.id)}>
                     <div className="workflow-section__header">
                       <strong>{child.number} · {child.title}</strong>
-                      <span className={`status-badge status-badge--${getStatusTone(child.status)}`}>{formatStatusLabel(child.status)}</span>
+                      <span className={`status-badge status-badge--${getTaskStatusTone(child.status)}`}>{formatTaskStatusLabel(child.status)}</span>
                     </div>
                     <p className="muted-copy">{child.type} · {child.priority}</p>
                   </button>
@@ -1443,7 +1484,7 @@ export function TaskDetailPage({
                         <article className="task-history-card" key={dependency.id}>
                           <div className="workflow-section__header">
                             <strong>{dependency.blocker.number} · {dependency.blocker.title}</strong>
-                            <span className={`status-badge status-badge--${getStatusTone(dependency.blocker.status)}`}>{formatStatusLabel(dependency.blocker.status)}</span>
+                            <span className={`status-badge status-badge--${getTaskStatusTone(dependency.blocker.status)}`}>{formatTaskStatusLabel(dependency.blocker.status)}</span>
                           </div>
                           <p className="muted-copy">{dependency.blocker.priority} · {dependency.blocker.type}</p>
                           <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveDependency(dependency.id)}>Remove dependency</button>
@@ -1460,7 +1501,7 @@ export function TaskDetailPage({
                         <article className="task-history-card" key={dependency.id}>
                           <div className="workflow-section__header">
                             <strong>{dependency.blocked.number} · {dependency.blocked.title}</strong>
-                            <span className={`status-badge status-badge--${getStatusTone(dependency.blocked.status)}`}>{formatStatusLabel(dependency.blocked.status)}</span>
+                            <span className={`status-badge status-badge--${getTaskStatusTone(dependency.blocked.status)}`}>{formatTaskStatusLabel(dependency.blocked.status)}</span>
                           </div>
                           <p className="supporting-copy">Blocked until this task is resolved.</p>
                         </article>
@@ -2021,6 +2062,7 @@ export function TaskDetailPage({
                 ))}
               </div>
             ) : null}
+            <TaskHeaderMetadata assigneeLabel={headerAssigneeLabel} laneLabel={headerLaneLabel} status={task.status} />
             <div className="session-detail__meta">
               {taskHeaderMeta.map((item) => (
                 <span key={item}>{item}</span>
@@ -2409,14 +2451,7 @@ export function TaskDetailPage({
               <span className="status-badge status-badge--neutral">{task.number}</span>
               <h3>{taskHeading}</h3>
             </div>
-            <div className="task-detail-floating-header__meta">
-              <span className={`status-badge status-badge--${getStatusTone(task.status)}`}>{formatStatusLabel(task.status)}</span>
-              {task.activeLaneAssignment ? (
-                <span className={`status-badge status-badge--${task.activeLaneAssignment.status === "active" ? "success" : task.activeLaneAssignment.status === "queued" ? "warning" : "neutral"}`}>
-                  {formatStatusLabel(task.activeLaneAssignment.status)}
-                </span>
-              ) : null}
-            </div>
+            <TaskHeaderMetadata assigneeLabel={headerAssigneeLabel} laneLabel={headerLaneLabel} status={task.status} compact />
           </div>
           {renderHeaderActions(true)}
         </div>

@@ -4156,10 +4156,54 @@ strong {
   white-space: nowrap;
 }
 
-.task-detail-floating-header__meta {
+.task-detail-header-metadata {
   display: flex;
-  gap: 8px;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-detail-header-metadata__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-subtle) 84%, transparent);
+}
+
+.task-detail-header-metadata__label {
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.task-detail-header-metadata__value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.task-detail-header-metadata__item .status-badge {
+  flex-shrink: 0;
+}
+
+.task-detail-header-metadata--compact .task-detail-header-metadata__item {
+  padding: 4px 8px;
+}
+
+.task-detail-header-metadata--compact .task-detail-header-metadata__value {
+  font-size: 0.82rem;
 }
 
 .task-detail-floating-header .task-action-menu__desktop {
