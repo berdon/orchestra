@@ -1478,24 +1478,53 @@ fn telegram_send_task_back_for_work(
     };
 
     let context = session_context_for_task_id(&task_id)?;
-    let connection = database::open_connection()?;
-    let assignment = task_runtime::send_lane_back_for_work(&connection, &task_id)?;
-    let follow_up_prompt = task_runtime::lane_rework_follow_up_prompt();
-    task_runtime::start_assignment_follow_up(
-        app.clone(),
-        state,
-        context.session_dir.clone(),
-        &assignment,
-        &follow_up_prompt,
-    )?;
-    if let Some(session_id) = assignment.session_id.clone() {
-        let _ = crate::services::app_events::emit_session_change(
-            app,
-            "task.transition.rework",
-            [session_id],
-        );
-    }
-    let task = tasks::get_task_context(&connection, &task_id)?;
+    let mut connection = database::open_connection()?;
+    let task = match task_runtime::send_lane_back_for_work(
+        &mut connection,
+        &context.project_root,
+        &context.session_dir,
+        &task_id,
+    )? {
+        task_runtime::ReviewReworkAction::Reactivated(assignment) => {
+            let follow_up_prompt = task_runtime::lane_rework_follow_up_prompt();
+            task_runtime::start_assignment_follow_up(
+                app.clone(),
+                state,
+                context.session_dir.clone(),
+                &assignment,
+                &follow_up_prompt,
+            )?;
+            if let Some(session_id) = assignment.session_id.clone() {
+                let _ = crate::services::app_events::emit_session_change(
+                    app,
+                    "task.transition.rework",
+                    [session_id],
+                );
+            }
+            tasks::get_task_context(&connection, &task_id)?
+        }
+        task_runtime::ReviewReworkAction::Relaned(updated_task) => {
+            for outcome in task_runtime::collect_post_completion_auto_dispatches(
+                &mut connection,
+                &task_id,
+            )? {
+                task_runtime::start_assignment_run(
+                    app.clone(),
+                    state,
+                    outcome.session_dir.clone(),
+                    &outcome.assignment,
+                )?;
+                if let Some(session_id) = outcome.assignment.session_id.clone() {
+                    let _ = crate::services::app_events::emit_session_change(
+                        app,
+                        "task.transition.rework",
+                        [session_id],
+                    );
+                }
+            }
+            tasks::get_task_context(&connection, &task_id).unwrap_or(updated_task)
+        }
+    };
     let _ = crate::services::app_events::emit_task_change(
         app,
         "task.transition.needs_work",

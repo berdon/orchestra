@@ -623,6 +623,7 @@ pub fn debug_seed_idle_task_whip_scenario() -> Result<DebugTaskWhipScenario, Str
                 ),
                 use_separate_worktree: false,
                 require_user_approval_on_success: false,
+                needs_work_target_lane_id: None,
                 success_transition_type: "end".into(),
                 success_target_lane_id: None,
                 failure_transition_type: "end".into(),

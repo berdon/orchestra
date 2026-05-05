@@ -813,6 +813,7 @@ mod tests {
                     entry_prompt_template: None,
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),

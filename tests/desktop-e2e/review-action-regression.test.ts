@@ -130,6 +130,7 @@ describe("desktop review action regression", () => {
               entryPromptTemplate: "Implement the task and stop for review.",
               useSeparateWorktree: false,
               requireUserApprovalOnSuccess: true,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",

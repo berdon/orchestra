@@ -62,6 +62,7 @@ describe("desktop task board lane scrolling", () => {
               entryPromptTemplate: "Handle the task.",
               useSeparateWorktree: false,
               requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",

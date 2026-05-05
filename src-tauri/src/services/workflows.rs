@@ -223,6 +223,10 @@ pub fn duplicate_workflow(
                 entry_prompt_template: lane.entry_prompt_template,
                 use_separate_worktree: lane.use_separate_worktree,
                 require_user_approval_on_success: lane.require_user_approval_on_success,
+                needs_work_target_lane_id: remap_lane_target(
+                    &lane_id_map,
+                    lane.needs_work_target_lane_id,
+                ),
                 success_transition_type: lane.success_transition_type,
                 success_target_lane_id: remap_lane_target(
                     &lane_id_map,
@@ -402,6 +406,12 @@ pub fn update_workflow_lane(
         }
         if let Some(require_user_approval_on_success) = patch.require_user_approval_on_success {
             lane.require_user_approval_on_success = require_user_approval_on_success;
+            if !require_user_approval_on_success {
+                lane.needs_work_target_lane_id = None;
+            }
+        }
+        if patch.needs_work_target_lane_id.is_some() {
+            lane.needs_work_target_lane_id = patch.needs_work_target_lane_id.clone();
         }
         if let Some(success_transition_type) = patch.success_transition_type.clone() {
             lane.success_transition_type = success_transition_type.clone();
@@ -504,6 +514,7 @@ fn workflow_to_input(workflow: WorkflowDefinition) -> WorkflowUpsertInput {
                 entry_prompt_template: lane.entry_prompt_template,
                 use_separate_worktree: lane.use_separate_worktree,
                 require_user_approval_on_success: lane.require_user_approval_on_success,
+                needs_work_target_lane_id: lane.needs_work_target_lane_id,
                 success_transition_type: lane.success_transition_type,
                 success_target_lane_id: lane.success_target_lane_id,
                 failure_transition_type: lane.failure_transition_type,
@@ -626,6 +637,13 @@ pub fn validate_workflow(
                         "User-owned lanes cannot require user approval on success.",
                     ));
                 }
+                if lane.needs_work_target_lane_id.is_some() {
+                    errors.push(validation_error(
+                        "invalid",
+                        &format!("{path_prefix}.needsWorkTargetLaneId"),
+                        "Needs Work target lane is only available when success review is required.",
+                    ));
+                }
             }
             "agent" => {
                 validate_owner_reference(
@@ -668,6 +686,28 @@ pub fn validate_workflow(
             &format!("lanes[{index}].failureTransitionType"),
             &format!("lanes[{index}].failureTargetLaneId"),
         );
+
+        if let Some(target_lane_id) = lane.needs_work_target_lane_id.as_deref() {
+            if !lane.require_user_approval_on_success {
+                errors.push(validation_error(
+                    "invalid",
+                    &format!("lanes[{index}].needsWorkTargetLaneId"),
+                    "Needs Work target lane is only available when success review is required.",
+                ));
+            } else if target_lane_id == lane.id {
+                errors.push(validation_error(
+                    "invalid",
+                    &format!("lanes[{index}].needsWorkTargetLaneId"),
+                    "Needs Work target lane must be different from the current lane. Leave it empty to resume the current lane/session.",
+                ));
+            } else if !lane_ids.contains(target_lane_id) {
+                errors.push(validation_error(
+                    "invalid_reference",
+                    &format!("lanes[{index}].needsWorkTargetLaneId"),
+                    "Needs Work target lane must reference an existing lane id.",
+                ));
+            }
+        }
     }
 
     Ok(WorkflowValidationResult {
@@ -925,6 +965,7 @@ fn load_lanes(connection: &Connection, workflow_id: &str) -> Result<Vec<Workflow
                 entry_prompt_template,
                 use_separate_worktree,
                 require_user_approval_on_success,
+                needs_work_target_lane_id,
                 success_transition_type,
                 success_target_lane_id,
                 failure_transition_type,
@@ -951,10 +992,11 @@ fn load_lanes(connection: &Connection, workflow_id: &str) -> Result<Vec<Workflow
                 entry_prompt_template: row.get(7)?,
                 use_separate_worktree: row.get::<_, i64>(8)? != 0,
                 require_user_approval_on_success: row.get::<_, i64>(9)? != 0,
-                success_transition_type: row.get(10)?,
-                success_target_lane_id: row.get(11)?,
-                failure_transition_type: row.get(12)?,
-                failure_target_lane_id: row.get(13)?,
+                needs_work_target_lane_id: row.get(10)?,
+                success_transition_type: row.get(11)?,
+                success_target_lane_id: row.get(12)?,
+                failure_transition_type: row.get(13)?,
+                failure_target_lane_id: row.get(14)?,
             })
         })
         .map_err(|error| format!("Unable to query workflow lanes for {workflow_id}: {error}"))?;
@@ -985,6 +1027,7 @@ fn write_lanes(
                     entry_prompt_template,
                     use_separate_worktree,
                     require_user_approval_on_success,
+                    needs_work_target_lane_id,
                     success_transition_type,
                     success_target_lane_id,
                     failure_transition_type,
@@ -992,7 +1035,7 @@ fn write_lanes(
                     user_intervention_target_lane_id,
                     created_at,
                     updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, NULL, ?16, ?16)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, NULL, ?17, ?17)
                 "#,
                 params![
                     lane.id,
@@ -1006,6 +1049,7 @@ fn write_lanes(
                     lane.entry_prompt_template,
                     if lane.use_separate_worktree { 1 } else { 0 },
                     if lane.require_user_approval_on_success { 1 } else { 0 },
+                    lane.needs_work_target_lane_id,
                     lane.success_transition_type,
                     lane.success_target_lane_id,
                     lane.failure_transition_type,
@@ -1038,6 +1082,7 @@ struct NormalizedLaneInput {
     entry_prompt_template: Option<String>,
     use_separate_worktree: bool,
     require_user_approval_on_success: bool,
+    needs_work_target_lane_id: Option<String>,
     success_transition_type: String,
     success_target_lane_id: Option<String>,
     failure_transition_type: String,
@@ -1081,6 +1126,7 @@ fn normalize_lane_input(index: usize, lane: WorkflowLaneInput) -> NormalizedLane
         use_separate_worktree: lane.use_separate_worktree
             && matches!(assigned_entity_type.as_str(), "agent" | "role"),
         require_user_approval_on_success: lane.require_user_approval_on_success,
+        needs_work_target_lane_id: normalized_optional_string(lane.needs_work_target_lane_id),
         success_transition_type: normalize_transition_type(&lane.success_transition_type),
         success_target_lane_id: normalize_transition_target(
             &lane.success_transition_type,
@@ -1259,6 +1305,7 @@ mod tests {
                     entry_prompt_template: Some("Draft a plan".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "lane".into(),
                     success_target_lane_id: Some("lane-build".into()),
                     failure_transition_type: "user_intervention".into(),
@@ -1275,6 +1322,7 @@ mod tests {
                     entry_prompt_template: None,
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "lane".into(),
@@ -1386,6 +1434,7 @@ mod tests {
                     entry_prompt_template: None,
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -1546,6 +1595,7 @@ mod tests {
                     entry_prompt_template: None,
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "lane".into(),
                     success_target_lane_id: Some("missing-lane".into()),
                     failure_transition_type: "end".into(),
@@ -1581,6 +1631,7 @@ mod tests {
                     entry_prompt_template: None,
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -1618,6 +1669,7 @@ mod tests {
                     entry_prompt_template: None,
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -1651,6 +1703,7 @@ mod tests {
                     entry_prompt_template: None,
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -1682,6 +1735,7 @@ mod tests {
                     entry_prompt_template: None,
                     use_separate_worktree: false,
                     require_user_approval_on_success: true,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -1696,6 +1750,121 @@ mod tests {
             .errors
             .iter()
             .any(|error| error.path == "lanes[0].requireUserApprovalOnSuccess"));
+    }
+
+    #[test]
+    fn persists_and_duplicates_needs_work_target_lanes() {
+        let mut connection = open_test_connection("workflow-needs-work-target");
+        seed_worker(&connection, "roles", "role-implementer", "Implementer")
+            .expect("implementer role should seed");
+        seed_worker(&connection, "roles", "role-fixer", "Fixer")
+            .expect("fixer role should seed");
+
+        let created = create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Needs Work Flow".into(),
+                description: None,
+                lanes: vec![
+                    WorkflowLaneInput {
+                        id: Some("lane-implement".into()),
+                        key: "implement".into(),
+                        name: "Implement".into(),
+                        description: None,
+                        order: Some(0),
+                        assigned_entity_type: "role".into(),
+                        assigned_entity_id: Some("implementer".into()),
+                        entry_prompt_template: None,
+                        use_separate_worktree: false,
+                        require_user_approval_on_success: true,
+                        needs_work_target_lane_id: Some("lane-fix".into()),
+                        success_transition_type: "end".into(),
+                        success_target_lane_id: None,
+                        failure_transition_type: "end".into(),
+                        failure_target_lane_id: None,
+                    },
+                    WorkflowLaneInput {
+                        id: Some("lane-fix".into()),
+                        key: "fix".into(),
+                        name: "Fix".into(),
+                        description: None,
+                        order: Some(1),
+                        assigned_entity_type: "role".into(),
+                        assigned_entity_id: Some("fixer".into()),
+                        entry_prompt_template: None,
+                        use_separate_worktree: false,
+                        require_user_approval_on_success: false,
+                        needs_work_target_lane_id: None,
+                        success_transition_type: "end".into(),
+                        success_target_lane_id: None,
+                        failure_transition_type: "end".into(),
+                        failure_target_lane_id: None,
+                    },
+                ],
+            },
+        )
+        .expect("workflow should create");
+
+        assert_eq!(
+            created.lanes[0].needs_work_target_lane_id.as_deref(),
+            Some("lane-fix")
+        );
+
+        let duplicated = duplicate_workflow(&mut connection, &created.id, None)
+            .expect("workflow should duplicate");
+        let duplicated_implement = duplicated
+            .lanes
+            .iter()
+            .find(|lane| lane.key == "implement")
+            .expect("implement lane should exist");
+        let duplicated_fix = duplicated
+            .lanes
+            .iter()
+            .find(|lane| lane.key == "fix")
+            .expect("fix lane should exist");
+        assert_eq!(
+            duplicated_implement.needs_work_target_lane_id.as_deref(),
+            Some(duplicated_fix.id.as_str())
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_needs_work_targets() {
+        let connection = open_test_connection("workflow-validation-needs-work-target");
+        seed_worker(&connection, "roles", "role-reviewer", "Reviewer")
+            .expect("role should seed");
+
+        let validation = validate_workflow(
+            &connection,
+            &WorkflowUpsertInput {
+                name: "Broken needs work routing".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-review".into()),
+                    key: "review".into(),
+                    name: "Review".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some("reviewer".into()),
+                    entry_prompt_template: None,
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    needs_work_target_lane_id: Some("lane-review".into()),
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("validation should run");
+
+        assert!(!validation.valid);
+        assert!(validation
+            .errors
+            .iter()
+            .any(|error| error.path == "lanes[0].needsWorkTargetLaneId"));
     }
 
     #[test]
@@ -1718,6 +1887,7 @@ mod tests {
                         entry_prompt_template: None,
                         use_separate_worktree: false,
                         require_user_approval_on_success: false,
+                        needs_work_target_lane_id: None,
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,
                         failure_transition_type: "end".into(),
@@ -1734,6 +1904,7 @@ mod tests {
                         entry_prompt_template: None,
                         use_separate_worktree: false,
                         require_user_approval_on_success: false,
+                        needs_work_target_lane_id: None,
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,
                         failure_transition_type: "end".into(),

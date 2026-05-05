@@ -104,6 +104,7 @@ describe("desktop harness model limits", () => {
               entryPromptTemplate: "Implement the task.",
               useSeparateWorktree: false,
               requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",

@@ -2975,6 +2975,18 @@ function validateMockWorkflowInput(
       });
     }
 
+    if (
+      !lane.requireUserApprovalOnSuccess &&
+      lane.needsWorkTargetLaneId?.trim()
+    ) {
+      errors.push({
+        code: "invalid",
+        path: `${path}.needsWorkTargetLaneId`,
+        message:
+          "Needs Work target lane is only available when success review is required.",
+      });
+    }
+
     if (lane.assignedEntityType === "agent") {
       const agentRef = lane.assignedEntityId?.trim();
       const agents = getStoredMockAgents();
@@ -3037,6 +3049,31 @@ function validateMockWorkflowInput(
       ],
     ] as const;
 
+    const needsWorkTarget = lane.needsWorkTargetLaneId?.trim() || null;
+    if (needsWorkTarget) {
+      if (!lane.requireUserApprovalOnSuccess) {
+        errors.push({
+          code: "invalid",
+          path: `lanes[${index}].needsWorkTargetLaneId`,
+          message:
+            "Needs Work target lane is only available when success review is required.",
+        });
+      } else if (needsWorkTarget === normalizedIds[index]) {
+        errors.push({
+          code: "invalid",
+          path: `lanes[${index}].needsWorkTargetLaneId`,
+          message:
+            "Needs Work target lane must be different from the current lane. Leave it empty to resume the current lane/session.",
+        });
+      } else if (!validTargets.has(needsWorkTarget)) {
+        errors.push({
+          code: "invalid_reference",
+          path: `lanes[${index}].needsWorkTargetLaneId`,
+          message: "Needs Work target lane must reference an existing lane id.",
+        });
+      }
+    }
+
     transitions.forEach(([transitionType, target, typeKey, targetKey]) => {
       if (!["lane", "user_intervention", "end"].includes(transitionType)) {
         errors.push({
@@ -3096,6 +3133,10 @@ function normalizeMockWorkflowInput(
     useSeparateWorktree:
       (lane.useSeparateWorktree ?? false) && lane.assignedEntityType !== "user",
     requireUserApprovalOnSuccess: lane.requireUserApprovalOnSuccess ?? false,
+    needsWorkTargetLaneId:
+      lane.requireUserApprovalOnSuccess
+        ? lane.needsWorkTargetLaneId?.trim() || null
+        : null,
     successTransitionType: lane.successTransitionType,
     successTargetLaneId:
       lane.successTransitionType === "lane"
@@ -6475,6 +6516,94 @@ async function sendMockLaneBackForWork(taskId: string): Promise<TaskDetail> {
     throw new Error(`Task ${taskId} is not paused for user review.`);
   }
 
+  if (
+    effectiveStatus === "awaiting_user_approval" &&
+    task.workflowId &&
+    task.currentLaneId
+  ) {
+    const workflow = ensureMockWorkflows().find(
+      (entry) => entry.id === task.workflowId,
+    );
+    const lane = workflow?.lanes.find((entry) => entry.id === task.currentLaneId);
+    const targetLane = lane?.needsWorkTargetLaneId
+      ? (workflow?.lanes.find((entry) => entry.id === lane.needsWorkTargetLaneId) ?? null)
+      : null;
+    if (lane?.needsWorkTargetLaneId && !targetLane) {
+      throw new Error(
+        `Needs Work target lane ${lane.needsWorkTargetLaneId} could not be resolved for task ${taskId}.`,
+      );
+    }
+
+    if (lane && targetLane) {
+      const updatedAt = nowIso();
+      const nextStatus =
+        targetLane.assignedEntityType === "user" ? "in_review" : "ready";
+      const nextAssigneeType = targetLane.assignedEntityType;
+      const nextAssigneeId = targetLane.assignedEntityId ?? null;
+      const autoAssignment =
+        targetLane.assignedEntityType !== "user"
+          ? buildMockAutoAssignment(task, workflow!, targetLane, updatedAt)
+          : null;
+      const laneRuns = task.activeLaneAssignment
+        ? task.laneRuns.map((run, index, allRuns) =>
+            index === allRuns.length - 1 && run.completedAt == null
+              ? {
+                  ...run,
+                  result: "failure" as const,
+                  notes: run.notes ?? null,
+                  completedAt: updatedAt,
+                }
+              : run,
+          )
+        : task.laneRuns;
+
+      saveMockTasks(
+        tasks.map((entry) =>
+          entry.id === taskId
+            ? {
+                ...entry,
+                currentLaneId: targetLane.id,
+                status: autoAssignment ? "in_progress" : nextStatus,
+                assigneeType: nextAssigneeType,
+                assigneeId: nextAssigneeId,
+                activeLaneAssignment: autoAssignment,
+                laneRuns: autoAssignment
+                  ? [
+                      ...laneRuns,
+                      {
+                        id: createId("lane-run"),
+                        taskId: entry.id,
+                        laneId: targetLane.id,
+                        sessionId: autoAssignment.sessionId!,
+                        result: "needs_user" as const,
+                        notes: null,
+                        startedAt: autoAssignment.startedAt,
+                        completedAt: null,
+                      },
+                    ]
+                  : laneRuns,
+                updatedAt,
+              }
+            : entry,
+        ),
+      );
+
+      syncMockSessionTaskActivity(task.activeLaneAssignment, autoAssignment);
+      finalizeMockAgentState(task, "failure", updatedAt, autoAssignment);
+      queueMockAutoAssignment(task, workflow!, autoAssignment);
+      appendMockLog(
+        "info",
+        "task.transition",
+        `Sent task ${taskId} to configured Needs Work lane ${targetLane.id}`,
+      );
+      emitMockTaskChange({
+        taskIds: [taskId],
+        reason: "task.transition.needs_work",
+      });
+      return getTask(taskId);
+    }
+  }
+
   const updatedAt = nowIso();
   const followUpPrompt =
     effectiveStatus === "awaiting_user_intervention"
@@ -8469,6 +8598,7 @@ export async function duplicateWorkflow(
         useSeparateWorktree: lane.useSeparateWorktree ?? false,
         requireUserApprovalOnSuccess:
           lane.requireUserApprovalOnSuccess ?? false,
+        needsWorkTargetLaneId: lane.needsWorkTargetLaneId,
         successTransitionType: lane.successTransitionType,
         successTargetLaneId: lane.successTargetLaneId,
         failureTransitionType: lane.failureTransitionType,

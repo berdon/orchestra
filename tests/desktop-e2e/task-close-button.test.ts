@@ -35,6 +35,7 @@ describe("desktop task close button", () => {
               entryPromptTemplate: null,
               useSeparateWorktree: false,
               requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",

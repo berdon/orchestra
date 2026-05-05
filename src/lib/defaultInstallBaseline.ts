@@ -65,6 +65,7 @@ function cloneLane(lane: DefaultInstallBaselineCatalog["workflows"][number]["lan
     entryPromptTemplate: lane.entryPromptTemplate ?? null,
     useSeparateWorktree: Boolean(lane.useSeparateWorktree),
     requireUserApprovalOnSuccess: Boolean(lane.requireUserApprovalOnSuccess),
+    needsWorkTargetLaneId: null,
     successTransitionType: lane.successTransitionType,
     successTargetLaneId: lane.successTargetLaneId ?? null,
     failureTransitionType: lane.failureTransitionType,

@@ -1134,6 +1134,7 @@ export interface WorkflowLane {
   entryPromptTemplate?: string | null;
   useSeparateWorktree?: boolean;
   requireUserApprovalOnSuccess?: boolean;
+  needsWorkTargetLaneId?: string | null;
   successTransitionType: WorkflowTransitionType | string;
   successTargetLaneId?: string | null;
   failureTransitionType: WorkflowTransitionType | string;
@@ -1950,6 +1951,7 @@ export interface WorkflowLaneInput {
   entryPromptTemplate?: string | null;
   useSeparateWorktree?: boolean;
   requireUserApprovalOnSuccess?: boolean;
+  needsWorkTargetLaneId?: string | null;
   successTransitionType: WorkflowTransitionType | string;
   successTargetLaneId?: string | null;
   failureTransitionType: WorkflowTransitionType | string;

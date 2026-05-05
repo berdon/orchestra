@@ -3,13 +3,18 @@ import { join } from "node:path";
 
 import {
   clickByText,
+  clickNthSelector,
   clickSelector,
   createReadyWebdriverSession,
   deleteWebdriverSession,
   dispatchWindowEvent,
   ensureReactReady,
   executeScript,
+  getSelectOptions,
   invokeCommand,
+  selectValue,
+  setCheckbox,
+  setFieldByLabel,
   setInputValue,
   sleep,
   waitForSelector,
@@ -154,6 +159,7 @@ describe("desktop approval-gated workflow lanes", () => {
               entryPromptTemplate: 'Implement the task and stop at review.',
               useSeparateWorktree: false,
               requireUserApprovalOnSuccess: true,
+              needsWorkTargetLaneId: null,
               successTransitionType: 'end',
               successTargetLaneId: null,
               failureTransitionType: 'end',
@@ -269,6 +275,148 @@ describe("desktop approval-gated workflow lanes", () => {
     }
   }, 240_000);
 
+  it.skipIf(!isDesktopE2E)("configures a Needs Work return lane in workflow settings and sends review-paused work there", async () => {
+    expect(testHome).toBeTruthy();
+
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+
+      const repositoryRoot = join(testHome!, "workspace", "lane-approval-repo", "repository");
+
+      const project = await invokeCommand<{ id: string; name: string }>(sessionId, 'create_project', {
+        input: {
+          name: 'Approval Return Project',
+          taskPrefix: 'ARP',
+          description: 'Desktop workflow settings Needs Work routing test.',
+        },
+      });
+      const repository = await invokeCommand<{ id: string }>(sessionId, 'create_repository', {
+        projectId: project.id,
+        input: {
+          name: 'Approval Return Repo',
+          repositoryPath: repositoryRoot,
+          defaultBranch: 'main',
+        },
+      });
+      await invokeCommand(sessionId, 'set_project_default_repository', {
+        projectId: project.id,
+        repositoryId: repository.id,
+      });
+      await switchProject(sessionId, 'Approval Return Project');
+
+      const implementRole = await invokeCommand<{ id: string; slug: string }>(sessionId, 'create_role', {
+        input: {
+          name: 'Approval Return Worker',
+          description: 'Implements work that may need review rework.',
+          systemPrompt: 'Implement the task and stop at review.',
+          capacity: 1,
+        },
+      });
+      const fixRole = await invokeCommand<{ id: string; slug: string }>(sessionId, 'create_role', {
+        input: {
+          name: 'Approval Return Fixer',
+          description: 'Handles review-returned work.',
+          systemPrompt: 'Take over rework that came back from review.',
+          capacity: 1,
+        },
+      });
+
+      await clickByText(sessionId, 'button', 'Settings');
+      await clickByText(sessionId, '[role="tab"]', 'Workflows');
+      await clickByText(sessionId, 'button', 'New workflow');
+      await setFieldByLabel(sessionId, 'Workflow name', 'Approval Return Flow');
+      await clickByText(sessionId, '[role="tab"]', 'Lane');
+      await setFieldByLabel(sessionId, 'Lane name', 'Implement');
+      await setFieldByLabel(sessionId, 'Lane key', 'implement');
+      await selectValue(sessionId, '[data-role="lane-owner-type"]', 'role');
+      await selectValue(sessionId, '[data-role="lane-owner-reference"]', implementRole.slug);
+      expect(
+        await executeScript<boolean>(sessionId, `return !document.querySelector('[data-role="lane-needs-work-target"]');`),
+      ).toBe(true);
+
+      await clickByText(sessionId, 'button', 'Add lane');
+      await clickNthSelector(sessionId, '.workflow-board-lane', 1);
+      await setFieldByLabel(sessionId, 'Lane name', 'Fix');
+      await setFieldByLabel(sessionId, 'Lane key', 'fix');
+      await selectValue(sessionId, '[data-role="lane-owner-type"]', 'role');
+      await selectValue(sessionId, '[data-role="lane-owner-reference"]', fixRole.slug);
+
+      await clickNthSelector(sessionId, '.workflow-board-lane', 0);
+      await clickSelector(sessionId, '[data-role="lane-success-review-required"]');
+      await waitForSelector(sessionId, '[data-role="lane-needs-work-target"]');
+      const needsWorkOptions = await getSelectOptions(sessionId, '[data-role="lane-needs-work-target"]');
+      const fixOption = needsWorkOptions.find((option) => option.label === 'Fix');
+      expect(fixOption?.value).toBeTruthy();
+      await selectValue(sessionId, '[data-role="lane-needs-work-target"]', fixOption!.value);
+      await clickSelector(sessionId, '[data-role="save-workflow"]');
+      await waitForText(sessionId, 'Approval Return Flow');
+
+      const workflows = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_workflows', { includeArchived: false });
+      const workflowSummary = workflows.find((entry) => entry.name === 'Approval Return Flow');
+      expect(workflowSummary?.id).toBeTruthy();
+      const workflow = await invokeCommand<any>(sessionId, 'get_workflow', { workflowId: workflowSummary!.id });
+      expect(workflow.lanes[0].needsWorkTargetLaneId).toBe(workflow.lanes[1].id);
+
+      const createdTask = await invokeCommand<any>(sessionId, 'create_task', {
+        projectId: project.id,
+        input: {
+          title: 'Approval return desktop task',
+          description: 'Verify configured Needs Work routing via workflow settings.',
+          type: 'task',
+          status: 'ready',
+          priority: 'P2',
+          workflowId: workflow.id,
+          currentLaneId: workflow.lanes[0].id,
+          repositoryId: repository.id,
+          repositoryIds: [repository.id],
+          assigneeType: 'unassigned',
+          assigneeId: null,
+        },
+      });
+
+      const dispatchedTask = await waitForCondition(
+        async () => {
+          let currentTask = await invokeCommand<any>(sessionId, 'get_task', { taskId: createdTask.id });
+          if (!currentTask.activeLaneAssignment?.sessionId) {
+            await invokeCommand(sessionId, 'dispatch_task_lane', { taskId: createdTask.id }).catch(() => undefined);
+            await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+            await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: implementRole.id }).catch(() => undefined);
+            currentTask = await invokeCommand<any>(sessionId, 'get_task', { taskId: createdTask.id });
+          }
+          return currentTask;
+        },
+        (task) => Boolean(task.activeLaneAssignment?.sessionId) && task.activeLaneAssignment?.status === 'active',
+      );
+      const initialSessionId = dispatchedTask.activeLaneAssignment?.sessionId;
+      expect(initialSessionId).toBeTruthy();
+
+      await openTaskCard(sessionId, 'Approval return desktop task');
+      await clickByText(sessionId, '[role="tab"]', 'Runtime');
+      await waitForText(sessionId, 'Lane execution');
+
+      await completeTaskLaneWithRetries(sessionId, createdTask.id);
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, 'get_task', { taskId: createdTask.id }),
+        (task) => task.status === 'in_review' && task.activeLaneAssignment?.status === 'awaiting_user_approval',
+      );
+      await waitForText(sessionId, 'paused for user approval', 15_000);
+      await clickSelector(sessionId, '[data-role="send-task-back-for-work"]');
+
+      const relanedTask = await waitForCondition(
+        () => invokeCommand<any>(sessionId, 'get_task', { taskId: createdTask.id }),
+        (task) => task.status === 'in_progress' && task.activeLaneAssignment?.laneId === workflow.lanes[1].id,
+      );
+      expect(relanedTask.currentLaneId).toBe(workflow.lanes[1].id);
+      expect(relanedTask.activeLaneAssignment?.laneId).toBe(workflow.lanes[1].id);
+      expect(relanedTask.activeLaneAssignment?.sessionId).toBeTruthy();
+      expect(relanedTask.activeLaneAssignment?.sessionId).not.toBe(initialSessionId);
+      expect(relanedTask.laneRuns[0].result).toBe('failure');
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 240_000);
+
   it.skipIf(!isDesktopE2E)("resumes a lane paused for user intervention on the same worker session", async () => {
     expect(testHome).toBeTruthy();
 
@@ -321,6 +469,7 @@ describe("desktop approval-gated workflow lanes", () => {
               entryPromptTemplate: 'Implement the task and ask for user intervention if needed.',
               useSeparateWorktree: false,
               requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
               successTransitionType: 'end',
               successTargetLaneId: null,
               failureTransitionType: 'end',
@@ -447,6 +596,7 @@ describe("desktop approval-gated workflow lanes", () => {
               entryPromptTemplate: 'Implement the task and ask for user intervention if needed.',
               useSeparateWorktree: false,
               requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
               successTransitionType: 'end',
               successTargetLaneId: null,
               failureTransitionType: 'end',
@@ -588,6 +738,7 @@ describe("desktop approval-gated workflow lanes", () => {
               assignedEntityId: implementAgent.slug,
               entryPromptTemplate: 'Implement the task and stop for review.',
               requireUserApprovalOnSuccess: true,
+              needsWorkTargetLaneId: null,
               successTransitionType: 'end',
               failureTransitionType: 'end',
             },

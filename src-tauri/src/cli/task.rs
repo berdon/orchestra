@@ -1411,6 +1411,7 @@ mod tests {
                     entry_prompt_template: None,
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "complete_task".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "stay_in_lane".into(),
@@ -1445,6 +1446,7 @@ mod tests {
                     entry_prompt_template: None,
                     use_separate_worktree: false,
                     require_user_approval_on_success: true,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "complete_task".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "stay_in_lane".into(),
@@ -1620,6 +1622,7 @@ mod tests {
         primary_role_slug: &str,
         secondary_role_slug: Option<&str>,
         require_user_approval_on_success: bool,
+        needs_work_target_lane_id: Option<&str>,
         with_prompt: bool,
     ) -> crate::models::WorkflowDefinition {
         let mut lanes = vec![WorkflowLaneInput {
@@ -1633,6 +1636,7 @@ mod tests {
             entry_prompt_template: with_prompt.then(|| format!("{name}: implement the task.")),
             use_separate_worktree: false,
             require_user_approval_on_success,
+            needs_work_target_lane_id: needs_work_target_lane_id.map(str::to_string),
             success_transition_type: "complete_task".into(),
             success_target_lane_id: None,
             failure_transition_type: "stay_in_lane".into(),
@@ -1650,6 +1654,7 @@ mod tests {
                 entry_prompt_template: with_prompt.then(|| format!("{name}: review the task.")),
                 use_separate_worktree: false,
                 require_user_approval_on_success: false,
+                needs_work_target_lane_id: None,
                 success_transition_type: "complete_task".into(),
                 success_target_lane_id: None,
                 failure_transition_type: "stay_in_lane".into(),
@@ -1937,6 +1942,7 @@ mod tests {
                 &role.slug,
                 None,
                 false,
+                None,
                 false,
             );
             let dispatch_task = create_runtime_task(
@@ -2077,6 +2083,7 @@ mod tests {
                 &primary_role.slug,
                 Some(&secondary_role.slug),
                 false,
+                None,
                 false,
             );
             let approval_workflow = create_runtime_workflow(
@@ -2085,6 +2092,7 @@ mod tests {
                 &primary_role.slug,
                 None,
                 true,
+                None,
                 false,
             );
             let move_task = tasks::create_task(
@@ -2580,9 +2588,19 @@ mod tests {
             Some("reviewer"),
             "awaiting_user_approval",
         );
-        let reworked = task_runtime::mark_task_needs_work(&connection, &needs_work_task.id)
-            .expect("needs-work should reactivate the assignment");
-        assert!(matches!(reworked.status.as_str(), "queued" | "active"));
+        let reworked = task_runtime::mark_task_needs_work(
+            &mut connection,
+            &context.project_root,
+            &context.session_dir,
+            &needs_work_task.id,
+            None,
+        )
+        .expect("needs-work should reactivate the assignment");
+        assert!(matches!(
+            reworked,
+            task_runtime::ReviewReworkAction::Reactivated(ref assignment)
+                if matches!(assignment.status.as_str(), "queued" | "active")
+        ));
 
         let approval_task = tasks::create_task(
             &mut connection,

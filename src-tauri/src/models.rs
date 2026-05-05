@@ -2528,6 +2528,7 @@ pub struct WorkflowLane {
     pub use_separate_worktree: bool,
     #[serde(default)]
     pub require_user_approval_on_success: bool,
+    pub needs_work_target_lane_id: Option<String>,
     pub success_transition_type: String,
     pub success_target_lane_id: Option<String>,
     pub failure_transition_type: String,
@@ -2590,6 +2591,7 @@ pub struct WorkflowLaneInput {
     pub use_separate_worktree: bool,
     #[serde(default)]
     pub require_user_approval_on_success: bool,
+    pub needs_work_target_lane_id: Option<String>,
     pub success_transition_type: String,
     pub success_target_lane_id: Option<String>,
     pub failure_transition_type: String,
@@ -2608,6 +2610,7 @@ pub struct WorkflowLanePatchInput {
     pub entry_prompt_template: Option<String>,
     pub use_separate_worktree: Option<bool>,
     pub require_user_approval_on_success: Option<bool>,
+    pub needs_work_target_lane_id: Option<String>,
     pub success_transition_type: Option<String>,
     pub success_target_lane_id: Option<String>,
     pub failure_transition_type: Option<String>,

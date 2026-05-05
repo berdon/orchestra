@@ -100,6 +100,7 @@ describe("desktop system notifications", () => {
               entryPromptTemplate: "Implement the task and stop for approval.",
               useSeparateWorktree: false,
               requireUserApprovalOnSuccess: true,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",

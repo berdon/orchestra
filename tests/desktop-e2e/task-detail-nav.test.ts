@@ -129,6 +129,7 @@ describe("desktop task detail navigation", () => {
               entryPromptTemplate: "Implement the task.",
               useSeparateWorktree: false,
               requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",

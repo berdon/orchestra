@@ -207,6 +207,7 @@ test("task runtime can send mail to the active assignment mailbox through the UI
               assignedEntityId: "data",
               entryPromptTemplate: "Do the work and check your mail.",
               requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",

@@ -63,3 +63,52 @@ test("workflow lanes persist stable global worker references by slug", async ({ 
   await expect(page.locator('[data-role="workflow-delete-impact-list"]')).toContainText("Tasks: 3");
   await expect(page.getByRole("button", { name: "Delete workflow" })).toHaveCount(0);
 });
+
+test("workflow settings only show Needs Work routing for approval-gated lanes and persist the selection", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("tab", { name: "Workflows" }).click();
+  await page.getByRole("button", { name: "New workflow" }).click();
+  await page.getByLabel("Workflow name").fill("Review Routing Flow");
+  await page.locator('[data-role="workflow-detail-tab-lane"]').click();
+  await page.getByLabel("Lane name").fill("Implement");
+  await page.getByLabel("Lane key").fill("implement");
+  await page.locator('[data-role="lane-owner-type"]').selectOption("role");
+  await page.locator('[data-role="lane-owner-reference"]').selectOption("senior-developer");
+  await expect(page.locator('[data-role="lane-needs-work-target"]')).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Add lane" }).click();
+  await page.locator('.workflow-board-lane').nth(1).click();
+  await page.getByLabel("Lane name").fill("Fix");
+  await page.getByLabel("Lane key").fill("fix");
+  await page.locator('[data-role="lane-owner-type"]').selectOption("role");
+  await page.locator('[data-role="lane-owner-reference"]').selectOption("senior-developer");
+
+  await page.locator('.workflow-board-lane').first().click();
+  await page.locator('[data-role="lane-success-review-required"]').check();
+  await expect(page.locator('[data-role="lane-needs-work-target"]')).toBeVisible();
+  await page.locator('[data-role="lane-needs-work-target"]').selectOption({ label: "Fix" });
+  await page.locator('[data-role="save-workflow"]').click();
+
+  const savedWorkflow = await page.evaluate(() => {
+    const workflows = JSON.parse(window.localStorage.getItem("orchestra.mock.workflows") ?? "[]");
+    return workflows.find((workflow: { name: string }) => workflow.name === "Review Routing Flow") ?? null;
+  });
+
+  expect(savedWorkflow?.lanes?.[0]?.needsWorkTargetLaneId).toBe(savedWorkflow?.lanes?.[1]?.id);
+
+  await page.locator('[data-role="lane-success-review-required"]').uncheck();
+  await expect(page.locator('[data-role="lane-needs-work-target"]')).toHaveCount(0);
+  await page.locator('[data-role="save-workflow"]').click();
+
+  const clearedWorkflow = await page.evaluate(() => {
+    const workflows = JSON.parse(window.localStorage.getItem("orchestra.mock.workflows") ?? "[]");
+    return workflows.find((workflow: { name: string }) => workflow.name === "Review Routing Flow") ?? null;
+  });
+
+  expect(clearedWorkflow?.lanes?.[0]?.needsWorkTargetLaneId).toBeNull();
+});

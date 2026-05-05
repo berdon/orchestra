@@ -71,6 +71,7 @@ struct SeedWorkflowLane {
     use_separate_worktree: bool,
     #[serde(default)]
     require_user_approval_on_success: bool,
+    needs_work_target_lane_id: Option<String>,
     success_transition_type: String,
     success_target_lane_id: Option<String>,
     failure_transition_type: String,
@@ -237,6 +238,7 @@ fn seed_workflows(
                     entry_prompt_template,
                     use_separate_worktree,
                     require_user_approval_on_success,
+                    needs_work_target_lane_id,
                     success_transition_type,
                     success_target_lane_id,
                     failure_transition_type,
@@ -245,7 +247,7 @@ fn seed_workflows(
                     created_at,
                     updated_at
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, NULL, ?16, ?16)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, NULL, ?17, ?17)
                 "#,
                 params![
                     lane.id,
@@ -259,6 +261,7 @@ fn seed_workflows(
                     lane.entry_prompt_template,
                     if lane.use_separate_worktree { 1 } else { 0 },
                     if lane.require_user_approval_on_success { 1 } else { 0 },
+                    lane.needs_work_target_lane_id,
                     lane.success_transition_type,
                     lane.success_target_lane_id,
                     lane.failure_transition_type,

@@ -38,6 +38,12 @@ pub struct StaleTaskAssignmentCandidate {
 }
 
 #[derive(Debug, Clone)]
+pub enum ReviewReworkAction {
+    Reactivated(TaskLaneAssignment),
+    Relaned(TaskDetail),
+}
+
+#[derive(Debug, Clone)]
 pub struct RestartResumeCandidate {
     pub assignment_id: String,
     pub task_id: String,
@@ -3993,16 +3999,69 @@ fn reactivate_task_lane_assignment(
 }
 
 pub fn mark_task_needs_work(
-    connection: &Connection,
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
     task_id: &str,
-) -> Result<TaskLaneAssignment, String> {
-    reactivate_task_lane_assignment(
+    notes: Option<String>,
+) -> Result<ReviewReworkAction, String> {
+    let assignment = get_current_lane_assignment(connection, task_id)?
+        .ok_or_else(|| format!("Task {task_id} has no review-paused lane assignment to resume"))?;
+    let task = tasks::get_task_context(connection, task_id)?;
+    if effective_task_review_assignment_status(&task, &assignment)
+        != ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL
+    {
+        return Err(format!("Task {task_id} is not awaiting user approval"));
+    }
+
+    let workflow = load_task_workflow(connection, &task)?;
+    let lane = resolve_task_lane(&workflow, &task)?;
+    if let Some(target_lane_id) = lane.needs_work_target_lane_id.as_deref() {
+        let target_lane = workflow
+            .lanes
+            .iter()
+            .find(|candidate| candidate.id == target_lane_id)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "Needs Work target lane {target_lane_id} does not exist for task {task_id}"
+                )
+            })?;
+        let now = now_iso();
+        let normalized_notes = normalize_optional(notes);
+        update_open_lane_run(
+            connection,
+            task_id,
+            &assignment.lane_id,
+            assignment.session_id.as_deref(),
+            "failure",
+            normalized_notes.clone(),
+            &now,
+        )?;
+        finalize_worker_assignment(
+            connection,
+            project_root,
+            session_dir,
+            &task,
+            &assignment,
+            "failure",
+            normalized_notes,
+            &now,
+        )?;
+        move_task_to_specific_lane(connection, &task, &target_lane, &now)?;
+        return Ok(ReviewReworkAction::Relaned(
+            tasks::get_task_context(connection, task_id)?,
+        ));
+    }
+
+    let reactivated_assignment = reactivate_task_lane_assignment(
         connection,
         task_id,
         &[ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL],
         &format!("Task {task_id} has no review-paused lane assignment to resume"),
         &format!("Task {task_id} is not awaiting user approval"),
-    )
+    )?;
+    Ok(ReviewReworkAction::Reactivated(reactivated_assignment))
 }
 
 pub fn resume_task_lane(
@@ -4142,15 +4201,21 @@ pub fn pause_task_lane(
 }
 
 pub fn send_lane_back_for_work(
-    connection: &Connection,
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
     task_id: &str,
-) -> Result<TaskLaneAssignment, String> {
+) -> Result<ReviewReworkAction, String> {
     let assignment = get_current_lane_assignment(connection, task_id)?
         .ok_or_else(|| format!("Task {task_id} has no paused lane assignment to resume"))?;
     let task = tasks::get_task_context(connection, task_id)?;
     match effective_task_review_assignment_status(&task, &assignment).as_str() {
-        ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL => mark_task_needs_work(connection, task_id),
-        ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION => resume_task_lane(connection, task_id),
+        ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL => {
+            mark_task_needs_work(connection, project_root, session_dir, task_id, None)
+        }
+        ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION => {
+            Ok(ReviewReworkAction::Reactivated(resume_task_lane(connection, task_id)?))
+        }
         _ => Err(format!("Task {task_id} is not paused for user review")),
     }
 }
@@ -5872,6 +5937,7 @@ mod tests {
                         entry_prompt_template: Some("Draft the plan.".into()),
                         use_separate_worktree: false,
                         require_user_approval_on_success: false,
+                        needs_work_target_lane_id: None,
                         success_transition_type: "lane".into(),
                         success_target_lane_id: Some("lane-implement".into()),
                         failure_transition_type: "user_intervention".into(),
@@ -5888,6 +5954,7 @@ mod tests {
                         entry_prompt_template: Some("Implement the task.".into()),
                         use_separate_worktree: false,
                         require_user_approval_on_success: false,
+                        needs_work_target_lane_id: None,
                         success_transition_type: "lane".into(),
                         success_target_lane_id: Some("lane-review".into()),
                         failure_transition_type: "lane".into(),
@@ -5906,6 +5973,7 @@ mod tests {
                         ),
                         use_separate_worktree: false,
                         require_user_approval_on_success: false,
+                        needs_work_target_lane_id: None,
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,
                         failure_transition_type: "lane".into(),
@@ -6237,6 +6305,7 @@ mod tests {
             entry_prompt_template: Some("Ship the fix.".into()),
             use_separate_worktree: false,
             require_user_approval_on_success: false,
+            needs_work_target_lane_id: None,
             success_transition_type: "end".into(),
             success_target_lane_id: None,
             failure_transition_type: "user_intervention".into(),
@@ -6380,6 +6449,7 @@ mod tests {
             entry_prompt_template: None,
             use_separate_worktree: false,
             require_user_approval_on_success: false,
+            needs_work_target_lane_id: None,
             success_transition_type: "end".into(),
             success_target_lane_id: None,
             failure_transition_type: "end".into(),
@@ -6501,6 +6571,7 @@ mod tests {
             entry_prompt_template: None,
             use_separate_worktree: false,
             require_user_approval_on_success: false,
+            needs_work_target_lane_id: None,
             success_transition_type: "end".into(),
             success_target_lane_id: None,
             failure_transition_type: "end".into(),
@@ -6625,6 +6696,7 @@ mod tests {
             entry_prompt_template: None,
             use_separate_worktree: false,
             require_user_approval_on_success: false,
+            needs_work_target_lane_id: None,
             success_transition_type: "end".into(),
             success_target_lane_id: None,
             failure_transition_type: "end".into(),
@@ -6825,6 +6897,7 @@ mod tests {
                     entry_prompt_template: Some("Implement the task.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: true,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -6933,8 +7006,16 @@ mod tests {
             )
             .expect("assignment status should simulate stale paused approval state");
 
-        let reactivated_assignment = send_lane_back_for_work(&connection, &task.id)
-            .expect("lane should reactivate for rework");
+        let ReviewReworkAction::Reactivated(reactivated_assignment) = send_lane_back_for_work(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+        )
+        .expect("lane should reactivate for rework")
+        else {
+            panic!("needs-work fallback should reactivate the same assignment");
+        };
         assert_eq!(reactivated_assignment.status, ASSIGNMENT_STATUS_ACTIVE);
         assert_eq!(
             reactivated_assignment.session_id.as_deref(),
@@ -7127,8 +7208,16 @@ mod tests {
             Some("waiting")
         );
 
-        let resumed_assignment = send_lane_back_for_work(&connection, &task.id)
-            .expect("lane should resume after user intervention");
+        let ReviewReworkAction::Reactivated(resumed_assignment) = send_lane_back_for_work(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+        )
+        .expect("lane should resume after user intervention")
+        else {
+            panic!("user intervention resume should reactivate the same assignment");
+        };
         assert_eq!(resumed_assignment.status, ASSIGNMENT_STATUS_ACTIVE);
         assert_eq!(
             resumed_assignment.session_id.as_deref(),
@@ -7427,6 +7516,124 @@ mod tests {
     }
 
     #[test]
+    fn needs_work_can_move_approval_paused_work_to_a_configured_lane() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Review Return Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Review Return Flow".into(),
+                description: None,
+                lanes: vec![
+                    WorkflowLaneInput {
+                        id: Some("lane-implement".into()),
+                        key: "implement".into(),
+                        name: "Implement".into(),
+                        description: None,
+                        order: Some(0),
+                        assigned_entity_type: "role".into(),
+                        assigned_entity_id: Some(role.slug.clone()),
+                        entry_prompt_template: Some("Implement the task".into()),
+                        use_separate_worktree: false,
+                        require_user_approval_on_success: true,
+                        needs_work_target_lane_id: Some("lane-fix".into()),
+                        success_transition_type: "end".into(),
+                        success_target_lane_id: None,
+                        failure_transition_type: "end".into(),
+                        failure_target_lane_id: None,
+                    },
+                    WorkflowLaneInput {
+                        id: Some("lane-fix".into()),
+                        key: "fix".into(),
+                        name: "Fix".into(),
+                        description: None,
+                        order: Some(1),
+                        assigned_entity_type: "role".into(),
+                        assigned_entity_id: Some(role.slug.clone()),
+                        entry_prompt_template: Some("Fix the task".into()),
+                        use_separate_worktree: false,
+                        require_user_approval_on_success: false,
+                        needs_work_target_lane_id: None,
+                        success_transition_type: "end".into(),
+                        success_target_lane_id: None,
+                        failure_transition_type: "end".into(),
+                        failure_target_lane_id: None,
+                    },
+                ],
+            },
+        )
+        .expect("workflow should create");
+        let project_root = init_test_repo("task-runtime-needs-work-target");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Review return task".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "in_review".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "user".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, pending_outcome, completion_notes, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-review-return', ?1, ?2, 'lane-implement', 'role', ?3, 'awaiting_user_approval', NULL, NULL, NULL, NULL, 'Prompt', 'success', 'Ready for review', 0, NULL, ?4, NULL, ?4, ?4)",
+                params![task.id, workflow.id, role.slug, now.as_str()],
+            )
+            .expect("review-paused assignment should insert");
+
+        let ReviewReworkAction::Relaned(relaned) = mark_task_needs_work(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            None,
+        )
+        .expect("Needs Work should move the task to the configured lane")
+        else {
+            panic!("configured Needs Work should re-lane the task");
+        };
+        assert_eq!(relaned.current_lane_id.as_deref(), Some("lane-fix"));
+        assert_eq!(relaned.status, "ready");
+        assert!(relaned.active_lane_assignment.is_none());
+
+    }
+
+    #[test]
     fn reassigns_awaiting_approval_work_to_a_specific_lane_and_auto_dispatches_it() {
         let mut connection = in_memory_connection();
         let role = roles::create_role(
@@ -7462,6 +7669,7 @@ mod tests {
                         entry_prompt_template: Some("Implement the task".into()),
                         use_separate_worktree: false,
                         require_user_approval_on_success: true,
+                        needs_work_target_lane_id: None,
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,
                         failure_transition_type: "end".into(),
@@ -7478,6 +7686,7 @@ mod tests {
                         entry_prompt_template: Some("Fix the failed lane".into()),
                         use_separate_worktree: false,
                         require_user_approval_on_success: false,
+                        needs_work_target_lane_id: None,
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,
                         failure_transition_type: "end".into(),
@@ -7657,6 +7866,7 @@ mod tests {
                     entry_prompt_template: Some("Recover the task".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -8709,6 +8919,7 @@ mod tests {
                     failure_transition_type: "end".into(),
                     failure_target_lane_id: None,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                 }],
             },
         )
@@ -8990,6 +9201,7 @@ mod tests {
                     entry_prompt_template: Some("Keep going until done.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -9101,6 +9313,7 @@ mod tests {
                     entry_prompt_template: Some("Do the work.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -9213,6 +9426,7 @@ mod tests {
                     entry_prompt_template: Some("Implement the task.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -9337,6 +9551,7 @@ mod tests {
                     entry_prompt_template: Some("Do the work.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -9452,6 +9667,7 @@ mod tests {
                     entry_prompt_template: Some("Implement the parent task.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -9566,6 +9782,7 @@ mod tests {
                     entry_prompt_template: Some("Implement the parent task.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -9712,6 +9929,7 @@ mod tests {
                     entry_prompt_template: Some("Review the blocker.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -9736,6 +9954,7 @@ mod tests {
                     entry_prompt_template: Some("Implement the dependent task.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -9864,6 +10083,7 @@ mod tests {
                         entry_prompt_template: Some("Implement the blocker.".into()),
                         use_separate_worktree: false,
                         require_user_approval_on_success: false,
+                        needs_work_target_lane_id: None,
                         success_transition_type: "lane".into(),
                         success_target_lane_id: Some("lane-blocker-test".into()),
                         failure_transition_type: "end".into(),
@@ -9880,6 +10100,7 @@ mod tests {
                         entry_prompt_template: Some("Test the blocker.".into()),
                         use_separate_worktree: false,
                         require_user_approval_on_success: false,
+                        needs_work_target_lane_id: None,
                         success_transition_type: "end".into(),
                         success_target_lane_id: None,
                         failure_transition_type: "lane".into(),
@@ -9905,6 +10126,7 @@ mod tests {
                     entry_prompt_template: Some("Implement the dependent task.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -10059,6 +10281,7 @@ mod tests {
                     entry_prompt_template: Some("Implement the parent task.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -10240,6 +10463,7 @@ mod tests {
                     entry_prompt_template: Some("Do the work.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -10389,6 +10613,7 @@ mod tests {
                     entry_prompt_template: Some("Handle the task.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -10635,6 +10860,7 @@ mod tests {
                     entry_prompt_template: Some("Handle the task.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -10779,6 +11005,7 @@ mod tests {
                     entry_prompt_template: Some("Implement the task.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),
@@ -10877,6 +11104,7 @@ mod tests {
                     entry_prompt_template: Some("Implement the task.".into()),
                     use_separate_worktree: false,
                     require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
                     success_transition_type: "end".into(),
                     success_target_lane_id: None,
                     failure_transition_type: "end".into(),

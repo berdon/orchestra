@@ -40,6 +40,7 @@ function createEmptyLane(order: number): WorkflowLaneInput {
     assignedEntityId: null,
     entryPromptTemplate: null,
     requireUserApprovalOnSuccess: false,
+    needsWorkTargetLaneId: null,
     successTransitionType: "end",
     successTargetLaneId: null,
     failureTransitionType: "end",
@@ -53,6 +54,7 @@ function applyEditorWorkflowRules(input: WorkflowUpsertInput): WorkflowUpsertInp
     return {
       ...lane,
       order: index,
+      needsWorkTargetLaneId: lane.requireUserApprovalOnSuccess ? (lane.needsWorkTargetLaneId ?? null) : null,
       successTransitionType: (nextLane ? "lane" : "end") satisfies WorkflowTransitionType,
       successTargetLaneId: nextLane?.id ?? null,
     };
@@ -89,6 +91,7 @@ function workflowToDraft(workflow: WorkflowDefinition): WorkflowUpsertInput {
         assignedEntityId: lane.assignedEntityId ?? "",
         entryPromptTemplate: lane.entryPromptTemplate ?? "",
         requireUserApprovalOnSuccess: lane.requireUserApprovalOnSuccess ?? false,
+        needsWorkTargetLaneId: lane.needsWorkTargetLaneId ?? "",
         successTransitionType: lane.successTransitionType,
         successTargetLaneId: lane.successTargetLaneId ?? "",
         failureTransitionType: lane.failureTransitionType,
@@ -115,6 +118,14 @@ function describeFailure(lane: WorkflowLaneInput, laneOptions: Array<{ id: strin
   }
 
   return "Ends workflow";
+}
+
+function describeNeedsWorkTarget(lane: WorkflowLaneInput, laneOptions: Array<{ id: string; label: string }>) {
+  if (!lane.requireUserApprovalOnSuccess) {
+    return null;
+  }
+
+  return laneOptions.find((option) => option.id === lane.needsWorkTargetLaneId)?.label ?? "Resume current lane/session";
 }
 
 function buildOwnerOptions<T extends { slug: string; name: string }>(entries: T[]) {
@@ -542,6 +553,7 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
                   <span>Success → {nextLane ? formatLaneLabel(nextLane, index + 1) : "End"}</span>
                   <span>Failure → {describeFailure(lane, laneIdOptions)}</span>
                   {lane.requireUserApprovalOnSuccess ? <span>Success requires user approval</span> : null}
+                  {describeNeedsWorkTarget(lane, laneIdOptions) ? <span>Needs Work → {describeNeedsWorkTarget(lane, laneIdOptions)}</span> : null}
                 </div>
               </button>
             );
@@ -933,6 +945,7 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
                                     assignedEntityId: "",
                                     useSeparateWorktree: false,
                                     requireUserApprovalOnSuccess: false,
+                                    needsWorkTargetLaneId: null,
                                   };
                                 }
 
@@ -1084,7 +1097,11 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
                                 ...draft,
                                 lanes: draft.lanes.map((entry) =>
                                   entry.id === selectedLane.id
-                                    ? { ...entry, requireUserApprovalOnSuccess: event.target.checked }
+                                    ? {
+                                        ...entry,
+                                        requireUserApprovalOnSuccess: event.target.checked,
+                                        needsWorkTargetLaneId: event.target.checked ? (entry.needsWorkTargetLaneId ?? "") : "",
+                                      }
                                     : entry,
                                 ),
                               }))
@@ -1111,6 +1128,38 @@ export function WorkflowsPanel({ activeProjectId = null, selectionRequest = null
                           The frontend keeps success aligned to the next lane in board order. Reorder the board to change the success path.
                         </p>
                       </div>
+
+                      {selectedLane.requireUserApprovalOnSuccess ? (
+                        <label className="field-group workflow-form-grid__full">
+                          <span className="field-group__label">Needs Work target lane</span>
+                          <select
+                            className="select-input"
+                            data-role="lane-needs-work-target"
+                            value={selectedLane.needsWorkTargetLaneId ?? ""}
+                            onChange={(event) =>
+                              updateWorkflowDraft((draft) => ({
+                                ...draft,
+                                lanes: draft.lanes.map((entry) =>
+                                  entry.id === selectedLane.id ? { ...entry, needsWorkTargetLaneId: event.target.value } : entry,
+                                ),
+                              }))
+                            }
+                          >
+                            <option value="">Resume current lane/session (legacy default)</option>
+                            {laneIdOptions
+                              .filter((option) => option.id !== selectedLane.id)
+                              .map((option) => (
+                                <option key={option.id} value={option.id}>
+                                  {option.label}
+                                </option>
+                              ))}
+                          </select>
+                          <span className="muted-copy">When review sends work back, this lane is used instead of the legacy same-session resume behavior.</span>
+                          {getWorkflowValidationForPath(workflowValidation, `lanes[${selectedLaneIndex}].needsWorkTargetLaneId`).map((error) => (
+                            <span className="field-error" key={error.message}>{error.message}</span>
+                          ))}
+                        </label>
+                      ) : null}
 
                       <label className="field-group">
                         <span className="field-group__label">On failure</span>

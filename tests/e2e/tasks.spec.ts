@@ -3329,6 +3329,7 @@ test("task comment unread badges hide on completed tasks but still clear for act
               assignedEntityId: null,
               entryPromptTemplate: null,
               requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",
@@ -4042,6 +4043,7 @@ test("approval-gated lanes pause for review, resume the same session for rework,
               assignedEntityId: "data",
               entryPromptTemplate: "Do the work.",
               requireUserApprovalOnSuccess: true,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",
@@ -4121,6 +4123,114 @@ test("approval-gated lanes pause for review, resume the same session for rework,
   expect(initialSessionId).toContain("Session:");
 });
 
+test("task detail sends approval-paused work to a configured Needs Work lane", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-review-return",
+          slug: "review-return-flow",
+          name: "Review Return Flow",
+          description: "Approval-paused work can return to a configured lane.",
+          archived: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lanes: [
+            {
+              id: "lane-agent-approval",
+              key: "agent-approval",
+              name: "Agent approval",
+              description: null,
+              order: 0,
+              assignedEntityType: "agent",
+              assignedEntityId: "data",
+              entryPromptTemplate: "Do the work.",
+              requireUserApprovalOnSuccess: true,
+              needsWorkTargetLaneId: "lane-review-pass",
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+            {
+              id: "lane-review-pass",
+              key: "review-pass",
+              name: "Review pass",
+              description: null,
+              order: 1,
+              assignedEntityType: "agent",
+              assignedEntityId: "reviewer",
+              entryPromptTemplate: "Fix the task after review feedback.",
+              requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Configured needs work task");
+  await page.locator('[data-role="task-workflow"]').selectOption("workflow-review-return");
+  await page.locator('[data-role="publish-task"]').click();
+  await page.locator('[data-role="task-detail-tab-runtime"]').click();
+
+  const initialSessionId = await page.locator('[data-role="task-runtime-assignment"]').textContent();
+
+  await page.evaluate(() => {
+    const key = "orchestra.mock.tasks";
+    const raw = window.localStorage.getItem(key);
+    const tasks = raw ? JSON.parse(raw) : [];
+    const target = tasks.find((entry: { title?: string }) => entry.title === "Configured needs work task");
+    if (!target?.activeLaneAssignment) {
+      throw new Error("Expected active lane assignment for configured needs-work task");
+    }
+    const updatedAt = new Date().toISOString();
+    target.status = "in_review";
+    target.assigneeType = "user";
+    target.assigneeId = null;
+    target.activeLaneAssignment = {
+      ...target.activeLaneAssignment,
+      status: "awaiting_user_approval",
+      pendingOutcome: "success",
+      completionNotes: "Needs a dedicated review pass.",
+      updatedAt,
+    };
+    target.updatedAt = updatedAt;
+    window.localStorage.setItem(key, JSON.stringify(tasks));
+    window.dispatchEvent(new CustomEvent("orchestra:task-change", {
+      detail: { taskIds: [target.id], reason: "test.seed.awaiting-approval" },
+    }));
+  });
+
+  await expect(page.locator('[data-role="approve-task-lane"]').first()).toBeVisible();
+  await page.locator('[data-role="send-task-back-for-work"]').first().click();
+
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("lane-review-pass");
+  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("active");
+
+  const relanedTask = await page.evaluate(() => {
+    const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]");
+    return tasks.find((entry: { title?: string }) => entry.title === "Configured needs work task");
+  });
+
+  expect(relanedTask.currentLaneId).toBe("lane-review-pass");
+  expect(relanedTask.status).toBe("in_progress");
+  expect(relanedTask.activeLaneAssignment?.laneId).toBe("lane-review-pass");
+  expect(relanedTask.activeLaneAssignment?.sessionId).toBeTruthy();
+  expect(relanedTask.activeLaneAssignment?.sessionId).not.toBe(initialSessionId?.replace(/^Session:\s*/, ""));
+  expect(relanedTask.laneRuns?.[0]?.result).toBe("failure");
+});
+
 test("task detail resumes a lane paused for user intervention", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -4146,6 +4256,7 @@ test("task detail resumes a lane paused for user intervention", async ({ page })
               assignedEntityId: "data",
               entryPromptTemplate: "Do the work.",
               requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",
@@ -4233,6 +4344,7 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
               assignedEntityId: "data",
               entryPromptTemplate: "Do the work.",
               requireUserApprovalOnSuccess: true,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",
@@ -4248,6 +4360,7 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
               assignedEntityId: "reviewer",
               entryPromptTemplate: "Take over this task and finish the redirected work.",
               requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",
@@ -4541,6 +4654,7 @@ test("task detail can close a task immediately without deleting it", async ({ pa
               assignedEntityId: null,
               entryPromptTemplate: null,
               requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",

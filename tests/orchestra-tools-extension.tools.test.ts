@@ -947,6 +947,7 @@ describe("orchestra tools extension bridge tool setup", () => {
       input: {
         name: "Code review",
         requireUserApprovalOnSuccess: true,
+        needsWorkTargetLaneId: null,
       },
     });
 
@@ -1009,6 +1010,7 @@ describe("orchestra tools extension bridge tool setup", () => {
       input: {
         name: "Code review",
         requireUserApprovalOnSuccess: true,
+        needsWorkTargetLaneId: null,
       },
     });
     const deleteLaneRequest = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));

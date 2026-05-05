@@ -241,6 +241,7 @@ export async function createWorkflowViaSettings(
           entryPromptTemplate: lane.entryPromptTemplate,
           useSeparateWorktree: lane.useSeparateWorktree ?? false,
           requireUserApprovalOnSuccess: lane.requireUserApprovalOnSuccess ?? false,
+          needsWorkTargetLaneId: "",
           successTransitionType,
           successTargetLaneId,
           failureTransitionType: 'end',

@@ -1007,6 +1007,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 entry_prompt_template TEXT,
                 use_separate_worktree INTEGER NOT NULL DEFAULT 0,
                 require_user_approval_on_success INTEGER NOT NULL DEFAULT 0,
+                needs_work_target_lane_id TEXT,
                 success_transition_type TEXT NOT NULL DEFAULT 'end',
                 success_target_lane_id TEXT,
                 failure_transition_type TEXT NOT NULL DEFAULT 'end',
@@ -2502,6 +2503,15 @@ fn ensure_workflow_transition_columns(connection: &Connection) -> Result<(), Str
             .map_err(|error| format!("Unable to add require_user_approval_on_success column: {error}"))?;
     }
 
+    if !columns.contains("needs_work_target_lane_id") {
+        connection
+            .execute(
+                "ALTER TABLE workflow_lanes ADD COLUMN needs_work_target_lane_id TEXT",
+                [],
+            )
+            .map_err(|error| format!("Unable to add needs_work_target_lane_id column: {error}"))?;
+    }
+
     if !columns.contains("success_transition_type") {
         connection
             .execute(
@@ -3086,6 +3096,7 @@ mod tests {
                     assigned_entity_type TEXT NOT NULL,
                     assigned_entity_id TEXT,
                     entry_prompt_template TEXT,
+                    needs_work_target_lane_id TEXT,
                     success_transition_type TEXT NOT NULL DEFAULT 'end',
                     success_target_lane_id TEXT,
                     failure_transition_type TEXT NOT NULL DEFAULT 'end',
@@ -3115,6 +3126,7 @@ mod tests {
                     assigned_entity_type,
                     assigned_entity_id,
                     entry_prompt_template,
+                    needs_work_target_lane_id,
                     success_transition_type,
                     success_target_lane_id,
                     failure_transition_type,
@@ -3123,8 +3135,8 @@ mod tests {
                     created_at,
                     updated_at
                 ) VALUES
-                    ('lane-agent', 'workflow-1', 'implement', 'Implement', NULL, 0, 'agent', 'agent-1', NULL, 'end', NULL, 'end', NULL, NULL, '2026-03-18T00:00:03Z', '2026-03-18T00:00:03Z'),
-                    ('lane-role', 'workflow-1', 'review', 'Review', NULL, 1, 'role', 'role-1', NULL, 'end', NULL, 'end', NULL, NULL, '2026-03-18T00:00:03Z', '2026-03-18T00:00:03Z');
+                    ('lane-agent', 'workflow-1', 'implement', 'Implement', NULL, 0, 'agent', 'agent-1', NULL, NULL, 'end', NULL, 'end', NULL, NULL, '2026-03-18T00:00:03Z', '2026-03-18T00:00:03Z'),
+                    ('lane-role', 'workflow-1', 'review', 'Review', NULL, 1, 'role', 'role-1', NULL, NULL, 'end', NULL, 'end', NULL, NULL, '2026-03-18T00:00:03Z', '2026-03-18T00:00:03Z');
                 "#,
             )
             .expect("legacy tables should seed");

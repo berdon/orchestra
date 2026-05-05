@@ -1458,48 +1458,111 @@ pub async fn mark_task_needs_work(
         })
         .await
         .map_err(|error| format!("Unable to join task review rework context task: {error}"))??;
-        let connection = database::open_connection()?;
-        let assignment = task_runtime::mark_task_needs_work(&connection, &task_id)?;
-        if assignment.session_id.is_some() {
-            let follow_up_prompt = task_runtime::lane_rework_follow_up_prompt();
-            task_runtime::start_assignment_follow_up(
-                app.clone(),
-                &state,
-                context.session_dir.clone(),
-                &assignment,
-                &follow_up_prompt,
-            )?;
-        }
-        if let Some(session_id) = assignment.session_id.clone() {
-            emit_session_change(&app, "task.review.needs_work", [session_id]);
-        }
-        let task = tasks::get_task_context(&connection, &task_id)?;
+        let mut connection = database::open_connection()?;
+        let previous_assignment =
+            task_runtime::get_current_lane_assignment(&connection, &task_id)?;
+        let task = match task_runtime::mark_task_needs_work(
+            &mut connection,
+            &context.project_root,
+            &context.session_dir,
+            &task_id,
+            notes.clone(),
+        )? {
+            task_runtime::ReviewReworkAction::Reactivated(assignment) => {
+                if assignment.session_id.is_some() {
+                    let follow_up_prompt = task_runtime::lane_rework_follow_up_prompt();
+                    task_runtime::start_assignment_follow_up(
+                        app.clone(),
+                        &state,
+                        context.session_dir.clone(),
+                        &assignment,
+                        &follow_up_prompt,
+                    )?;
+                }
+                if let Some(session_id) = assignment.session_id.clone() {
+                    emit_session_change(&app, "task.review.needs_work", [session_id]);
+                }
+                tasks::get_task_context(&connection, &task_id)?
+            }
+            task_runtime::ReviewReworkAction::Relaned(updated_task) => {
+                let auto_dispatches = if state.sync_pi_runtime_health().is_ok() {
+                    task_runtime::collect_post_completion_auto_dispatches(
+                        &mut connection,
+                        &task_id,
+                    )?
+                } else {
+                    state.log(
+                        "warn",
+                        "task.transition.auto_dispatch.blocked",
+                        &format!(
+                            "Skipped auto-dispatch after Needs Work re-lane for task {} because PI is unavailable",
+                            task_id
+                        ),
+                    );
+                    Vec::new()
+                };
+                for outcome in &auto_dispatches {
+                    task_runtime::start_assignment_run(
+                        app.clone(),
+                        &state,
+                        outcome.session_dir.clone(),
+                        &outcome.assignment,
+                    )?;
+                    if let Some(session_id) = outcome.assignment.session_id.clone() {
+                        emit_session_change(&app, "task.review.needs_work", [session_id]);
+                    }
+                }
+                if auto_dispatches.is_empty() {
+                    updated_task
+                } else {
+                    tasks::get_task_context(&connection, &task_id)?
+                }
+            }
+        };
+        let changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
+        let retired_session_id = task_runtime::transitioned_assignment_session_to_retire(
+            previous_assignment.as_ref(),
+            &task,
+        );
         record_task_domain_event(
             &connection,
             "task.review_needs_work",
             &task,
             json!({
                 "taskId": task.id.clone(),
-                "assignmentId": assignment.id.clone(),
-                "laneId": assignment.lane_id.clone(),
-                "sessionId": assignment.session_id.clone(),
+                "assignmentId": previous_assignment.as_ref().map(|assignment| assignment.id.clone()),
+                "laneId": previous_assignment.as_ref().map(|assignment| assignment.lane_id.clone()),
+                "sessionId": previous_assignment.as_ref().and_then(|assignment| assignment.session_id.clone()),
+                "targetLaneId": task.current_lane_id.clone(),
                 "notes": notes,
                 "onBehalfOfUser": true,
                 "action": "mark_task_needs_work",
             }),
         );
-        Ok::<TaskDetail, String>(task)
+        Ok::<(TaskDetail, Vec<String>, Option<String>), String>((
+            task,
+            changed_task_ids,
+            retired_session_id,
+        ))
     }
     .await;
 
     match result {
-        Ok(task) => {
+        Ok((task, changed_task_ids, retired_session_id)) => {
             state.log(
                 "info",
                 "task.review.needs_work",
                 &format!("Marked task {} as needs work after review", task_id),
             );
-            emit_task_change(&app, "task.review.needs_work", [task.id.clone()]);
+            emit_task_change(&app, "task.review.needs_work", changed_task_ids);
+            if let Some(session_id) = retired_session_id {
+                crate::services::live_sessions::schedule_session_retirement(
+                    app.clone(),
+                    session_id,
+                    Duration::ZERO,
+                    "task.review.needs_work",
+                );
+            }
             Ok(task)
         }
         Err(error) => {

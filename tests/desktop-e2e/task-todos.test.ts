@@ -101,6 +101,7 @@ describe("desktop task todos", () => {
               entryPromptTemplate: "Use Orchestra task todo tools, prove the completion gate, and finish only after the todo is marked complete.",
               useSeparateWorktree: false,
               requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
               successTransitionType: "end",
               successTargetLaneId: null,
               failureTransitionType: "end",
