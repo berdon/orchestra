@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState, type FormEvent, type RefObject, type UIEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type RefObject, type UIEvent } from "react";
 
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { TranscriptEventCard } from "./TranscriptEventCard";
@@ -202,8 +202,6 @@ interface SessionComposerProps {
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onStopSession: () => void;
-  showOpenTaskAction: boolean;
-  onOpenActiveTask?: () => void;
   onCreateNewSession?: () => void;
   onOpenPiSettings?: () => void;
   onCompactSession?: () => void;
@@ -265,6 +263,86 @@ function SessionStatsStrip({
   );
 }
 
+function SessionHeaderActionMenu({
+  taskAction,
+  onOpenTask,
+}: {
+  taskAction: { taskId: string; projectId?: string | null } | null;
+  onOpenTask: (taskId: string, projectId?: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const getTooltipProps = useExplanatoryTooltipProps();
+
+  useEffect(() => {
+    setOpen(false);
+  }, [taskAction?.projectId, taskAction?.taskId]);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  if (!taskAction) {
+    return null;
+  }
+
+  return (
+    <div className="session-actions-menu" ref={rootRef}>
+      <button
+        className="secondary-button session-actions-menu__trigger"
+        data-role="session-header-actions-trigger"
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Session actions"
+        title="Session actions"
+        {...getTooltipProps("Open session header actions.")}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span aria-hidden="true">☰</span>
+      </button>
+      {open ? (
+        <div className="session-actions-menu__dropdown session-actions-menu__dropdown--toolbar" data-role="session-header-actions-menu" role="menu">
+          <button
+            className="secondary-button session-actions-menu__item"
+            data-role="session-header-action-open-task"
+            type="button"
+            role="menuitem"
+            {...getTooltipProps("Open the active task details for this session.")}
+            onClick={() => {
+              setOpen(false);
+              onOpenTask(taskAction.taskId, taskAction.projectId);
+            }}
+          >
+            Open task
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SessionComposer({
   session,
   referenceTasks,
@@ -284,8 +362,6 @@ function SessionComposer({
   onDraftChange,
   onSendMessage,
   onStopSession,
-  showOpenTaskAction,
-  onOpenActiveTask,
   onCreateNewSession,
   onOpenPiSettings,
   onCompactSession,
@@ -303,7 +379,6 @@ function SessionComposer({
   const canReloadSession = Boolean(onReloadSession)
     && !sessionActionsDisabled
     && session.controlCapabilities?.reload.status !== "unsupported";
-  const shouldShowOpenTaskAction = surface === "page-mobile-detail" && showOpenTaskAction && Boolean(onOpenActiveTask);
 
   useEffect(() => {
     setShowSessionActions(false);
@@ -383,7 +458,7 @@ function SessionComposer({
             </div>
           </div>
           <div className="composer__actions">
-            {shouldShowOpenTaskAction || onCreateNewSession || onCompactSession || onReloadSession ? (
+            {onCreateNewSession || onCompactSession || onReloadSession ? (
               <div className="session-actions-menu">
                 <button
                   className="secondary-button session-actions-menu__trigger"
@@ -397,20 +472,6 @@ function SessionComposer({
                 </button>
                 {showSessionActions ? (
                   <div className="session-actions-menu__dropdown" data-role="session-actions-menu" role="menu">
-                    {shouldShowOpenTaskAction && onOpenActiveTask ? (
-                      <button
-                        className="secondary-button session-actions-menu__item"
-                        data-role="session-action-open-task"
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setShowSessionActions(false);
-                          onOpenActiveTask();
-                        }}
-                      >
-                        Open task
-                      </button>
-                    ) : null}
                     {onCreateNewSession ? (
                       <button
                         className="secondary-button session-actions-menu__item"
@@ -684,10 +745,8 @@ export function SessionChatPanel({
     }),
     [onOpenAgent, onOpenRole, onOpenTask, projectMentionLookup],
   );
-  const getTooltipProps = useExplanatoryTooltipProps();
   const activeTaskId = session?.activeTaskId ?? null;
   const activeTaskProjectId = session?.activeTaskProjectId ?? session?.taskProjectId ?? null;
-  const showMobileOpenTaskAction = surface === "page-mobile-detail" && Boolean(activeTaskId);
 
   return (
     <section
@@ -710,17 +769,6 @@ export function SessionChatPanel({
             <h3 data-role="selected-session-title">{title ?? session.title}</h3>
 
             <div className="action-cluster action-cluster--session-tools">
-              {activeTaskId ? (
-                <button
-                  className="secondary-button"
-                  data-role="session-open-task"
-                  type="button"
-                  {...getTooltipProps("Open the active task without leaving this session.")}
-                  onClick={() => onOpenTask(activeTaskId, activeTaskProjectId)}
-                >
-                  Open task
-                </button>
-              ) : null}
               <span className={`status-badge status-badge--${getStatusTone(sessionDisplayStatus)}`}>
                 {formatSessionStatusLabel(sessionDisplayStatus)}
               </span>
@@ -734,6 +782,10 @@ export function SessionChatPanel({
               ) : null}
               {sessionReadOnly ? <span className="status-badge status-badge--warning">Terminal attached</span> : null}
               {!sessionReadOnly && !sessionMessageable ? <span className="status-badge status-badge--warning">Read only</span> : null}
+              <SessionHeaderActionMenu
+                taskAction={activeTaskId ? { taskId: activeTaskId, projectId: activeTaskProjectId } : null}
+                onOpenTask={onOpenTask}
+              />
             </div>
           </div>
 
@@ -774,10 +826,6 @@ export function SessionChatPanel({
             onDraftChange={onDraftChange}
             onSendMessage={onSendMessage}
             onStopSession={onStopSession}
-            showOpenTaskAction={showMobileOpenTaskAction}
-            onOpenActiveTask={showMobileOpenTaskAction && activeTaskId
-              ? () => onOpenTask(activeTaskId, activeTaskProjectId)
-              : undefined}
             onCreateNewSession={onCreateNewSession}
             onOpenPiSettings={onOpenPiSettings}
             onCompactSession={onCompactSession}

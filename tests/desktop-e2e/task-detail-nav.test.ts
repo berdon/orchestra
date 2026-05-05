@@ -297,7 +297,9 @@ describe("desktop task detail navigation", () => {
 
       await waitForSelector(sessionId, `[data-role="session-link"][data-session-id="${linkedSessionId}"]`);
       await clickSelector(sessionId, `[data-role="session-link"][data-session-id="${linkedSessionId}"]`);
-      await clickSelector(sessionId, '[data-role="session-open-task"]');
+      await clickSelector(sessionId, '[data-role="session-header-actions-trigger"]');
+      await waitForSelector(sessionId, '[data-role="session-header-actions-menu"]');
+      await clickSelector(sessionId, '[data-role="session-header-action-open-task"]');
 
       const navigationState = await waitForCondition(
         () => executeScript<{

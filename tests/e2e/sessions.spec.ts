@@ -2134,16 +2134,21 @@ test("session detail only shows active task navigation when the session still ow
 
   await page.goto("/");
   await page.getByRole("link", { name: /Linked implementation task/ }).click();
-  await expect(page.locator('[data-role="session-open-task"]')).toBeVisible();
-  await page.locator('[data-role="session-open-task"]').click();
+  await expect(page.locator('[data-role="session-header-actions-trigger"]')).toBeVisible();
+  await page.locator('[data-role="session-actions-trigger"]').click();
+  await expect(page.locator('[data-role="session-actions-menu"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-actions-menu"]')).not.toContainText("Open task");
+  await page.locator('[data-role="session-header-actions-trigger"]').click();
+  await expect(page.locator('[data-role="session-header-actions-menu"]')).toBeVisible();
+  await page.locator('[data-role="session-header-action-open-task"]').click();
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Linked implementation task");
 
   await page.getByRole("button", { name: "Sessions" }).click();
   await page.getByRole("link", { name: /Former linked task/ }).click();
-  await expect(page.locator('[data-role="session-open-task"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="session-header-actions-trigger"]')).toHaveCount(0);
 });
 
-test("session detail mobile action menu exposes active task navigation without showing stale task history", async ({ page }) => {
+test("session detail mobile header menu exposes active task navigation without showing stale task history", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
     const timestamp = new Date().toISOString();
@@ -2266,17 +2271,17 @@ test("session detail mobile action menu exposes active task navigation without s
   await expect(page.locator('[data-role="sessions-mobile-picker-trigger"]')).toContainText("Linked implementation task");
   await expect(page.locator('[data-role="session-chat-panel"] > .panel__header')).toBeHidden();
 
-  await page.locator('[data-role="session-actions-trigger"]').click();
-  await expect(page.locator('[data-role="session-action-open-task"]')).toBeVisible();
-  await page.locator('[data-role="session-action-open-task"]').click();
+  await page.locator('[data-role="session-mobile-transcript-controls-trigger"]').click();
+  await expect(page.locator('[data-role="session-mobile-open-task"]')).toBeVisible();
+  await page.locator('[data-role="session-mobile-open-task"]').click();
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Linked implementation task");
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole("button", { name: "Sessions" }).click();
   await page.getByRole("link", { name: /Former linked task/ }).click();
   await page.setViewportSize({ width: 375, height: 667 });
-  await page.locator('[data-role="session-actions-trigger"]').click();
-  await expect(page.locator('[data-role="session-action-open-task"]')).toHaveCount(0);
+  await page.locator('[data-role="session-mobile-transcript-controls-trigger"]').click();
+  await expect(page.locator('[data-role="session-mobile-open-task"]')).toHaveCount(0);
 });
 
 test("sessions transcript exposes an auto-scroll toggle that pauses and resumes following live updates", async ({ page }) => {

@@ -208,6 +208,12 @@ export function AgentChatPage({
             wrapEnabled={wrapTranscript}
             onToggleAutoScroll={handleTranscriptAutoScrollToggle}
             onToggleWrap={() => setWrapTranscript((current) => !current)}
+            onOpenTask={session?.activeTaskId
+              ? () => onOpenTask(
+                session.activeTaskId as string,
+                session.activeTaskProjectId ?? session.taskProjectId ?? null,
+              )
+              : undefined}
           />
         </div>
         {mobileSwitcherStatus ? <p className="page-mobile-switcher__hint page-mobile-switcher__hint--status" data-role="chat-mobile-agent-switcher-status">{mobileSwitcherStatus}</p> : null}

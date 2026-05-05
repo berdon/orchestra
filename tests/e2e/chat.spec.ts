@@ -384,6 +384,132 @@ test("chat page opens an agent main session with focused chat controls while Ses
   await expect.poll(async () => page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id")).toBe(firstSessionId);
 });
 
+test("chat session Open task lives in the header menu and opens the linked task detail", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Chat" }).click();
+  await page.locator('[data-role="chat-agent-nav-data"]').click();
+
+  const sessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
+  if (!sessionId) {
+    throw new Error("Expected chat session id");
+  }
+
+  await page.evaluate((activeSessionId) => {
+    const timestamp = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-chat-linked",
+          projectId: "orchestra",
+          number: "ORC-401",
+          title: "Chat linked task detail",
+          description: null,
+          type: "task",
+          status: "in_progress",
+          priority: "P1",
+          workflowId: null,
+          currentLaneId: "lane-implementation",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          unreadCommentCount: 0,
+          laneRunCount: 1,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: {
+            id: "assignment-chat-linked",
+            taskId: "task-chat-linked",
+            workflowId: "workflow-dev",
+            laneId: "lane-implementation",
+            workerType: "role",
+            workerId: "developer",
+            status: "active",
+            sessionId: activeSessionId,
+            runtimeCwd: "/tmp/orchestra/task-chat-linked",
+            roleQueueEntryId: null,
+            roleInstanceId: null,
+            prompt: "Implement the chat-linked task.",
+            pendingOutcome: null,
+            completionNotes: null,
+            whipCount: 0,
+            lastWhipAt: null,
+            startedAt: timestamp,
+            completedAt: null,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+
+    const storageKey = "orchestra.mock.sessions.orchestra";
+    const sessions = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+    const nextSessions = sessions.map((session: Record<string, unknown>) => {
+      if (session.id !== activeSessionId) {
+        return session;
+      }
+      return {
+        ...session,
+        updatedAt: timestamp,
+        taskId: "task-chat-linked",
+        taskProjectId: "orchestra",
+        taskNumber: "ORC-401",
+        taskTitle: "Chat linked task detail",
+        activeTaskId: "task-chat-linked",
+        activeTaskProjectId: "orchestra",
+        activeTaskNumber: "ORC-401",
+        activeTaskTitle: "Chat linked task detail",
+      };
+    });
+    window.localStorage.setItem(storageKey, JSON.stringify(nextSessions));
+    window.dispatchEvent(new CustomEvent("orchestra:session-change", {
+      detail: {
+        sessionIds: [activeSessionId],
+        reason: "test.chat_open_task_header_menu",
+      },
+    }));
+    window.dispatchEvent(new Event("focus"));
+  }, sessionId);
+
+  await expect(page.locator('[data-role="session-header-actions-trigger"]')).toBeVisible();
+  await page.locator('[data-role="session-actions-trigger"]').click();
+  await expect(page.locator('[data-role="session-actions-menu"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-actions-menu"]')).not.toContainText("Open task");
+  await page.locator('[data-role="session-header-actions-trigger"]').click();
+  await expect(page.locator('[data-role="session-header-actions-menu"]')).toBeVisible();
+  await page.locator('[data-role="session-header-action-open-task"]').click();
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Chat linked task detail");
+});
+
 test("chat transcript keeps long wrapped messages constrained to the panel", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

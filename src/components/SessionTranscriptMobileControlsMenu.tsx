@@ -10,6 +10,7 @@ interface SessionTranscriptMobileControlsMenuProps {
   wrapEnabled: boolean;
   onToggleAutoScroll: () => void;
   onToggleWrap: () => void;
+  onOpenTask?: () => void;
   triggerDataRole?: string;
   menuDataRole?: string;
 }
@@ -22,6 +23,7 @@ export function SessionTranscriptMobileControlsMenu({
   wrapEnabled,
   onToggleAutoScroll,
   onToggleWrap,
+  onOpenTask,
   triggerDataRole = "session-mobile-transcript-controls-trigger",
   menuDataRole = "session-mobile-transcript-controls-menu",
 }: SessionTranscriptMobileControlsMenuProps) {
@@ -76,6 +78,22 @@ export function SessionTranscriptMobileControlsMenu({
       </button>
       {open ? (
         <div className="page-mobile-switcher__menu-dropdown" data-role={menuDataRole} role="menu">
+          {onOpenTask ? (
+            <button
+              className="secondary-button page-mobile-switcher__menu-item"
+              data-role="session-mobile-open-task"
+              type="button"
+              role="menuitem"
+              {...getTooltipProps("Open the active task details for this session.")}
+              onClick={() => {
+                onOpenChange(false);
+                onOpenTask();
+              }}
+            >
+              <span aria-hidden="true">↗</span>
+              <span>Open task</span>
+            </button>
+          ) : null}
           <button
             className="secondary-button page-mobile-switcher__menu-item"
             data-role="session-mobile-auto-scroll-toggle"

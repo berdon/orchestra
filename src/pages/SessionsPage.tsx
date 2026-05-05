@@ -421,6 +421,12 @@ export function SessionsPage({
             wrapEnabled={wrapTranscript}
             onToggleAutoScroll={handleTranscriptAutoScrollToggle}
             onToggleWrap={() => setWrapTranscript((current) => !current)}
+            onOpenTask={selectedSession?.activeTaskId
+              ? () => onOpenTask(
+                selectedSession.activeTaskId as string,
+                selectedSession.activeTaskProjectId ?? selectedSession.taskProjectId ?? null,
+              )
+              : undefined}
           />
         </div>
         {mobileSessionPickerOpen ? (
