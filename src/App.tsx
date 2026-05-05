@@ -2405,13 +2405,19 @@ export function App() {
   }
 
   async function loadSessionPromptSettings() {
-    if (!activeProject) {
+    const projectId = activeProject?.id ?? null;
+    const projectSlug = activeProject?.slug ?? null;
+    if (!projectId || !projectSlug) {
       setSessionPromptSettings(null);
       return;
     }
-    setSessionPromptSettings(
-      await getSessionPromptSettings(activeProject.slug),
-    );
+
+    setSessionPromptSettings(null);
+    const nextSettings = await getSessionPromptSettings(projectSlug);
+    if (activeProjectIdRef.current !== projectId) {
+      return;
+    }
+    setSessionPromptSettings(nextSettings);
   }
 
   async function loadPiRuntimeSettings() {
@@ -5792,8 +5798,10 @@ export function App() {
                   <SourceControlPanel />
                 ) : activeSettingsTab === "prompting" ? (
                   <PromptingPanel
-                    activeProjectName={activeProject?.name ?? null}
+                    projects={projects}
+                    activeProjectId={activeProjectId}
                     sessionPromptSettings={sessionPromptSettings}
+                    onSelectProject={handleProjectSelection}
                     onSaveSessionPromptTemplate={(template) =>
                       void handleSaveSessionPromptTemplate(template)
                     }

@@ -75,6 +75,36 @@ function seedGeneralAndHarnessSettings() {
       },
     ]),
   );
+  window.localStorage.setItem("orchestra.preferences.active-project-id", "orchestra");
+  window.localStorage.setItem("orchestra.preferences.active-project-slug", "orchestra");
+  window.localStorage.setItem("orchestra.mock.active-project-id", "orchestra");
+  window.localStorage.setItem(
+    "orchestra.mock.projects",
+    JSON.stringify([
+      {
+        id: "orchestra",
+        slug: "orchestra",
+        name: "Orchestra",
+        description: "Default project",
+        taskPrefix: "ORC",
+        defaultRepositoryId: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        repositories: [],
+      },
+      {
+        id: "project-mobile",
+        slug: "mobile-lab",
+        name: "Mobile Lab",
+        description: "Mobile prompting regression project",
+        taskPrefix: "MOB",
+        defaultRepositoryId: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        repositories: [],
+      },
+    ]),
+  );
   window.localStorage.setItem(
     "orchestra.mock.sessions.orchestra",
     JSON.stringify([
@@ -95,6 +125,14 @@ function seedGeneralAndHarnessSettings() {
       general: {
         taskSessionContextTemplate: "Task {TASK.ID} {TASK.NAME}",
         updatedAt: timestamp,
+      },
+      projects: {
+        "mobile-lab": {
+          runtime: {
+            taskSessionContextTemplate: "Mobile {TASK.ID} {TASK.STATUS}",
+            updatedAt: timestamp,
+          },
+        },
       },
     }),
   );
@@ -251,6 +289,8 @@ test("settings general, harness, prompting, and source control panels render and
   await page.locator('[data-role="open-prompting-settings"]').click();
   await expect(page.getByRole("heading", { name: "Task session context prompt" })).toBeVisible();
   await expect(page.getByText(/Edit the task-session prompt for the active project/)).toHaveCount(0);
+  await expect(page.locator('[data-role="prompting-project-select"]')).toHaveValue("orchestra");
+  await expect(page.locator('[data-role="prompting-project-scope"]')).toContainText("Prompting settings are saved per project");
   await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.NAME}");
   await expect(page.locator('[data-role="session-prompt-token-table"]')).toContainText("{TASK.ID}");
   await expect(page.locator('[data-role="session-prompt-token-table"]')).toContainText("{SOURCE_CONTROL.CONTEXT}");
@@ -259,6 +299,11 @@ test("settings general, harness, prompting, and source control panels render and
   await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.STATUS}");
   await page.locator('[data-role="reset-session-prompt-template"]').click();
   await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue(/\{SOURCE_CONTROL\.CONTEXT\}/);
+  await page.locator('[data-role="prompting-project-select"]').selectOption("project-mobile");
+  await expect(page.locator('[data-role="prompting-project-select"]')).toHaveValue("project-mobile");
+  await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Mobile {TASK.ID} {TASK.STATUS}");
+  await page.locator('[data-role="prompting-project-select"]').selectOption("orchestra");
+  await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.STATUS}");
 
   await openSettingsTab("Source Control");
   await expect(page.getByRole("heading", { name: "Global git identity defaults" })).toBeVisible();
@@ -303,6 +348,32 @@ test("settings general, harness, prompting, and source control panels render and
 
   await openSettingsTab("General");
   await expect(page.getByRole("heading", { name: "Prompt settings moved" })).toBeVisible();
+});
+
+test("mobile prompting settings expose an inline project switch path", async ({ page }) => {
+  await page.addInitScript(seedGeneralAndHarnessSettings);
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.goto("/");
+  await page.locator('[data-role="toggle-mobile-navigation"]').click();
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toBeVisible();
+  await page.locator('[data-role="nav-item-settings"]').click();
+  await expect(page.locator('[data-role="settings-tab-prompting"]')).toBeVisible();
+  await page.locator('[data-role="settings-tab-prompting"]').click();
+
+  await expect(page.locator('[data-role="mobile-navigation-sheet"]')).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Task session context prompt" })).toBeVisible();
+  await expect(page.locator('[data-role="prompting-project-select"]')).toBeVisible();
+  await expect(page.locator('[data-role="prompting-project-select"]')).toHaveValue("orchestra");
+  await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Task {TASK.ID} {TASK.NAME}");
+
+  await page.locator('[data-role="prompting-project-select"]').selectOption("project-mobile");
+  await expect(page.locator('[data-role="prompting-project-select"]')).toHaveValue("project-mobile");
+  await expect(page.locator('[data-role="session-prompt-template"]')).toHaveValue("Mobile {TASK.ID} {TASK.STATUS}");
+  await expect(page.locator('[data-role="prompting-project-scope"]')).toContainText("Prompting settings are saved per project");
+
+  const viewportWidth = page.viewportSize()?.width ?? 390;
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewportWidth);
 });
 
 test("mobile navigation exposes usable Harness configuration", async ({ page }) => {
