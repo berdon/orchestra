@@ -134,6 +134,8 @@ const bootstrap: OrchestraClientBootstrap = {
       write: { availability: "available" },
       review: { availability: "available" },
       comments: { availability: "available" },
+      commentDelete: { availability: "available" },
+      commentDeleteImpact: { availability: "available" },
       todos: { availability: "available" },
       dependencies: { availability: "available" },
       attachments: { availability: "available" },

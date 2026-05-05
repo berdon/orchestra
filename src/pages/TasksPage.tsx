@@ -1737,7 +1737,7 @@ export function TasksPage({
               <div className="task-comment-delete-impact">
                 <p className="eyebrow">Impact</p>
                 <ul>
-                  <li><strong>{deleteCommentImpact.replyCount}</strong> reply{deleteCommentImpact.replyCount !== 1 ? "ies" : "y"} will be deleted</li>
+                  <li><strong>{deleteCommentImpact.replyCount}</strong> {deleteCommentImpact.replyCount === 1 ? "reply" : "replies"} will be deleted</li>
                   {deleteCommentImpact.attachmentCount > 0 && (
                     <li><strong>{deleteCommentImpact.attachmentCount}</strong> attachment{deleteCommentImpact.attachmentCount !== 1 ? "s" : ""} will be deleted</li>
                   )}

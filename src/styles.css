@@ -4955,7 +4955,21 @@ strong {
 }
 
 .task-comment-thread__actions {
-  justify-content: start;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.task-comment-actions-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.task-comment-actions-menu__trigger {
+  min-width: 44px;
+  padding-inline: 12px;
 }
 
 .task-comment-thread--summary {

@@ -72,6 +72,8 @@ const bootstrapFixture: OrchestraClientBootstrap = {
       write: { availability: "unavailable", reason: "Not implemented" },
       review: { availability: "available" },
       comments: { availability: "unavailable", reason: "Not implemented" },
+      commentDelete: { availability: "unavailable", reason: "Not implemented" },
+      commentDeleteImpact: { availability: "unavailable", reason: "Not implemented" },
       todos: { availability: "unavailable", reason: "Not implemented" },
       dependencies: { availability: "unavailable", reason: "Not implemented" },
       attachments: { availability: "unavailable", reason: "Not implemented" },

@@ -3853,6 +3853,7 @@ fn build_frontend_capabilities(authenticated: bool) -> OrchestraClientCapabiliti
             write: auth_guarded_capability(authenticated, true, "Remote task mutation endpoints are unavailable."),
             review: auth_guarded_capability(authenticated, true, "Remote task review endpoints are unavailable."),
             comments: auth_guarded_capability(authenticated, true, "Remote task comment endpoints are unavailable."),
+            comment_delete: auth_guarded_capability(authenticated, true, "Remote task comment delete endpoints are unavailable."),
             comment_delete_impact: auth_guarded_capability(authenticated, true, "Remote task comment delete impact endpoints are unavailable."),
             todos: auth_guarded_capability(authenticated, true, "Remote task todo endpoints are unavailable."),
             dependencies: auth_guarded_capability(authenticated, true, "Remote task dependency endpoints are unavailable."),

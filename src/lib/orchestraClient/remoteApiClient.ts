@@ -1228,14 +1228,14 @@ export function createRemoteApiOrchestraClientBinding(
         });
       },
       deleteComment: (commentId) => {
-        transport.assertCapability("tasks.deleteComment", bootstrap.capabilities.tasks.comments);
+        transport.assertCapability("tasks.deleteComment", bootstrap.capabilities.tasks.commentDelete);
         return transport.requestJson<TaskComment>("tasks.deleteComment", {
           method: "DELETE",
           path: `/api/v1/task-comments/${encodeURIComponent(commentId)}`,
         });
       },
       getCommentDeleteImpact: (commentId) => {
-        transport.assertCapability("tasks.commentDeleteImpact", bootstrap.capabilities.tasks.comments);
+        transport.assertCapability("tasks.commentDeleteImpact", bootstrap.capabilities.tasks.commentDeleteImpact);
         return transport.requestJson<TaskCommentDeleteImpact>("tasks.commentDeleteImpact", {
           method: "GET",
           path: `/api/v1/task-comments/${encodeURIComponent(commentId)}/delete-impact`,

@@ -66,6 +66,8 @@ export interface OrchestraClientCapabilities {
     write: OrchestraCapabilityDescriptor;
     review: OrchestraCapabilityDescriptor;
     comments: OrchestraCapabilityDescriptor;
+    commentDelete: OrchestraCapabilityDescriptor;
+    commentDeleteImpact: OrchestraCapabilityDescriptor;
     todos: OrchestraCapabilityDescriptor;
     dependencies: OrchestraCapabilityDescriptor;
     attachments: OrchestraCapabilityDescriptor;

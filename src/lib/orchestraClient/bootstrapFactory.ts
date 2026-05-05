@@ -100,6 +100,8 @@ function resolveCapabilities(hostKind: OrchestraClientHostKind): OrchestraClient
       write: available,
       review: available,
       comments: available,
+      commentDelete: available,
+      commentDeleteImpact: available,
       todos: available,
       dependencies: available,
       attachments: available,

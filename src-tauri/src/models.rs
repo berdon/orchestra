@@ -296,6 +296,7 @@ pub struct OrchestraClientTaskCapabilities {
     pub write: OrchestraCapabilityDescriptor,
     pub review: OrchestraCapabilityDescriptor,
     pub comments: OrchestraCapabilityDescriptor,
+    pub comment_delete: OrchestraCapabilityDescriptor,
     pub comment_delete_impact: OrchestraCapabilityDescriptor,
     pub todos: OrchestraCapabilityDescriptor,
     pub dependencies: OrchestraCapabilityDescriptor,
