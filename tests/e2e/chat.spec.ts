@@ -584,6 +584,16 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
   expect(mobileLayout?.modelWidth ?? 999).toBeLessThan((mobileLayout?.composerInputWidth ?? 0) * 0.6);
 
   await page.locator('[data-role="chat-mobile-agent-picker-trigger"]').click();
+  const mobilePickerSurface = await page.locator('[data-role="chat-mobile-agent-picker"]').evaluate((element) => {
+    const styles = window.getComputedStyle(element as HTMLElement);
+    return {
+      backgroundColor: styles.backgroundColor,
+      borderTopWidth: styles.borderTopWidth,
+    };
+  });
+  expect(mobilePickerSurface.backgroundColor).not.toBe("transparent");
+  expect(mobilePickerSurface.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+  expect(mobilePickerSurface.borderTopWidth).not.toBe("0px");
   await page.locator('[data-role="chat-mobile-agent-option-supervisor"]').click();
   await expect.poll(async () => (await readSessionLogCount(page, "sessions.subscribe")) > afterDataSubscribeCount).toBe(true);
   await expect(page.locator('[data-role="chat-mobile-agent-picker-trigger"]')).toContainText("Supervisor");

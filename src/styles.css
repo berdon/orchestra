@@ -1544,8 +1544,11 @@ strong {
   max-width: 100%;
   box-sizing: border-box;
   overflow: hidden;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
   border-radius: 14px;
-  box-shadow: var(--shadow);
+  background: var(--color-overlay-background);
+  box-shadow: var(--shadow-overlay);
 }
 
 .sessions-mobile-picker {
@@ -1555,10 +1558,6 @@ strong {
   box-sizing: border-box;
   overflow-x: hidden;
   gap: 12px;
-  padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--accent) 10%, var(--border));
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
 }
 
 .sessions-mobile-picker .session-list-scroll {

@@ -532,6 +532,16 @@ test("sessions mobile mirrors chat with a lightweight page-local session picker 
   expect(mobileLayout?.documentScrollWidth ?? 999).toBeLessThanOrEqual(mobileLayout?.viewportWidth ?? 0);
 
   await page.locator('[data-role="sessions-mobile-picker-trigger"]').click();
+  const mobilePickerSurface = await page.locator('[data-role="sessions-mobile-picker"]').evaluate((element) => {
+    const styles = window.getComputedStyle(element as HTMLElement);
+    return {
+      backgroundColor: styles.backgroundColor,
+      borderTopWidth: styles.borderTopWidth,
+    };
+  });
+  expect(mobilePickerSurface.backgroundColor).not.toBe("transparent");
+  expect(mobilePickerSurface.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+  expect(mobilePickerSurface.borderTopWidth).not.toBe("0px");
   await page.locator('[data-role="sessions-mobile-picker"] [data-role="session-link"][data-session-id="session-mobile-2"]').click();
   await expect(page.locator('[data-role="sessions-mobile-picker-trigger"]')).toContainText("Mobile follow-up session");
   await expect(page.locator('[data-role="sessions-mobile-picker"]')).toHaveCount(0);
