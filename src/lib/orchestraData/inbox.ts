@@ -4,6 +4,7 @@ import type { AgentSummary, MailboxMessage, TaskSummary } from "../../types";
 import { mergeInboxMessageUpdates, sortInboxMessages } from "../inboxMessages";
 import type { OrchestraConnectionSnapshot } from "../orchestraClient";
 import { retryOrchestraRead, useOrchestraClient } from "../orchestraClient";
+import { useCoalescedRefresh } from "./coalescedRefresh";
 import { useOrchestraConnection } from "./connection";
 import { useOrchestraEventSubscription } from "./events";
 import { reportUiError, type UiErrorState } from "./errors";
@@ -69,13 +70,15 @@ export function useInboxData(projectId: string | null = null): UseInboxDataResul
     await refresh();
   }, [refresh]);
 
+  const requestRefresh = useCoalescedRefresh(() => refresh({ silent: true }));
+
   useEffect(() => {
     void refresh().catch(() => undefined);
   }, [refresh]);
 
   useOrchestraEventSubscription((event) => {
     if (event.kind === "inbox.change" || event.kind === "task.change") {
-      void refresh({ silent: true }).catch(() => undefined);
+      requestRefresh();
     }
   });
 

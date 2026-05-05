@@ -5045,7 +5045,7 @@ export async function listTasks(
   const activeProjectId = options.projectId ?? getActiveProjectId();
   const normalizedTags = normalizeMockTaskTags(options.tags);
   if (!isTauriAvailable()) {
-    return processMockTaskSchedules(activeProjectId)
+    const tasks = processMockTaskSchedules(activeProjectId)
       .tasks.filter((task) => task.projectId === activeProjectId)
       .filter((task) => options.includeArchived || !task.archived)
       .map(summarizeTask)
@@ -5053,6 +5053,12 @@ export async function listTasks(
         matchesMockTaskTags(task, normalizedTags, options.tagMatch),
       )
       .sort((left, right) => compareMockTasks(left, right, options));
+    appendMockLog(
+      "info",
+      "tasks.list",
+      `Listed ${tasks.length} tasks for ${activeProjectId ?? "default"}`,
+    );
+    return tasks;
   }
 
   const resolvedProjectId = await resolveTauriProjectId(options.projectId);

@@ -1,49 +1,8 @@
 import { useCallback, useEffect } from "react";
 
-import type { SessionStreamEnvelope } from "../../types";
 import { useOrchestraClient } from "../orchestraClient";
+import { useCoalescedRefresh } from "./coalescedRefresh";
 import { useOrchestraEventSubscription } from "./events";
-
-const TASK_EVENT_TOOL_NAMES = new Set([
-  "create_task",
-  "create_subtask",
-  "add_task_todo",
-  "mark_task_todo_finished",
-  "mark_task_todo_unfinished",
-  "delete_task_todo",
-  "update_task",
-  "comment_on_task",
-  "dispatch_task_lane",
-  "complete_lane_as_success",
-  "complete_lane_as_failure",
-  "request_user_intervention",
-  "reassign_task_to_lane",
-  "add_task_dependency",
-  "remove_task_dependency",
-  "add_task_attachment",
-  "remove_task_attachment",
-]);
-
-function getSessionEventType(payload: SessionStreamEnvelope) {
-  if (payload.event && typeof payload.event === "object" && !Array.isArray(payload.event) && "type" in payload.event) {
-    const value = payload.event.type;
-    return typeof value === "string" ? value : "";
-  }
-
-  return "";
-}
-
-function shouldRefreshTasksFromSessionEvent(payload: SessionStreamEnvelope) {
-  const eventType = getSessionEventType(payload);
-  if (eventType === "tool_execution_end") {
-    const toolName = payload.event && typeof payload.event === "object" && !Array.isArray(payload.event) && "toolName" in payload.event
-      ? payload.event.toolName
-      : null;
-    return typeof toolName === "string" && TASK_EVENT_TOOL_NAMES.has(toolName);
-  }
-
-  return false;
-}
 
 interface UseTaskAutoRefreshOptions {
   disabled?: boolean;
@@ -80,18 +39,11 @@ export function useTaskAutoRefresh({
     }
   }, [canRefreshSelectedSchedule, canRefreshSelectedTask, refreshTaskDetail, refreshTaskSchedule, refreshTasks, selectedScheduleId, selectedTaskId]);
 
+  const requestRefresh = useCoalescedRefresh(refresh, { disabled });
+
   useOrchestraEventSubscription((event) => {
     if (event.kind === "task.change") {
-      if (event.taskIds.length === 0 || !selectedTaskId || event.taskIds.includes(selectedTaskId)) {
-        refresh();
-        return;
-      }
-      refresh();
-      return;
-    }
-
-    if (event.kind === "session.stream" && shouldRefreshTasksFromSessionEvent(event)) {
-      refresh();
+      requestRefresh();
     }
   }, { disabled });
 

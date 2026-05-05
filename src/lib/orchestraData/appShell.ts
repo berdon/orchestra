@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { AgentSummary, MailboxMessage, ProjectSummary, RoleSummary, TaskSummary } from "../../types";
 import { countVisibleUnreadTaskComments } from "../taskUnreadCommentVisibility";
 import { useOrchestraClient } from "../orchestraClient";
+import { useCoalescedRefresh } from "./coalescedRefresh";
 import { useOrchestraEventSubscription } from "./events";
 
 function countInboxUnreadThings(messages: MailboxMessage[], tasks: TaskSummary[]) {
@@ -62,6 +63,14 @@ export function useProjectUnreadCounts(
     logAppShellTiming(timingLabel, startedAt, { projectCount: projects.length });
   }, [disabled, orchestraClient, projects, timingLabel]);
 
+  const requestRefresh = useCoalescedRefresh(refresh, {
+    disabled,
+    onError: () => {
+      setProjectUnreadCounts({});
+      setProjectTaskCommentUnreadCounts({});
+    },
+  });
+
   useEffect(() => {
     void refresh().catch(() => {
       setProjectUnreadCounts({});
@@ -71,10 +80,7 @@ export function useProjectUnreadCounts(
 
   useOrchestraEventSubscription((event) => {
     if (event.kind === "inbox.change" || event.kind === "task.change") {
-      void refresh().catch(() => {
-        setProjectUnreadCounts({});
-        setProjectTaskCommentUnreadCounts({});
-      });
+      requestRefresh();
     }
   }, { disabled });
 
@@ -116,6 +122,15 @@ export function useProjectReferenceData(
     logAppShellTiming(timingLabel, startedAt, { activeProjectId, taskCount: tasks.length });
   }, [activeProjectId, disabled, orchestraClient, timingLabel]);
 
+  const requestRefresh = useCoalescedRefresh(refresh, {
+    disabled,
+    onError: () => {
+      setReferenceTasks([]);
+      setReferenceAgents([]);
+      setReferenceRoles([]);
+    },
+  });
+
   useEffect(() => {
     void refresh().catch(() => {
       setReferenceTasks([]);
@@ -126,11 +141,7 @@ export function useProjectReferenceData(
 
   useOrchestraEventSubscription((event) => {
     if (event.kind === "task.change") {
-      void refresh().catch(() => {
-        setReferenceTasks([]);
-        setReferenceAgents([]);
-        setReferenceRoles([]);
-      });
+      requestRefresh();
     }
   }, { disabled });
 
