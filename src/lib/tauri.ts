@@ -6626,6 +6626,29 @@ async function reassignMockTaskToLane(
 
   const updatedAt = nowIso();
   const normalizedNotes = notes?.trim() || null;
+  const relaneNoteComment = normalizedNotes
+    ? {
+        id: createId("task-comment"),
+        taskId,
+        parentCommentId: null,
+        author: "Orchestra",
+        originType: "system" as const,
+        originId: null,
+        message: `Re-lane note for move to ${targetLane.name} (${targetLane.id}):\n\n${normalizedNotes}`,
+        interruptAgent: false,
+        repositoryId: null,
+        relativePath: null,
+        lineStart: null,
+        lineEnd: null,
+        columnStart: null,
+        columnEnd: null,
+        selectedText: null,
+        anchorCommitHash: null,
+        anchorHasUncommittedChanges: null,
+        createdAt: updatedAt,
+        updatedAt,
+      }
+    : null;
   const nextStatus =
     targetLane.assignedEntityType === "user" ? "in_review" : "ready";
   const nextAssigneeType = targetLane.assignedEntityType;
@@ -6657,6 +6680,9 @@ async function reassignMockTaskToLane(
             assigneeType: nextAssigneeType,
             assigneeId: nextAssigneeId,
             activeLaneAssignment: autoAssignment,
+            comments: relaneNoteComment
+              ? [...entry.comments, relaneNoteComment]
+              : entry.comments,
             laneRuns: autoAssignment
               ? [
                   ...laneRuns,

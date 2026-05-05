@@ -166,12 +166,12 @@ async function revealTaskDetailDock(page: Page) {
     await page.evaluate(() => {
       const content = document.querySelector(".content") as HTMLElement | null;
       if (content && content.scrollHeight > content.clientHeight) {
-        content.scrollTop = Math.max(0, content.scrollTop - 160);
+        content.scrollTop = 0;
         content.dispatchEvent(new Event("scroll"));
         return;
       }
 
-      window.scrollTo({ top: Math.max(0, window.scrollY - 160), behavior: "auto" });
+      window.scrollTo({ top: 0, behavior: "auto" });
       window.dispatchEvent(new Event("scroll"));
     });
   }
@@ -324,6 +324,26 @@ async function readMobileTaskDetailOverflowMetrics(page: Page) {
       viewportWidth: window.innerWidth,
     };
   });
+}
+
+async function openTaskDetailSection(page: Page, section: "comments" | "timeline") {
+  const changedViaSectionSelect = await page.evaluate((nextSection) => {
+    const select = document.querySelector('[data-role="task-detail-section-select-control"]') as HTMLSelectElement | null;
+    if (!select) {
+      return false;
+    }
+
+    select.value = nextSection;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, section);
+  if (changedViaSectionSelect) {
+    return;
+  }
+
+  await revealTaskDetailDock(page);
+  const tabRole = section === "comments" ? "task-detail-tab-comments" : "task-detail-tab-timeline";
+  await page.locator(`[data-role="${tabRole}"]`).click();
 }
 
 async function seedClickableTagNavigationData(page: Page) {
@@ -4377,11 +4397,40 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
   expect(relanedTask.activeLaneAssignment?.laneId).toBe("lane-review-pass");
   expect(relanedTask.laneRuns?.[0]?.result).toBe("failure");
   expect(relanedTask.activeLaneAssignment?.sessionId).toBeTruthy();
+  expect(relanedTask.comments).toHaveLength(1);
+  expect(relanedTask.comments?.[0]?.author).toBe("Orchestra");
+  expect(relanedTask.comments?.[0]?.originType).toBe("system");
+  expect(relanedTask.comments?.[0]?.message).toBe("Re-lane note for move to Review pass (lane-review-pass):\n\nRedirect this into the review pass lane.");
 
-  await page.locator('[data-role="task-detail-primary-header"]').scrollIntoViewIfNeeded();
-  await primaryMobileActions.getByRole('button', { name: 'Actions' }).click();
-  await expect(primaryMobileActions.getByRole('button', { name: 'Open session' })).toBeVisible();
-  await primaryMobileActions.getByRole('button', { name: 'Open session' }).click();
+  await openTaskDetailSection(page, "comments");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Orchestra");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Redirect this into the review pass lane.");
+  await openTaskDetailSection(page, "timeline");
+  await expect(page.locator('[data-role="task-timeline"]')).toContainText("Orchestra commented");
+  await expect(page.locator('[data-role="task-timeline"]')).toContainText("Redirect this into the review pass lane.");
+
+  await page.setViewportSize({ width: 1180, height: 900 });
+  const wideHeaderRelane = page.locator('[data-role="task-detail-primary-header"] [data-role="toggle-task-relane"]');
+  await wideHeaderRelane.scrollIntoViewIfNeeded();
+  await wideHeaderRelane.click();
+  await page.locator('[data-role="task-relane-option"][data-lane-id="lane-agent-approval"]').click();
+  await expect(page.locator('[data-role="task-relane-confirm-dialog"]')).toBeVisible();
+  await page.locator('[data-role="task-relane-notes"]').fill("   ");
+  await page.locator('[data-role="task-relane-confirm"]').click();
+
+  const relanedWithoutNoteTask = await page.evaluate(() => {
+    const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]");
+    return tasks.find((entry: { title?: string }) => entry.title === "Approval relane task");
+  });
+  expect(relanedWithoutNoteTask.currentLaneId).toBe("lane-agent-approval");
+  expect(relanedWithoutNoteTask.comments).toHaveLength(1);
+
+  await openTaskDetailSection(page, "comments");
+  await expect(page.locator('[data-role="task-comment-thread"]')).toHaveCount(1);
+
+  const wideOpenSession = page.locator('[data-role="task-detail-primary-header"] [data-role="task-open-session"]');
+  await wideOpenSession.scrollIntoViewIfNeeded();
+  await wideOpenSession.click();
   await expect(page.locator('[data-role="session-chat-panel"]')).toBeVisible();
 });
 

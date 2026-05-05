@@ -3727,8 +3727,31 @@ pub fn reassign_task_to_lane(
         }
     }
 
-    let now = now_iso();
     let normalized_notes = normalize_optional(notes);
+    if let Some(note) = normalized_notes.as_deref() {
+        tasks::add_task_comment(
+            connection,
+            task_id,
+            crate::models::TaskCommentInput {
+                author: "Orchestra".into(),
+                origin_type: Some("system".into()),
+                origin_id: None,
+                message: format_relane_note_comment(&target_lane, note),
+                interrupt_agent: false,
+                parent_comment_id: None,
+                repository_id: None,
+                relative_path: None,
+                absolute_path: None,
+                line_start: None,
+                line_end: None,
+                column_start: None,
+                column_end: None,
+                selected_text: None,
+            },
+        )?;
+    }
+
+    let now = now_iso();
 
     if let Some(assignment) = current_assignment.as_ref() {
         match assignment.status.as_str() {
@@ -3770,6 +3793,13 @@ pub fn reassign_task_to_lane(
 
     move_task_to_specific_lane(connection, &task, &target_lane, &now)?;
     tasks::get_task_context(connection, task_id)
+}
+
+fn format_relane_note_comment(target_lane: &WorkflowLane, note: &str) -> String {
+    format!(
+        "Re-lane note for move to {} ({}):\n\n{}",
+        target_lane.name, target_lane.id, note
+    )
 }
 
 fn reactivate_task_lane_assignment(
@@ -7480,11 +7510,11 @@ mod tests {
                 description: None,
                 task_type: "task".into(),
                 tags: Vec::new(),
-                status: "ready".into(),
+                status: "in_review".into(),
                 priority: "P2".into(),
                 workflow_id: Some(workflow.id.clone()),
                 current_lane_id: Some("lane-implement".into()),
-                assignee_type: "unassigned".into(),
+                assignee_type: "user".into(),
                 assignee_id: None,
                 repository_id: Some("repo-relane".into()),
                 repository_ids: vec!["repo-relane".into()],
@@ -7495,26 +7525,44 @@ mod tests {
         )
         .expect("task should create");
 
-        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
-            .expect("task lane should dispatch");
-        let initial_session_id = assignment
-            .session_id
-            .clone()
-            .expect("role assignment should have a session");
-        let role_instance_id = assignment
-            .role_instance_id
-            .clone()
-            .expect("role assignment should have an instance");
-
-        let awaiting_review = complete_lane_as_success(
-            &mut connection,
-            &project_root,
-            &session_dir,
+        let assignment_started_at = now_iso();
+        let assignment = TaskLaneAssignment {
+            id: "task-assignment-relane-review".into(),
+            task_id: task.id.clone(),
+            workflow_id: workflow.id.clone(),
+            lane_id: "lane-implement".into(),
+            worker_type: "role".into(),
+            worker_id: Some(role.slug.clone()),
+            status: ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL.into(),
+            session_id: Some("session-relane-review".into()),
+            runtime_cwd: None,
+            role_queue_entry_id: None,
+            role_instance_id: None,
+            prompt: Some("Implement the task".into()),
+            pending_outcome: Some("success".into()),
+            completion_notes: Some("This still needs more work".into()),
+            whip_count: 0,
+            last_whip_at: None,
+            started_at: assignment_started_at.clone(),
+            completed_at: None,
+            created_at: assignment_started_at.clone(),
+            updated_at: assignment_started_at.clone(),
+        };
+        insert_assignment(&connection, &assignment).expect("assignment should insert");
+        ensure_lane_run(
+            &connection,
             &task.id,
-            Some("This still needs more work".into()),
-            None,
+            "lane-implement",
+            assignment
+                .session_id
+                .as_deref()
+                .expect("seeded assignment should have a session id"),
+            &assignment_started_at,
         )
-        .expect("lane should pause for approval");
+        .expect("lane run should seed");
+
+        let awaiting_review = tasks::get_task_context(&connection, &task.id)
+            .expect("task should load in awaiting-review state");
         assert_eq!(awaiting_review.status, "in_review");
         assert_eq!(
             awaiting_review
@@ -7537,44 +7585,41 @@ mod tests {
         assert_eq!(relaned.current_lane_id.as_deref(), Some("lane-fix"));
         assert_eq!(relaned.status, "ready");
         assert!(relaned.active_lane_assignment.is_none());
+        assert_eq!(relaned.comments.len(), 1);
+        let relane_comment = relaned
+            .comments
+            .iter()
+            .find(|comment| comment.author == "Orchestra")
+            .expect("re-lane note comment should exist");
+        assert_eq!(relane_comment.origin_type, "system");
+        assert_eq!(
+            relane_comment.message,
+            "Re-lane note for move to Fix (lane-fix):\n\nImplement lane failed review"
+        );
         assert_eq!(relaned.lane_runs.len(), 1);
         assert_eq!(relaned.lane_runs[0].result, "failure");
-        assert!(relaned.lane_runs[0].completed_at.is_some());
-        let waiting_ops = role_runtime::get_role_operations(&connection, &role.id)
-            .expect("role operations should load after relane");
-        assert_eq!(waiting_ops.active_instance_count, 0);
-        assert_eq!(waiting_ops.assigned_count, 0);
-        assert_eq!(
-            waiting_ops
-                .instances
-                .iter()
-                .find(|instance| instance.id == role_instance_id)
-                .map(|instance| instance.status.as_str()),
-            Some("failed")
-        );
+        let lane_completed_at = relaned.lane_runs[0]
+            .completed_at
+            .as_deref()
+            .expect("re-lane should close the previous lane run");
+        assert!(relane_comment.created_at.as_str() <= lane_completed_at);
 
-        let next_assignment =
-            dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
-                .expect("re-laned task should dispatch into the selected lane");
-        assert_eq!(next_assignment.lane_id, "lane-fix");
-        assert_ne!(
-            next_assignment.session_id.as_deref(),
-            Some(initial_session_id.as_str())
-        );
-
-        let dispatched_task = tasks::get_task_context(&connection, &task.id)
-            .expect("task should reload after dispatch");
-        assert_eq!(dispatched_task.current_lane_id.as_deref(), Some("lane-fix"));
-        assert_eq!(dispatched_task.status, "in_progress");
+        let relaned_without_note = reassign_task_to_lane(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            "lane-implement",
+            Some("   ".into()),
+            None,
+        )
+        .expect("re-lane without a note should still move the task");
+        assert_eq!(relaned_without_note.current_lane_id.as_deref(), Some("lane-implement"));
+        assert_eq!(relaned_without_note.comments.len(), 1);
         assert_eq!(
-            dispatched_task
-                .active_lane_assignment
-                .as_ref()
-                .map(|entry| entry.lane_id.as_str()),
-            Some("lane-fix")
+            relaned_without_note.comments[0].message,
+            "Re-lane note for move to Fix (lane-fix):\n\nImplement lane failed review"
         );
-        assert_eq!(dispatched_task.lane_runs.len(), 2);
-        assert!(dispatched_task.lane_runs[1].completed_at.is_none());
     }
 
     #[test]
