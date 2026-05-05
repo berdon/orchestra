@@ -180,6 +180,18 @@ async function waitForPersistedUserMessage(webdriverSessionId: string, sessionId
   );
 }
 
+async function getTranscriptUserMessageCount(webdriverSessionId: string, marker: string) {
+  return executeScript<number>(
+    webdriverSessionId,
+    `
+      return Array.from(document.querySelectorAll('[data-role="transcript-event"][data-event-kind="user"]'))
+        .filter((node) => (node.textContent || '').includes(arguments[0]))
+        .length;
+    `,
+    [marker],
+  );
+}
+
 async function waitForSelectedSessionId(
   webdriverSessionId: string,
   predicate: (sessionId: string) => boolean,
@@ -329,6 +341,96 @@ describe("desktop session controls", () => {
       const finalUiState = await getSelectedSessionUiState(webdriverSessionId);
       expect(finalUiState.selectedSessionId).toBe(successorSessionId);
       expect(finalUiState.transcriptText).toContain("Real pi session ready");
+    } finally {
+      await deleteWebdriverSession(webdriverSessionId);
+    }
+  }, 240_000);
+
+  it.skipIf(!isDesktopE2E)("does not duplicate a follow-up user message while the session is already streaming", async () => {
+    const webdriverSessionId = await createReadyWebdriverSession();
+
+    try {
+      await ensureReactReady(webdriverSessionId);
+      await waitForSelector(webdriverSessionId, '[data-role="create-session"]');
+
+      const sessionsBeforeCreate = await invokeCommand<Array<SessionRecordLike>>(webdriverSessionId, "list_sessions");
+      await clickSelector(webdriverSessionId, '[data-role="create-session"]');
+      await waitForText(webdriverSessionId, "Real pi session ready");
+
+      const sessionId = await waitForSelectedSessionId(
+        webdriverSessionId,
+        (value) => Boolean(value) && !sessionsBeforeCreate.some((session) => session.id === value),
+        "newly created session to become selected for the streaming follow-up regression",
+      );
+
+      const runToken = Date.now().toString(36);
+      const firstMessage = [
+        "Use the bash tool before answering.",
+        "Run exactly this command and wait for it to finish:",
+        "```bash\nsleep 8 && printf 'tool-finished-" + runToken + "'\n```",
+        `After the tool completes, reply with exactly tool-finished-${runToken}.`,
+      ].join("\n\n");
+      const followUpMessage = `Streaming follow-up ${runToken} should appear once.`;
+
+      await setInputValue(webdriverSessionId, '[data-role="composer-input"]', firstMessage);
+      await clickSelector(webdriverSessionId, '[data-role="send-message"]');
+      await waitForText(webdriverSessionId, "Use the bash tool before answering.");
+      await sleep(1_500);
+
+      await setInputValue(webdriverSessionId, '[data-role="composer-input"]', followUpMessage);
+      await clickSelector(webdriverSessionId, '[data-role="send-message"]');
+
+      await waitForConditionWithDiagnostics(
+        webdriverSessionId,
+        sessionId,
+        () => getTranscriptUserMessageCount(webdriverSessionId, followUpMessage),
+        (count) => count >= 1,
+        "follow-up user message to appear in the transcript while the earlier run is still streaming",
+        20_000,
+        250,
+      );
+      await waitForConditionWithDiagnostics(
+        webdriverSessionId,
+        sessionId,
+        () => invokeCommand<Array<{ target?: string; message?: string }>>(webdriverSessionId, "get_logs"),
+        (logs) => logs.some((entry) => entry.target === "sessions.message.follow_up" && (entry.message ?? "").includes(sessionId)),
+        "backend to queue the second message as a follow_up while the first run is still active",
+        45_000,
+        250,
+      );
+
+      for (let sample = 0; sample < 5; sample += 1) {
+        expect(await getTranscriptUserMessageCount(webdriverSessionId, followUpMessage)).toBe(1);
+        const record = await invokeCommand<SessionRecordLike>(webdriverSessionId, "get_session_record", { sessionId });
+        if (record.status !== "streaming") {
+          break;
+        }
+        await sleep(750);
+      }
+
+      const persistedFollowUp = await waitForPersistedUserMessage(webdriverSessionId, sessionId, followUpMessage);
+      expect((persistedFollowUp.events ?? []).filter((event) => event.kind === "user" && (event.message ?? "").includes(followUpMessage))).toHaveLength(1);
+
+      const settledRecord = await waitForConditionWithDiagnostics(
+        webdriverSessionId,
+        sessionId,
+        () => invokeCommand<SessionRecordLike>(webdriverSessionId, "get_session_record", { sessionId }),
+        (record) => record.status === "idle"
+          && (record.events ?? []).filter((event) => event.kind === "user" && (event.message ?? "").includes(followUpMessage)).length === 1,
+        "streaming follow-up scenario to settle with exactly one persisted follow-up user message",
+        120_000,
+      );
+
+      expect((settledRecord.events ?? []).filter((event) => event.kind === "user" && (event.message ?? "").includes(followUpMessage))).toHaveLength(1);
+      await waitForConditionWithDiagnostics(
+        webdriverSessionId,
+        sessionId,
+        () => getTranscriptUserMessageCount(webdriverSessionId, followUpMessage),
+        (count) => count === 1,
+        "transcript to converge back to exactly one follow-up user row after the run settles",
+        15_000,
+        250,
+      );
     } finally {
       await deleteWebdriverSession(webdriverSessionId);
     }

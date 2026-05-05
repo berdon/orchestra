@@ -6,6 +6,8 @@ export interface PendingSessionRun {
   assistantEvent?: SessionEvent;
 }
 
+export type PendingSessionRunsById = Record<string, PendingSessionRun>;
+
 export interface SessionTranscriptReduction {
   session: SessionRecord;
   pendingRun?: PendingSessionRun;
@@ -392,6 +394,59 @@ export function removePendingRunFromSession(session: SessionRecord, runId: strin
     ...current,
     events: current.events.filter((event) => event.runId !== runId),
   }));
+}
+
+export function reconcilePendingRunsWithSession(
+  session: SessionRecord,
+  pendingRuns: PendingSessionRunsById | undefined,
+) {
+  if (!pendingRuns || Object.keys(pendingRuns).length === 0) {
+    return {
+      session,
+      pendingRuns: {} as PendingSessionRunsById,
+    };
+  }
+
+  const authoritativeUserEvents = session.events
+    .filter((event) => event.kind === "user" && !event.pending)
+    .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+  const matchedAuthoritativeUserEventIds = new Set<string>();
+  const sortedPendingRuns = Object.values(pendingRuns).sort((left, right) =>
+    left.userEvent.timestamp.localeCompare(right.userEvent.timestamp),
+  );
+
+  let nextSession = session;
+  const nextPendingRuns: PendingSessionRunsById = {};
+
+  for (const pendingRun of sortedPendingRuns) {
+    const matchingAuthoritativeUserEvent = authoritativeUserEvents.find(
+      (event) => {
+        if (matchedAuthoritativeUserEventIds.has(event.id)) {
+          return false;
+        }
+        if (event.runId && event.runId === pendingRun.runId) {
+          return true;
+        }
+        return (
+          event.message === pendingRun.userEvent.message &&
+          event.timestamp >= pendingRun.userEvent.timestamp
+        );
+      },
+    );
+
+    if (matchingAuthoritativeUserEvent) {
+      matchedAuthoritativeUserEventIds.add(matchingAuthoritativeUserEvent.id);
+      continue;
+    }
+
+    nextPendingRuns[pendingRun.runId] = pendingRun;
+    nextSession = applyPendingRunToSession(nextSession, pendingRun);
+  }
+
+  return {
+    session: nextSession,
+    pendingRuns: nextPendingRuns,
+  };
 }
 
 export function reduceSessionTranscriptEvent(

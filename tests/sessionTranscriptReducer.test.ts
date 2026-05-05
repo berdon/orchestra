@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { SessionRecord, SessionStreamEnvelope } from "../src/types";
-import { createPendingUserRun, reduceSessionTranscriptEvent } from "../src/lib/sessionTranscriptReducer";
+import {
+  applyPendingRunToSession,
+  createPendingUserRun,
+  reconcilePendingRunsWithSession,
+  reduceSessionTranscriptEvent,
+} from "../src/lib/sessionTranscriptReducer";
 
 function makeSession(id = "session-1"): SessionRecord {
   return {
@@ -241,6 +246,64 @@ describe("sessionTranscriptReducer", () => {
     expect(failed?.session.events.find((event) => event.id === "control-failed")?.message).toBe("runtime_control_unsupported");
     expect(failed?.sessionActionError).toBe("runtime_control_unsupported");
     expect(failed?.refreshFromBackend).toBe(true);
+  });
+
+  it("keeps a queued follow-up row separate from the active streaming run", () => {
+    const run1 = createPendingUserRun("run-1", "first message", "2026-04-08T00:05:00Z");
+    const run2 = createPendingUserRun("run-2", "follow-up message", "2026-04-08T00:05:01Z");
+    const session = applyPendingRunToSession(
+      applyPendingRunToSession(makeSession(), run1),
+      run2,
+    );
+
+    const reduced = reduceSessionTranscriptEvent(session, run1, {
+      sessionId: session.id,
+      runId: "run-1",
+      receivedAt: "2026-04-08T00:05:02Z",
+      event: {
+        type: "message_update",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "First answer" }],
+        },
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "First answer", partial: {} },
+      },
+    });
+
+    expect(reduced?.session.events.filter((event) => event.runId === "run-2" && event.kind === "user")).toHaveLength(1);
+    expect(reduced?.session.events.find((event) => event.runId === "run-2" && event.kind === "user")?.message).toBe("follow-up message");
+    expect(reduced?.session.events.filter((event) => event.runId === "run-1" && event.kind === "assistant")).toHaveLength(1);
+    expect(reduced?.pendingRun?.runId).toBe("run-1");
+  });
+
+  it("drops optimistic rows once the backend record already includes that run", () => {
+    const run1 = createPendingUserRun("run-1", "first message", "2026-04-08T00:06:00Z");
+    const run2 = createPendingUserRun("run-2", "follow-up message", "2026-04-08T00:06:01Z");
+    const authoritative = {
+      ...makeSession(),
+      status: "streaming" as const,
+      updatedAt: "2026-04-08T00:06:02Z",
+      events: [
+        {
+          id: "persisted-user-run-1",
+          kind: "user" as const,
+          message: "first message",
+          timestamp: "2026-04-08T00:06:00Z",
+          pending: false,
+          runId: "run-1",
+        },
+      ],
+    };
+
+    const reconciled = reconcilePendingRunsWithSession(authoritative, {
+      [run1.runId]: run1,
+      [run2.runId]: run2,
+    });
+
+    expect(Object.keys(reconciled.pendingRuns)).toEqual(["run-2"]);
+    expect(reconciled.session.events.filter((event) => event.runId === "run-1" && event.kind === "user")).toHaveLength(1);
+    expect(reconciled.session.events.filter((event) => event.runId === "run-2" && event.kind === "user")).toHaveLength(1);
+    expect(reconciled.session.events.find((event) => event.runId === "run-2" && event.kind === "user")?.pending).toBe(true);
   });
 
   it("tracks auto-compaction lifecycle separately from manual compaction", () => {

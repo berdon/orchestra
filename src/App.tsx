@@ -20,7 +20,8 @@ import {
 import {
   applyPendingRunToSession,
   createPendingUserRun,
-  type PendingSessionRun,
+  type PendingSessionRunsById,
+  reconcilePendingRunsWithSession,
   reduceSessionTranscriptEvent,
 } from "./lib/sessionTranscriptReducer";
 import { sortSessionRecords } from "./lib/sessionList";
@@ -138,6 +139,25 @@ import type {
 } from "./types";
 
 const COMMAND_PALETTE_SOURCE_TIMEOUT_MS = 4_000;
+
+type PendingSessionRunsBySession = Record<string, PendingSessionRunsById>;
+
+function hasPendingSessionRuns(pendingRuns?: PendingSessionRunsById) {
+  return Boolean(pendingRuns && Object.keys(pendingRuns).length > 0);
+}
+
+function arePendingSessionRunsEqual(
+  left?: PendingSessionRunsById,
+  right?: PendingSessionRunsById,
+) {
+  const leftRunIds = Object.keys(left ?? {});
+  const rightRunIds = Object.keys(right ?? {});
+  if (leftRunIds.length !== rightRunIds.length) {
+    return false;
+  }
+
+  return leftRunIds.every((runId) => left?.[runId] === right?.[runId]);
+}
 
 const AgentChatPage = lazy(() =>
   import("./pages/AgentChatPage").then((module) => ({
@@ -1239,9 +1259,9 @@ export function App() {
     {},
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [pendingRuns, setPendingRuns] = useState<
-    Record<string, PendingSessionRun>
-  >({});
+  const [pendingRuns, setPendingRuns] = useState<PendingSessionRunsBySession>(
+    {},
+  );
   const [modelStates, setModelStates] = useState<
     Record<string, SessionModelState>
   >({});
@@ -1415,10 +1435,10 @@ export function App() {
   const replacePendingRuns = useCallback(
     (
       updater:
-        | Record<string, PendingSessionRun>
+        | PendingSessionRunsBySession
         | ((
-            current: Record<string, PendingSessionRun>,
-          ) => Record<string, PendingSessionRun>),
+            current: PendingSessionRunsBySession,
+          ) => PendingSessionRunsBySession),
     ) => {
       const current = pendingRunsRef.current;
       const next = typeof updater === "function" ? updater(current) : updater;
@@ -1812,7 +1832,7 @@ export function App() {
     }
     return null;
   }, [activePage, chatSession?.id, selectedSession?.id]);
-  const viewedSessionPendingRun = viewedSession
+  const viewedSessionPendingRuns = viewedSession
     ? pendingRuns[viewedSession.id]
     : undefined;
   const viewedModelState = viewedSession
@@ -1840,7 +1860,7 @@ export function App() {
     ? (draftMessages[supervisorSessionId] ??
       lastKnownSupervisorDraftRef.current)
     : "";
-  const supervisorPendingRun = supervisorSessionId
+  const supervisorPendingRuns = supervisorSessionId
     ? pendingRuns[supervisorSessionId]
     : undefined;
 
@@ -1963,7 +1983,11 @@ export function App() {
   ]);
 
   useEffect(() => {
-    if (isDetachedWindow || !viewedSession?.id || viewedSessionPendingRun) {
+    if (
+      isDetachedWindow ||
+      !viewedSession?.id ||
+      hasPendingSessionRuns(viewedSessionPendingRuns)
+    ) {
       return;
     }
 
@@ -2007,7 +2031,7 @@ export function App() {
     isDetachedWindow,
     viewedSession?.id,
     viewedSession?.updatedAt,
-    Boolean(viewedSessionPendingRun),
+    hasPendingSessionRuns(viewedSessionPendingRuns),
   ]);
 
   useEffect(() => {
@@ -2064,8 +2088,46 @@ export function App() {
             }
           : updatedSession,
       );
-      const nextSessions = sortSessionRecords([
+      const currentPendingRuns = pendingRunsRef.current[normalizedSession.id];
+      const reconciledSession = reconcilePendingRunsWithSession(
         normalizedSession,
+        currentPendingRuns,
+      );
+
+      if (
+        currentPendingRuns &&
+        !arePendingSessionRunsEqual(
+          currentPendingRuns,
+          reconciledSession.pendingRuns,
+        )
+      ) {
+        replacePendingRuns((currentPendingRunsBySession) => {
+          const sessionPendingRuns =
+            currentPendingRunsBySession[normalizedSession.id];
+          if (
+            arePendingSessionRunsEqual(
+              sessionPendingRuns,
+              reconciledSession.pendingRuns,
+            )
+          ) {
+            return currentPendingRunsBySession;
+          }
+
+          if (!hasPendingSessionRuns(reconciledSession.pendingRuns)) {
+            const nextPendingRuns = { ...currentPendingRunsBySession };
+            delete nextPendingRuns[normalizedSession.id];
+            return nextPendingRuns;
+          }
+
+          return {
+            ...currentPendingRunsBySession,
+            [normalizedSession.id]: reconciledSession.pendingRuns,
+          };
+        });
+      }
+
+      const nextSessions = sortSessionRecords([
+        reconciledSession.session,
         ...current.filter((session) => session.id !== normalizedSession.id),
       ]);
       replaceSessions(nextSessions);
@@ -2076,7 +2138,7 @@ export function App() {
         );
       }
     },
-    [replaceSessions],
+    [replacePendingRuns, replaceSessions],
   );
 
   const applySessionUpdate = useCallback(
@@ -2132,13 +2194,34 @@ export function App() {
     (sessionId: string, runId?: string) => {
       const current = pendingRunsRef.current;
       const existing = current[sessionId];
-      if (!existing || (runId && existing.runId !== runId)) {
+      if (!existing) {
         return;
       }
 
-      const next = { ...current };
-      delete next[sessionId];
-      replacePendingRuns(next);
+      if (!runId) {
+        const next = { ...current };
+        delete next[sessionId];
+        replacePendingRuns(next);
+        return;
+      }
+
+      if (!existing[runId]) {
+        return;
+      }
+
+      const nextSessionRuns = { ...existing };
+      delete nextSessionRuns[runId];
+      if (Object.keys(nextSessionRuns).length === 0) {
+        const next = { ...current };
+        delete next[sessionId];
+        replacePendingRuns(next);
+        return;
+      }
+
+      replacePendingRuns({
+        ...current,
+        [sessionId]: nextSessionRuns,
+      });
     },
     [replacePendingRuns],
   );
@@ -2258,41 +2341,6 @@ export function App() {
       });
     },
     [patchSessionRecord],
-  );
-
-  const updatePendingRun = useCallback(
-    (
-      sessionId: string,
-      updater: (run: PendingSessionRun) => PendingSessionRun,
-    ) => {
-      const existing = pendingRunsRef.current[sessionId];
-      if (!existing) {
-        return;
-      }
-
-      const resolvedRun = updater(existing);
-      replacePendingRuns({
-        ...pendingRunsRef.current,
-        [sessionId]: resolvedRun,
-      });
-
-      patchSessionRecord(sessionId, (session) => {
-        const persistedEvents = session.events.filter(
-          (event) => event.runId !== resolvedRun.runId,
-        );
-        return {
-          ...session,
-          status: "streaming",
-          updatedAt: resolvedRun.userEvent.timestamp,
-          events: [
-            ...persistedEvents,
-            resolvedRun.userEvent,
-            ...(resolvedRun.assistantEvent ? [resolvedRun.assistantEvent] : []),
-          ],
-        };
-      });
-    },
-    [patchSessionRecord, replacePendingRuns],
   );
 
   async function loadLogs() {
@@ -3099,7 +3147,12 @@ export function App() {
         return;
       }
 
-      const currentPendingRun = pendingRunsRef.current[payload.sessionId];
+      const sessionPendingRuns = pendingRunsRef.current[payload.sessionId];
+      const currentPendingRun = payload.runId
+        ? sessionPendingRuns?.[payload.runId]
+        : sessionPendingRuns && Object.keys(sessionPendingRuns).length === 1
+          ? Object.values(sessionPendingRuns)[0]
+          : undefined;
       const reduction = reduceSessionTranscriptEvent(
         currentSession,
         currentPendingRun,
@@ -3111,10 +3164,14 @@ export function App() {
 
       patchSessionRecord(payload.sessionId, () => reduction.session);
       if (reduction.pendingRun) {
-        replacePendingRuns({
-          ...pendingRunsRef.current,
-          [payload.sessionId]: reduction.pendingRun,
-        });
+        const nextPendingRun = reduction.pendingRun;
+        replacePendingRuns((currentPendingRunsBySession) => ({
+          ...currentPendingRunsBySession,
+          [payload.sessionId]: {
+            ...(currentPendingRunsBySession[payload.sessionId] ?? {}),
+            [nextPendingRun.runId]: nextPendingRun,
+          },
+        }));
       } else if (
         currentPendingRun &&
         (reduction.refreshFromBackend || reduction.session.status === "failed")
@@ -3149,7 +3206,7 @@ export function App() {
           });
       }
     },
-    [applySessionUpdate, patchSessionRecord, pendingRuns, removePendingRun],
+    [applySessionUpdate, patchSessionRecord, removePendingRun, replacePendingRuns],
   );
 
   useEffect(() => {
@@ -4216,7 +4273,7 @@ export function App() {
     },
     [],
   );
-  const selectedSessionPendingRun = selectedSession
+  const selectedSessionPendingRuns = selectedSession
     ? pendingRuns[selectedSession.id]
     : undefined;
   const selectedModelState = selectedSession
@@ -4225,17 +4282,21 @@ export function App() {
   const selectedSessionDraftMessage = selectedSession
     ? (draftMessages[selectedSession.id] ?? "")
     : "";
-  const chatSessionPendingRun = chatSession
+  const chatSessionPendingRuns = chatSession
     ? pendingRuns[chatSession.id]
     : undefined;
   const chatModelState = chatSession ? modelStates[chatSession.id] : undefined;
   const chatSessionDraftMessage = chatSession
     ? (draftMessages[chatSession.id] ?? "")
     : "";
-  const selectedSessionDisplayStatus: SessionStatus = selectedSessionPendingRun
+  const selectedSessionDisplayStatus: SessionStatus = hasPendingSessionRuns(
+    selectedSessionPendingRuns,
+  )
     ? "streaming"
     : (selectedSession?.status ?? "idle");
-  const chatSessionDisplayStatus: SessionStatus = chatSessionPendingRun
+  const chatSessionDisplayStatus: SessionStatus = hasPendingSessionRuns(
+    chatSessionPendingRuns,
+  )
     ? "streaming"
     : (chatSession?.status ?? "idle");
 
@@ -4906,7 +4967,10 @@ export function App() {
       }
       replacePendingRuns({
         ...pendingRunsRef.current,
-        [sessionId]: pendingRun,
+        [sessionId]: {
+          ...(pendingRunsRef.current[sessionId] ?? {}),
+          [runId]: pendingRun,
+        },
       });
       patchSessionRecord(sessionId, (record) =>
         applyPendingRunToSession(record, pendingRun),
@@ -6113,7 +6177,7 @@ export function App() {
                   referenceAgents={referenceAgents}
                   referenceRoles={referenceRoles}
                   displayedEvents={displayedEvents}
-                  sessionPending={Boolean(chatSessionPendingRun)}
+                  sessionPending={hasPendingSessionRuns(chatSessionPendingRuns)}
                   sessionDisplayStatus={chatSessionDisplayStatus}
                   selectedModelState={chatModelState}
                   selectedSessionStats={
@@ -6222,7 +6286,7 @@ export function App() {
                   selectedSession={selectedSession}
                   displayedEvents={selectedSession?.events ?? []}
                   selectedSessionPending={
-                    Boolean(selectedSessionPendingRun) ||
+                    hasPendingSessionRuns(selectedSessionPendingRuns) ||
                     Boolean(pendingSelectedSessionId && !selectedSession)
                   }
                   selectedSessionDisplayStatus={selectedSessionDisplayStatus}
@@ -6388,7 +6452,7 @@ export function App() {
                 }
               }}
               open={supervisorQuickChatOpen}
-              pending={Boolean(supervisorPendingRun)}
+              pending={hasPendingSessionRuns(supervisorPendingRuns)}
               session={supervisorSession}
             />
           </Suspense>
