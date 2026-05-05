@@ -140,3 +140,47 @@ test("sends a system notification when a task starts awaiting user approval", as
   expect(notifications[0]?.body).toContain("Implement task foundation shell");
   expect(notifications[0]?.body).toContain("Please verify the lane output before approving.");
 });
+
+test("sends a system notification when a task moves into a user-owned lane", async ({ page }) => {
+  await installNotificationStub(page);
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Tasks" })).toBeVisible();
+
+  await page.evaluate(() => {
+    const key = "orchestra.mock.tasks";
+    const raw = window.localStorage.getItem(key);
+    const tasks = raw ? JSON.parse(raw) : [];
+    const target = tasks.find((entry: { title?: string }) => entry.title === "Implement task foundation shell");
+    if (!target) {
+      throw new Error("Expected default mock task to exist");
+    }
+
+    const updatedAt = new Date().toISOString();
+    target.status = "in_review";
+    target.assigneeType = "user";
+    target.assigneeId = null;
+    target.activeLaneAssignment = null;
+    target.updatedAt = updatedAt;
+    window.localStorage.setItem(key, JSON.stringify(tasks));
+    window.dispatchEvent(new CustomEvent("orchestra:notification-intent", {
+      detail: {
+        id: `notification-task-assigned-to-user-${target.id}`,
+        eventType: "task.assigned_to_user",
+        title: "Orchestra — Task assigned to you",
+        body: `Orchestra · ${target.number} · ${target.title}\nOpen Orchestra to review the task and continue the workflow.`,
+        tag: `task-attention:task.assigned_to_user:${target.id}`,
+        projectId: target.projectId,
+        taskId: target.id,
+        deliveryId: null,
+        action: { type: "open_task", taskId: target.id, target: "details" },
+        occurredAt: updatedAt,
+      },
+    }));
+  });
+
+  await expect.poll(async () => page.evaluate(() => window.__orchestraTestNotifications?.length ?? 0)).toBe(1);
+  const notifications = await page.evaluate(() => window.__orchestraTestNotifications ?? []);
+  expect(notifications[0]?.title).toBe("Orchestra — Task assigned to you");
+  expect(notifications[0]?.body).toContain("Implement task foundation shell");
+  expect(notifications[0]?.body).toContain("continue the workflow");
+});

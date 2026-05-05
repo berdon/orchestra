@@ -31,6 +31,9 @@ cp -a /src/tests "${WORKSPACE_DIR}/tests"
 cp -a /src/scripts "${WORKSPACE_DIR}/scripts"
 cp -a /src/extensions "${WORKSPACE_DIR}/extensions"
 cp -a /src/docs "${WORKSPACE_DIR}/docs"
+if [[ -d /src/public ]]; then
+  cp -a /src/public "${WORKSPACE_DIR}/public"
+fi
 if [[ -d /src/dist ]]; then
   cp -a /src/dist "${WORKSPACE_DIR}/dist"
 fi

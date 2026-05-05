@@ -33,7 +33,9 @@ function buildTaskAttentionNotificationBody(task: TaskDetail, projectLabel: stri
     : "";
   const action = reason === "task.awaiting_user_approval"
     ? "Open Orchestra to approve the lane or send it back for more work."
-    : "Open Orchestra to review the blocker and decide how to proceed.";
+    : reason === "task.awaiting_user_intervention"
+      ? "Open Orchestra to review the blocker and decide how to proceed."
+      : "Open Orchestra to review the task and continue the workflow.";
   return [headline, notes || action].filter(Boolean).join("\n");
 }
 
@@ -61,7 +63,7 @@ export function buildMailboxNotificationIntent(
 
 export function buildTaskAttentionNotificationIntent(
   task: TaskDetail,
-  reason: Extract<NotificationIntent["eventType"], "task.awaiting_user_approval" | "task.awaiting_user_intervention">,
+  reason: Extract<NotificationIntent["eventType"], "task.awaiting_user_approval" | "task.awaiting_user_intervention" | "task.assigned_to_user">,
   projectLabel?: string,
 ): NotificationIntent {
   return {
@@ -69,7 +71,9 @@ export function buildTaskAttentionNotificationIntent(
     eventType: reason,
     title: reason === "task.awaiting_user_approval"
       ? "Orchestra — Approval needed"
-      : "Orchestra — User intervention needed",
+      : reason === "task.awaiting_user_intervention"
+        ? "Orchestra — User intervention needed"
+        : "Orchestra — Task assigned to you",
     body: buildTaskAttentionNotificationBody(
       task,
       projectLabel ?? "Orchestra",

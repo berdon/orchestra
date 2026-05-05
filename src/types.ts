@@ -209,6 +209,11 @@ export interface RemotePushTokenInput {
   pushToken?: string | null;
 }
 
+export interface RemoteWebPushConfig {
+  supported: boolean;
+  vapidPublicKey?: string | null;
+}
+
 export interface RemoteEventEnvelope {
   id: string;
   sequence: number;
@@ -1097,7 +1102,7 @@ export interface InboxChangeEvent {
   reason: string;
 }
 
-export type NotificationEventType = "mailbox.message_received" | "task.awaiting_user_approval" | "task.awaiting_user_intervention";
+export type NotificationEventType = "mailbox.message_received" | "task.awaiting_user_approval" | "task.awaiting_user_intervention" | "task.assigned_to_user";
 export type NotificationActionType = "open_inbox" | "open_task";
 export type NotificationActionTarget = "details" | "review";
 

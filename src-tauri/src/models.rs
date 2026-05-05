@@ -48,6 +48,7 @@ pub enum NotificationEventType {
     MailboxMessageReceived,
     TaskAwaitingUserApproval,
     TaskAwaitingUserIntervention,
+    TaskAssignedToUser,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -190,6 +191,13 @@ pub struct RemotePairingCompleteInput {
 #[serde(rename_all = "camelCase")]
 pub struct RemotePushTokenInput {
     pub push_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteWebPushConfig {
+    pub supported: bool,
+    pub vapid_public_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

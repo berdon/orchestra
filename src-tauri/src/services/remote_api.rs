@@ -59,7 +59,8 @@ use crate::{
         OrchestraClientTaskCapabilities, OrchestraClientTransportUrls, ProjectUpsertInput,
         QueuedSessionMessage, RemoteAccessSettings, RemoteAccessStatus, RemoteAuthResponse,
         RemoteDeviceRecord, RemoteEventEnvelope, RemotePairingCompleteInput, RemotePushTokenInput,
-        RepositoryRemoteInput, RepositoryUpsertInput, RoleQueueEntryInput, RoleUpsertInput,
+        RemoteWebPushConfig, RepositoryRemoteInput, RepositoryUpsertInput, RoleQueueEntryInput,
+        RoleUpsertInput,
         SendMailboxMessageInput, SessionRecord, SkillBindingInput, TaskAttachmentInput,
         TaskCommentInput, TaskCommentUpdateInput, TaskDetail, TaskFileReferenceInput,
         TaskScheduleUpsertInput, TaskSummary, TaskTodoInput, TaskUpsertInput, WorkflowLaneInput,
@@ -68,7 +69,7 @@ use crate::{
     services::{
         agent_dispatch, app_events, database, harness_settings, messages, notifications,
         orchestra_paths::discover_dev_checkout_root, pi_oauth, pi_runtime, pi_sessions, pi_setup,
-        projects, remote_access, session_records, task_runtime, tasks,
+        projects, remote_access, session_records, task_runtime, tasks, web_push,
     },
     state::{generate_id, now_iso, AppState, RemoteApiServerHandle},
 };
@@ -2022,6 +2023,7 @@ fn build_remote_api_context(app: AppHandle) -> Router {
             "/api/v1/inbox/:delivery_id/archive",
             post(post_archive_inbox_message),
         )
+        .route("/api/v1/devices/push-config", get(get_remote_web_push_config))
         .route("/api/v1/devices/push-token", post(post_register_push_token))
         .route(
             "/api/v1/sessions",
@@ -3222,6 +3224,28 @@ pub fn run_hosted_web_e2e_server() -> Result<(), String> {
         )
         .nest_service("/assets", ServeDir::new(root.join("assets")))
         .route(
+            "/orchestra-sw.js",
+            get({
+                let service_worker_path = root.join("orchestra-sw.js");
+                move || {
+                    let service_worker_path = service_worker_path.clone();
+                    async move {
+                        match fs::read_to_string(&service_worker_path) {
+                            Ok(contents) => Response::builder()
+                                .status(StatusCode::OK)
+                                .header(header::CONTENT_TYPE, "application/javascript; charset=utf-8")
+                                .body(axum::body::Body::from(contents))
+                                .expect("service worker response should build"),
+                            Err(_) => Response::builder()
+                                .status(StatusCode::NOT_FOUND)
+                                .body(axum::body::Body::from(String::new()))
+                                .expect("missing service worker response should build"),
+                        }
+                    }
+                }
+            }),
+        )
+        .route(
             "/index.html",
             get({
                 let index_html = index_html.clone();
@@ -3314,6 +3338,28 @@ fn build_remote_hosted_web_context(app: AppHandle, root: PathBuf) -> Router {
         .expect("hosted-web index.html should be readable when building the remote browser router");
     build_remote_api_context(app)
         .nest_service("/assets", ServeDir::new(root.join("assets")))
+        .route(
+            "/orchestra-sw.js",
+            get({
+                let service_worker_path = root.join("orchestra-sw.js");
+                move || {
+                    let service_worker_path = service_worker_path.clone();
+                    async move {
+                        match fs::read_to_string(&service_worker_path) {
+                            Ok(contents) => Response::builder()
+                                .status(StatusCode::OK)
+                                .header(header::CONTENT_TYPE, "application/javascript; charset=utf-8")
+                                .body(axum::body::Body::from(contents))
+                                .expect("service worker response should build"),
+                            Err(_) => Response::builder()
+                                .status(StatusCode::NOT_FOUND)
+                                .body(axum::body::Body::from(String::new()))
+                                .expect("missing service worker response should build"),
+                        }
+                    }
+                }
+            }),
+        )
         .route(
             "/index.html",
             get({
@@ -6713,6 +6759,18 @@ async fn post_send_inbox_message(
     }
     let _ = notifications::publish_mailbox_notification(Some(&context.app), &connection, &message);
     Ok(Json(message))
+}
+
+async fn get_remote_web_push_config(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+) -> Result<Json<RemoteWebPushConfig>, (StatusCode, Json<ApiError>)> {
+    let _device = resolve_remote_auth(&context.app, &headers, None)?;
+    let connection = database::open_connection()
+        .map_err(|error| api_error(StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    let config = web_push::load_remote_web_push_config(&connection)
+        .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
+    Ok(Json(config))
 }
 
 async fn post_register_push_token(

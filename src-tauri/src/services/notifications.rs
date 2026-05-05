@@ -7,13 +7,14 @@ use crate::{
         MailboxMessage, NotificationAction, NotificationActionTarget, NotificationActionType,
         NotificationEventType, NotificationIntent, TaskDetail, WorkflowLane,
     },
-    services::{app_events, channels, projects},
+    services::{app_events, channels, projects, web_push},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NotificationAdapter {
     Telegram,
     Local,
+    WebPush,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +93,9 @@ fn build_task_attention_notification_body(
         NotificationEventType::TaskAwaitingUserIntervention => {
             "Open Orchestra to review the blocker and decide how to proceed."
         }
+        NotificationEventType::TaskAssignedToUser => {
+            "Open Orchestra to review the task and continue the workflow."
+        }
         NotificationEventType::MailboxMessageReceived => {
             "Open Orchestra to review the latest update."
         }
@@ -139,6 +143,7 @@ pub fn build_task_attention_notification_intent(
         "awaiting_user_intervention" | "needs_user" => {
             NotificationEventType::TaskAwaitingUserIntervention
         }
+        "assigned_to_user" => NotificationEventType::TaskAssignedToUser,
         other => {
             return Err(format!(
                 "Unsupported task attention notification reason: {other}"
@@ -150,13 +155,13 @@ pub fn build_task_attention_notification_intent(
         NotificationEventType::TaskAwaitingUserIntervention => {
             "Orchestra — User intervention needed"
         }
+        NotificationEventType::TaskAssignedToUser => "Orchestra — Task assigned to you",
         NotificationEventType::MailboxMessageReceived => "Orchestra — Notification",
     };
     let target = match event_type {
         NotificationEventType::TaskAwaitingUserApproval => Some(NotificationActionTarget::Review),
-        NotificationEventType::TaskAwaitingUserIntervention => {
-            Some(NotificationActionTarget::Details)
-        }
+        NotificationEventType::TaskAwaitingUserIntervention
+        | NotificationEventType::TaskAssignedToUser => Some(NotificationActionTarget::Details),
         NotificationEventType::MailboxMessageReceived => None,
     };
 
@@ -168,6 +173,7 @@ pub fn build_task_attention_notification_intent(
                 NotificationEventType::TaskAwaitingUserIntervention => {
                     "task.awaiting_user_intervention"
                 }
+                NotificationEventType::TaskAssignedToUser => "task.assigned_to_user",
                 NotificationEventType::MailboxMessageReceived => "mailbox.message_received",
             },
             task.id,
@@ -183,6 +189,7 @@ pub fn build_task_attention_notification_intent(
                 NotificationEventType::TaskAwaitingUserIntervention => {
                     "task.awaiting_user_intervention"
                 }
+                NotificationEventType::TaskAssignedToUser => "task.assigned_to_user",
                 NotificationEventType::MailboxMessageReceived => "mailbox.message_received",
             },
             task.id
@@ -199,14 +206,16 @@ pub fn build_task_attention_notification_intent(
     })
 }
 
-fn dispatch_notification_intent_with<TelegramDispatch, LocalDispatch>(
+fn dispatch_notification_intent_with<TelegramDispatch, LocalDispatch, WebPushDispatch>(
     intent: &NotificationIntent,
     dispatch_telegram: TelegramDispatch,
     dispatch_local: LocalDispatch,
+    dispatch_web_push: WebPushDispatch,
 ) -> Vec<NotificationDeliveryOutcome>
 where
     TelegramDispatch: FnOnce(&NotificationIntent) -> Result<bool, String>,
     LocalDispatch: FnOnce(&NotificationIntent) -> Result<bool, String>,
+    WebPushDispatch: FnOnce(&NotificationIntent) -> Result<bool, String>,
 {
     let mut outcomes = Vec::new();
 
@@ -246,6 +255,24 @@ where
         }),
     }
 
+    match dispatch_web_push(intent) {
+        Ok(true) => outcomes.push(NotificationDeliveryOutcome {
+            adapter: NotificationAdapter::WebPush,
+            status: NotificationDeliveryStatus::Delivered,
+            detail: None,
+        }),
+        Ok(false) => outcomes.push(NotificationDeliveryOutcome {
+            adapter: NotificationAdapter::WebPush,
+            status: NotificationDeliveryStatus::Suppressed,
+            detail: None,
+        }),
+        Err(error) => outcomes.push(NotificationDeliveryOutcome {
+            adapter: NotificationAdapter::WebPush,
+            status: NotificationDeliveryStatus::Failed,
+            detail: Some(error),
+        }),
+    }
+
     outcomes
 }
 
@@ -262,6 +289,10 @@ fn dispatch_notification_intent(
         },
         |intent| match app {
             Some(app) => app_events::emit_notification_intent(app, intent).map(|_| true),
+            None => Ok(false),
+        },
+        |intent| match app {
+            Some(app) => web_push::deliver_remote_web_push_notification(app, connection, intent),
             None => Ok(false),
         },
     )
@@ -420,6 +451,19 @@ mod tests {
     }
 
     #[test]
+    fn task_assigned_to_user_body_uses_user_handoff_copy() {
+        let task = fixture_task();
+        let body = build_task_attention_notification_body(
+            &task,
+            "Orchestra",
+            NotificationEventType::TaskAssignedToUser,
+            None,
+        );
+        assert!(body.contains("ORC-1 · Implement notifications"));
+        assert!(body.contains("Please verify the lane output before approving."));
+    }
+
+    #[test]
     fn dispatch_fans_out_when_one_adapter_fails() {
         let outcomes = dispatch_notification_intent_with(
             &crate::models::NotificationIntent {
@@ -436,13 +480,16 @@ mod tests {
             },
             |_| Err("telegram failed".into()),
             |_| Ok(true),
+            |_| Ok(false),
         );
 
-        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes.len(), 3);
         assert_eq!(outcomes[0].adapter, NotificationAdapter::Telegram);
         assert_eq!(outcomes[0].status, NotificationDeliveryStatus::Failed);
         assert_eq!(outcomes[1].adapter, NotificationAdapter::Local);
         assert_eq!(outcomes[1].status, NotificationDeliveryStatus::Delivered);
+        assert_eq!(outcomes[2].adapter, NotificationAdapter::WebPush);
+        assert_eq!(outcomes[2].status, NotificationDeliveryStatus::Suppressed);
     }
 
     #[test]
@@ -460,6 +507,7 @@ mod tests {
                 action: None,
                 occurred_at: "2026-04-24T00:00:00Z".into(),
             },
+            |_| Ok(false),
             |_| Ok(false),
             |_| Ok(false),
         );

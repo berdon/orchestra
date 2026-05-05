@@ -546,6 +546,8 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 use_tailscale INTEGER NOT NULL DEFAULT 0,
                 bind_host TEXT NOT NULL DEFAULT '0.0.0.0',
                 port INTEGER NOT NULL DEFAULT 49500,
+                vapid_public_key TEXT,
+                vapid_private_key TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -1354,6 +1356,28 @@ fn ensure_remote_access_settings_columns(connection: &Connection) -> Result<(), 
             )
             .map_err(|error| {
                 format!("Unable to add use_tailscale column to remote_access_settings: {error}")
+            })?;
+    }
+
+    if !columns.contains("vapid_public_key") {
+        connection
+            .execute(
+                "ALTER TABLE remote_access_settings ADD COLUMN vapid_public_key TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add vapid_public_key column to remote_access_settings: {error}")
+            })?;
+    }
+
+    if !columns.contains("vapid_private_key") {
+        connection
+            .execute(
+                "ALTER TABLE remote_access_settings ADD COLUMN vapid_private_key TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add vapid_private_key column to remote_access_settings: {error}")
             })?;
     }
 

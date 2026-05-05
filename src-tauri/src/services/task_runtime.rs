@@ -104,6 +104,26 @@ pub fn task_transition_event_reason(outcome: &str, task: &TaskDetail) -> &'stati
     }
 }
 
+fn task_attention_notification_reason_for_user_handoff(
+    previous_task: &TaskDetail,
+    updated_task: &TaskDetail,
+) -> Option<&'static str> {
+    if previous_task.assignee_type == "user" || updated_task.assignee_type != "user" {
+        return None;
+    }
+
+    if let Some(assignment) = updated_task.active_lane_assignment.as_ref() {
+        match effective_task_review_assignment_status(updated_task, assignment).as_str() {
+            ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL
+            | ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION
+            | ASSIGNMENT_STATUS_PAUSED_BY_USER => return None,
+            _ => {}
+        }
+    }
+
+    Some("assigned_to_user")
+}
+
 pub fn get_active_lane_assignment(
     connection: &Connection,
     task_id: &str,
@@ -3613,6 +3633,17 @@ fn complete_lane(
             "needs_user",
             normalized_notes.as_deref(),
         );
+    } else if let Some(reason) =
+        task_attention_notification_reason_for_user_handoff(&task, &updated)
+    {
+        let _ = notifications::publish_task_attention_notification(
+            app,
+            connection,
+            &updated,
+            &lane,
+            reason,
+            normalized_notes.as_deref(),
+        );
     }
     Ok(updated)
 }
@@ -3685,6 +3716,28 @@ pub fn reassign_task_to_lane(
     task_id: &str,
     lane_id: &str,
     notes: Option<String>,
+    authorization: Option<&AuthorizationContext>,
+) -> Result<TaskDetail, String> {
+    reassign_task_to_lane_with_app(
+        connection,
+        project_root,
+        session_dir,
+        task_id,
+        lane_id,
+        notes,
+        None,
+        authorization,
+    )
+}
+
+pub fn reassign_task_to_lane_with_app(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task_id: &str,
+    lane_id: &str,
+    notes: Option<String>,
+    app: Option<&AppHandle>,
     authorization: Option<&AuthorizationContext>,
 ) -> Result<TaskDetail, String> {
     let task = tasks::get_task_context(connection, task_id)?;
@@ -3798,7 +3851,18 @@ pub fn reassign_task_to_lane(
     }
 
     move_task_to_specific_lane(connection, &task, &target_lane, &now)?;
-    tasks::get_task_context(connection, task_id)
+    let updated = tasks::get_task_context(connection, task_id)?;
+    if let Some(reason) = task_attention_notification_reason_for_user_handoff(&task, &updated) {
+        let _ = notifications::publish_task_attention_notification(
+            app,
+            connection,
+            &updated,
+            &target_lane,
+            reason,
+            normalized_notes.as_deref(),
+        );
+    }
+    Ok(updated)
 }
 
 fn format_relane_note_comment(target_lane: &WorkflowLane, note: &str) -> String {
@@ -6859,6 +6923,36 @@ mod tests {
                 &explicit_pause_assignment
             ),
             ASSIGNMENT_STATUS_PAUSED_BY_USER
+        );
+    }
+
+    #[test]
+    fn detects_user_handoff_notification_reason_for_user_owned_transitions() {
+        let previous = build_test_task_detail("in_progress", "role", Some("lane-work"));
+        let updated = build_test_task_detail("in_review", "user", Some("lane-review"));
+        assert_eq!(
+            task_attention_notification_reason_for_user_handoff(&previous, &updated),
+            Some("assigned_to_user")
+        );
+
+        let mut awaiting_approval = build_test_task_detail("in_review", "user", Some("lane-review"));
+        awaiting_approval.active_lane_assignment = Some(build_test_task_lane_assignment(
+            ASSIGNMENT_STATUS_PAUSED_BY_USER,
+            Some("success"),
+        ));
+        assert_eq!(
+            task_attention_notification_reason_for_user_handoff(&previous, &awaiting_approval),
+            None
+        );
+
+        let mut awaiting_intervention = build_test_task_detail("in_review", "user", Some("lane-review"));
+        awaiting_intervention.active_lane_assignment = Some(build_test_task_lane_assignment(
+            ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL,
+            Some("needs_user"),
+        ));
+        assert_eq!(
+            task_attention_notification_reason_for_user_handoff(&previous, &awaiting_intervention),
+            None
         );
     }
 

@@ -24,6 +24,7 @@ tracked_files = [
 ]
 tracked_dirs = [
     "src",
+    "public",
 ]
 
 for relative_path in tracked_files:

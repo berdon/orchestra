@@ -28,7 +28,7 @@ async function waitForCondition<T>(callback: () => Promise<T>, predicate: (value
 }
 
 describe("desktop system notifications", () => {
-  it.skipIf(!isDesktopE2E)("records system notifications for new user mail and approval-needed tasks", async () => {
+  it.skipIf(!isDesktopE2E)("records system notifications for new user mail and task-attention transitions", async () => {
     const sessionId = await createReadyWebdriverSession();
 
     try {
@@ -151,7 +151,7 @@ describe("desktop system notifications", () => {
         notes: "Please verify the lane output before approving.",
       });
 
-      const notifications = await waitForCondition(
+      let notifications = await waitForCondition(
         () => executeScript<any[]>(sessionId, "return window.__orchestraTestNotifications ?? [];"),
         (entries) => entries.length >= 2,
       );
@@ -162,6 +162,86 @@ describe("desktop system notifications", () => {
       expect(notifications[1]?.title).toBe("Orchestra — Approval needed");
       expect(notifications[1]?.body).toContain("Desktop notification approval task");
       expect(notifications[1]?.body).toContain("Please verify the lane output before approving.");
+
+      const handoffWorkflow = await invokeCommand<{ id: string }>(sessionId, "create_workflow", {
+        input: {
+          name: "Notification User Handoff Flow",
+          description: "Moves completed role work into a user-owned lane.",
+          lanes: [
+            {
+              id: "lane-handoff-implement",
+              key: "implement",
+              name: "Implement",
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: role.slug,
+              entryPromptTemplate: "Implement the task and hand it to the user.",
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "lane",
+              successTargetLaneId: "lane-handoff-user-review",
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+            {
+              id: "lane-handoff-user-review",
+              key: "user-review",
+              name: "User Review",
+              order: 1,
+              assignedEntityType: "user",
+              assignedEntityId: null,
+              entryPromptTemplate: "Review the delivered work.",
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      });
+      const handoffTask = await invokeCommand<{ id: string }>(sessionId, "create_task", {
+        projectId: project.id,
+        input: {
+          title: "Desktop notification user handoff task",
+          description: "Task used to verify user-owned lane handoff notifications.",
+          type: "task",
+          status: "ready",
+          priority: "P1",
+          workflowId: handoffWorkflow.id,
+          currentLaneId: null,
+          assigneeType: "unassigned",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+        },
+      });
+
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: handoffTask.id }),
+        (loadedTask) => Boolean(loadedTask?.activeLaneAssignment),
+      );
+
+      await invokeCommand(sessionId, "complete_lane_as_success", {
+        taskId: handoffTask.id,
+        notes: null,
+      });
+
+      await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: handoffTask.id }),
+        (loadedTask) => loadedTask?.currentLaneId === "lane-handoff-user-review" && loadedTask?.assigneeType === "user",
+      );
+
+      notifications = await waitForCondition(
+        () => executeScript<any[]>(sessionId, "return window.__orchestraTestNotifications ?? [];"),
+        (entries) => entries.length >= 3,
+      );
+
+      expect(notifications[2]?.title).toBe("Orchestra — Task assigned to you");
+      expect(notifications[2]?.body).toContain("Desktop notification user handoff task");
+      expect(notifications[2]?.body).toContain("continue the workflow");
     } finally {
       await deleteWebdriverSession(sessionId);
     }

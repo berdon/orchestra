@@ -1339,13 +1339,14 @@ pub async fn reassign_task_to_lane(
         .map_err(|error| format!("Unable to join task re-lane context task: {error}"))??;
         let mut connection = database::open_connection()?;
         let previous_assignment = task_runtime::get_current_lane_assignment(&connection, &task_id)?;
-        let mut task = task_runtime::reassign_task_to_lane(
+        let mut task = task_runtime::reassign_task_to_lane_with_app(
             &mut connection,
             &context.project_root,
             &context.session_dir,
             &task_id,
             &lane_id,
             notes,
+            Some(&app),
             None,
         )?;
         let changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;

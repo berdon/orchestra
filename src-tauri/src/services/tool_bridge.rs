@@ -2376,13 +2376,15 @@ fn invoke_bridge_command(
             let mut writable = database::open_connection()?;
             let previous_assignment =
                 crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
-            let task = crate::services::task_runtime::reassign_task_to_lane(
+            let app = config.clone_app_handle();
+            let task = crate::services::task_runtime::reassign_task_to_lane_with_app(
                 &mut writable,
                 &context.project_root,
                 &context.session_dir,
                 &task_id,
                 &lane_id,
                 notes,
+                app.as_ref(),
                 authorization,
             )?;
             for outcome in crate::services::task_runtime::collect_post_completion_auto_dispatches(

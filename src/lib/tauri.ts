@@ -6361,6 +6361,16 @@ async function completeMockTaskLane(
     ]),
     reason: `task.transition.${outcome}`,
   });
+  if (outcome !== "needs_user" && updatedTask.assigneeType === "user") {
+    const projects = getStoredMockProjects();
+    emitMockNotificationIntent(
+      buildTaskAttentionNotificationIntent(
+        updatedTask,
+        "task.assigned_to_user",
+        resolveNotificationProjectLabel(projects, updatedTask.projectId),
+      ),
+    );
+  }
   return updatedTask;
 }
 

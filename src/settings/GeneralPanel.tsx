@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { AgentReferenceLink, RoleReferenceLink, SessionReferenceLink, buildEntityReferenceLookup } from "../components/entity-links";
 import { RuntimeLogPanel } from "../components/RuntimeLogPanel";
 import { SettingsSectionTabs } from "../components/SettingsSectionTabs";
+import { type RemoteWebPushState } from "../lib/webPush";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { OrchestraThemeDefinition, OrchestraThemeId } from "../lib/theme";
 import type { AgentSummary, BridgeDiagnostics, LogEntry, RoleSummary, SessionRecord, SystemNotificationEnvironmentStatus, SystemNotificationPermissionState } from "../types";
@@ -22,6 +23,7 @@ interface GeneralPanelProps {
   localNotificationsEnabled: boolean;
   systemNotificationEnvironment: SystemNotificationEnvironmentStatus | null;
   systemNotificationPermission: SystemNotificationPermissionState;
+  remoteWebPushState: RemoteWebPushState;
   refreshingSystemNotificationPermission: boolean;
   requestingSystemNotificationPermission: boolean;
   sendingTestSystemNotification: boolean;
@@ -78,6 +80,21 @@ function formatNotificationPermissionLabel(value: SystemNotificationPermissionSt
   }
 }
 
+function formatRemoteWebPushLabel(state: RemoteWebPushState) {
+  switch (state.status) {
+    case "subscribed":
+      return "Subscribed";
+    case "disabled":
+      return "Disabled";
+    case "permission_required":
+      return "Permission required";
+    case "error":
+      return "Error";
+    default:
+      return "Unavailable";
+  }
+}
+
 export function GeneralPanel({
   orchestraVersionDisplay,
   availableThemes,
@@ -93,6 +110,7 @@ export function GeneralPanel({
   localNotificationsEnabled,
   systemNotificationEnvironment,
   systemNotificationPermission,
+  remoteWebPushState,
   refreshingSystemNotificationPermission,
   requestingSystemNotificationPermission,
   sendingTestSystemNotification,
@@ -125,6 +143,10 @@ export function GeneralPanel({
   onClearLogs,
 }: GeneralPanelProps) {
   const selectedTheme = availableThemes.find((theme) => theme.id === selectedThemeId) ?? availableThemes[0] ?? null;
+  const showRemoteWebPushStatus = remoteWebPushState.status !== "unsupported"
+    || (remoteWebPushState.detail != null
+      && remoteWebPushState.detail !== "Background web push is available only in the hosted Orchestra browser session.");
+
   const entityLookup = useMemo(
     () => buildEntityReferenceLookup({ sessions: referenceSessions, agents: referenceAgents, roles: referenceRoles }),
     [referenceAgents, referenceRoles, referenceSessions],
@@ -218,7 +240,7 @@ export function GeneralPanel({
                 <div>
                   <p className="eyebrow">Desktop integration</p>
                   <h4>Local notifications</h4>
-                  <p className="supporting-copy">Enable local browser/macOS notifications for this client, manage permission access, and send a test notification.</p>
+                  <p className="supporting-copy">Enable local browser/macOS notifications for this client, manage permission access, and, in hosted web on HTTPS/localhost, register background web push for this paired browser.</p>
                 </div>
                 <div className="action-cluster action-cluster--wrap">
                   <button
@@ -262,6 +284,16 @@ export function GeneralPanel({
               <p className="muted-copy" data-role="system-notification-permission-state">
                 Permission status: {formatNotificationPermissionLabel(systemNotificationPermission)}
               </p>
+              {showRemoteWebPushStatus ? (
+                <>
+                  <p className="muted-copy" data-role="remote-web-push-status">
+                    Background web push: {formatRemoteWebPushLabel(remoteWebPushState)}
+                  </p>
+                  {remoteWebPushState.detail ? (
+                    <p className="muted-copy" data-role="remote-web-push-detail">{remoteWebPushState.detail}</p>
+                  ) : null}
+                </>
+              ) : null}
               {systemNotificationEnvironment?.appBundlePath ? (
                 <p className="muted-copy" data-role="system-notification-bundle-path">App bundle: {systemNotificationEnvironment.appBundlePath}</p>
               ) : null}
@@ -270,7 +302,7 @@ export function GeneralPanel({
               ) : systemNotificationPermission === "unsupported" ? (
                 <p className="supporting-copy">This client cannot deliver local notifications in the current environment.</p>
               ) : localNotificationsEnabled ? (
-                <p className="supporting-copy">If Orchestra is missing from Notification Center or browser prompts were dismissed, refresh the status, request permission again, and send a test notification.</p>
+                <p className="supporting-copy">If Orchestra is missing from Notification Center or browser prompts were dismissed, refresh the status, request permission again, and send a test notification. Background web push additionally requires a secure origin (HTTPS or localhost); some mobile browsers may also require an installed web app context.</p>
               ) : (
                 <p className="supporting-copy">Local notifications are disabled for this client until you turn them back on here.</p>
               )}

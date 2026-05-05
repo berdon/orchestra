@@ -59,4 +59,5 @@ pub mod task_runtime;
 pub mod task_schedules;
 pub mod tasks;
 pub mod tool_bridge;
+pub mod web_push;
 pub mod workflows;

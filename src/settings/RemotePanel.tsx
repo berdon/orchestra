@@ -358,6 +358,7 @@ export function RemotePanel() {
                         <th>Platform</th>
                         <th>Last seen</th>
                         <th>Clients</th>
+                        <th>Push</th>
                         <th>State</th>
                         <th />
                       </tr>
@@ -369,6 +370,7 @@ export function RemotePanel() {
                           <td>{device.platform}</td>
                           <td>{formatDateTime(device.lastSeenAt)}</td>
                           <td>{device.activeClientCount}</td>
+                          <td>{device.pushTokenConfigured ? "Configured" : "Not configured"}</td>
                           <td>{device.revokedAt ? `Revoked ${formatDateTime(device.revokedAt)}` : "Trusted"}</td>
                           <td>
                             {!device.revokedAt ? (
@@ -442,6 +444,7 @@ export function RemotePanel() {
                 <li>Optional: turn on Tailscale Serve to expose the hosted Orchestra web app and API on the same HTTPS origin. Orchestra only touches Tailscale while both remote access and this option are enabled.</li>
                 <li>Create a pairing code.</li>
                 <li>For browser access, open the Hosted Orchestra web app URL and enter the pairing code on the sign-in screen.</li>
+                <li>For background browser notifications, use HTTPS (for example via Tailscale Serve) or localhost, then enable local notifications in Settings → General so Orchestra can register web push on that browser.</li>
                 <li>For Android/iOS pairing, paste the Pairing API URL into the mobile app and enter the same code there.</li>
               </ol>
             </section>

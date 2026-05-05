@@ -478,6 +478,17 @@ impl AppState {
             .collect())
     }
 
+    pub fn has_active_remote_client_for_device(&self, device_id: &str) -> Result<bool, String> {
+        self.remote_clients
+            .lock()
+            .map_err(|_| "Unable to access remote client state".to_string())
+            .map(|clients| {
+                clients
+                    .values()
+                    .any(|client| client.device_id.as_deref() == Some(device_id))
+            })
+    }
+
     pub fn set_session_subscription(
         &self,
         session_id: &str,

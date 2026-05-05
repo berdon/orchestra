@@ -74,7 +74,10 @@ import {
   toUiErrorState,
   type UiErrorState,
 } from "./lib/orchestraData/errors";
-import { useNotificationController } from "./lib/orchestraData/notifications";
+import {
+  useNotificationController,
+  useRemoteWebPushController,
+} from "./lib/orchestraData/notifications";
 import {
   useSessionEventRefresh,
   useSessionPollingRefresh,
@@ -3490,6 +3493,12 @@ export function App() {
     enabled: localNotificationsEnabled,
     notifications: notificationsExtension,
   });
+  const remoteWebPushState = useRemoteWebPushController({
+    bootstrap: orchestraBootstrap,
+    enabled: localNotificationsEnabled,
+    notifications: notificationsExtension,
+    permissionState: systemNotificationPermission,
+  });
 
   useEffect(() => {
     if (isDetachedWindow) {
@@ -6211,6 +6220,7 @@ export function App() {
                       systemNotificationEnvironment
                     }
                     systemNotificationPermission={systemNotificationPermission}
+                    remoteWebPushState={remoteWebPushState}
                     refreshingSystemNotificationPermission={
                       refreshingSystemNotificationPermission
                     }

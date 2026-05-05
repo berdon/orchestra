@@ -612,6 +612,7 @@ pub fn notify_task_user_attention_channels(
         "awaiting_user_intervention" | "needs_user" => {
             NotificationEventType::TaskAwaitingUserIntervention
         }
+        "assigned_to_user" => NotificationEventType::TaskAssignedToUser,
         _ => NotificationEventType::TaskAwaitingUserIntervention,
     };
 
@@ -644,6 +645,7 @@ pub fn deliver_telegram_notification_intent(
         intent.event_type,
         NotificationEventType::TaskAwaitingUserApproval
             | NotificationEventType::TaskAwaitingUserIntervention
+            | NotificationEventType::TaskAssignedToUser
     ) {
         return Ok(0);
     }
@@ -1723,6 +1725,7 @@ fn format_task_user_attention_notification(
     let headline = match reason {
         "awaiting_user_approval" => "Task awaiting user approval",
         "awaiting_user_intervention" | "needs_user" => "Task requires user intervention",
+        "assigned_to_user" => "Task assigned to user",
         _ => "Task requires user attention",
     };
     let action = match reason {
@@ -1733,6 +1736,9 @@ fn format_task_user_attention_notification(
             "Review the task in Orchestra and either resume the paused lane or move the task somewhere else."
         }
         "needs_user" => "Review the task in Orchestra and decide how to unblock or continue it.",
+        "assigned_to_user" => {
+            "Review the task in Orchestra and continue the workflow from the user-owned lane."
+        }
         _ => "Review the task in Orchestra.",
     };
 
