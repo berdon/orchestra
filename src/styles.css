@@ -6727,6 +6727,14 @@ strong {
   display: none !important;
 }
 
+.app-shell[data-mobile-navigation="true"] .task-detail-tab-dock--mobile-select .task-detail-tabs--dock {
+  display: none;
+}
+
+.app-shell[data-mobile-navigation="true"] .task-detail-tab-dock--mobile-select .task-detail-section-select {
+  display: grid;
+}
+
 .app-shell[data-mobile-navigation="true"] .notes-page.resizable-sidebar-layout {
   grid-template-columns: minmax(0, 1fr);
 }

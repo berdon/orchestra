@@ -1089,6 +1089,7 @@ export function ProjectsPanel() {
           initialTabId="general"
           activeTabId={activeDetailTab}
           onTabChange={(tabId) => handleDetailTabSelect(tabId as ProjectDetailTabId)}
+          mobileSectionControl="select"
           header={(
             <div className="panel__header panel__header--session-detail">
               <div>

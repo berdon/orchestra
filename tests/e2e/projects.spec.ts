@@ -411,13 +411,17 @@ test("project settings hides the floating tab dock on mobile scroll down and res
   const floatingSubnav = page.locator('[data-role="project-mobile-subnav-floating-shell"]');
   const mobileSubnavSelect = page.locator('[data-role="project-mobile-subnav-select-control"]');
   const dock = page.locator('[data-role="project-detail-tab-dock"]');
+  const sectionSelect = page.locator('[data-role="project-detail-section-select-mobile"]');
+  const sectionSelectControl = page.locator('[data-role="project-detail-section-select-control"]');
   await expect(mobileSubnav).toBeVisible();
   await expect(mobileSubnavSelect).toBeVisible();
   await expect(page.locator('.settings-mobile-subnav-panel')).toBeHidden();
   await expect(page.locator('[data-role="project-mobile-subnav-menu-trigger"]')).toBeVisible();
   await expect(floatingSubnav).toHaveAttribute('data-scroll-state', 'hidden');
+  await expect(sectionSelect).toBeVisible();
+  await expect(page.locator('[data-role="project-detail-tab-general"]')).toBeHidden();
 
-  await page.locator('[data-role="project-detail-tab-secrets"]').click();
+  await sectionSelectControl.selectOption('secrets');
   await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toBeVisible();
 
   await page.evaluate(() => {
@@ -449,11 +453,9 @@ test("project settings hides the floating tab dock on mobile scroll down and res
 
   await expect(dock).toBeVisible();
   await expect(dock).toHaveAttribute('data-scroll-state', 'visible');
-  await expect(page.locator('[data-role="project-detail-tab-general"]')).toBeVisible();
-  await expect(page.locator('[data-role="project-detail-tab-repositories"]')).toBeVisible();
-  await expect(page.locator('[data-role="project-detail-tab-automation"]')).toBeVisible();
-  await expect(page.locator('[data-role="project-detail-tab-source-control"]')).toBeVisible();
-  await expect(page.locator('[data-role="project-detail-tab-secrets"]')).toBeVisible();
+  await expect(sectionSelect).toBeVisible();
+  await expect(sectionSelectControl).toHaveValue('secrets');
+  await expect(page.locator('[data-role="project-detail-tab-general"]')).toBeHidden();
 
   const dockLayout = await page.evaluate(() => {
     const dockElement = document.querySelector('[data-role="project-detail-tab-dock"]') as HTMLElement | null;

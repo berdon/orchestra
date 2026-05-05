@@ -17,6 +17,7 @@ interface SettingsSectionTabsProps {
   initialTabId?: string;
   activeTabId?: string;
   onTabChange?: (tabId: string) => void;
+  mobileSectionControl?: "tabs" | "select";
 }
 
 interface FloatingDockLayout {
@@ -67,6 +68,7 @@ export function SettingsSectionTabs({
   initialTabId,
   activeTabId,
   onTabChange,
+  mobileSectionControl = "tabs",
 }: SettingsSectionTabsProps) {
   const rootRef = useRef<HTMLElement | null>(null);
   const [uncontrolledActiveTab, setUncontrolledActiveTab] = useState(initialTabId ?? tabs.find((tab) => !tab.hidden)?.id ?? "");
@@ -220,9 +222,12 @@ export function SettingsSectionTabs({
 
       {visibleTabs.length > 1 ? (
         <div
-          className={dockShown
-            ? "task-detail-tab-dock task-detail-tab-dock--persistent-settings"
-            : "task-detail-tab-dock task-detail-tab-dock--persistent-settings task-detail-tab-dock--hidden"}
+          className={[
+            "task-detail-tab-dock",
+            "task-detail-tab-dock--persistent-settings",
+            mobileSectionControl === "select" ? "task-detail-tab-dock--mobile-select" : null,
+            dockShown ? null : "task-detail-tab-dock--hidden",
+          ].filter(Boolean).join(" ")}
           data-role={`${dataRolePrefix}-tab-dock`}
           data-scroll-state={dockShown ? "visible" : "hidden"}
           style={dockStyle}

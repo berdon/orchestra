@@ -7,15 +7,15 @@ import {
   deleteWebdriverSession,
   ensureReactReady,
   executeScript,
+  setInputValue,
+  setWindowRect,
   waitForSelector,
   waitForText,
 } from "./driver";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
-async function waitForProjectTabToRender(sessionId: string, tabSelector: string, panelSelector: string, readySelector: string) {
-  await waitForSelector(sessionId, tabSelector);
-  await clickSelector(sessionId, tabSelector);
+async function assertPanelRendered(sessionId: string, panelSelector: string, readySelector: string) {
   await waitForSelector(sessionId, panelSelector);
   await waitForSelector(sessionId, readySelector, 30_000);
 
@@ -24,6 +24,18 @@ async function waitForProjectTabToRender(sessionId: string, tabSelector: string,
     return panel instanceof HTMLElement ? panel.innerText : "";
   `, [panelSelector]);
   expect(loadingText).not.toContain("Loading");
+}
+
+async function waitForProjectTabToRender(sessionId: string, tabSelector: string, panelSelector: string, readySelector: string) {
+  await waitForSelector(sessionId, tabSelector);
+  await clickSelector(sessionId, tabSelector);
+  await assertPanelRendered(sessionId, panelSelector, readySelector);
+}
+
+async function waitForProjectSectionToRender(sessionId: string, sectionId: "automation" | "source-control" | "secrets", panelSelector: string, readySelector: string) {
+  await waitForSelector(sessionId, '[data-role="project-detail-section-select-control"]');
+  await setInputValue(sessionId, '[data-role="project-detail-section-select-control"]', sectionId);
+  await assertPanelRendered(sessionId, panelSelector, readySelector);
 }
 
 describe("desktop project settings tabs", () => {
@@ -55,6 +67,45 @@ describe("desktop project settings tabs", () => {
       await waitForProjectTabToRender(
         sessionId,
         '[data-role="project-detail-tab-secrets"]',
+        '[data-role="project-detail-tabpanel-secrets"]',
+        '[data-role="project-secrets-status"]',
+      );
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 180_000);
+
+  it.skipIf(!isDesktopE2E)("keeps Automation, Source Control, and Secrets reachable in the narrow mobile settings layout", async () => {
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+
+      await clickByText(sessionId, "button", "Settings");
+      await clickByText(sessionId, "button", "Projects");
+      await waitForText(sessionId, "Project catalog");
+      await waitForSelector(sessionId, '[data-role="project-detail-tab-general"]');
+      await waitForText(sessionId, "Orchestra");
+
+      await setWindowRect(sessionId, { width: 390, height: 844, x: 0, y: 0 });
+      await waitForSelector(sessionId, '[data-role="project-detail-section-select-control"]');
+
+      await waitForProjectSectionToRender(
+        sessionId,
+        "automation",
+        '[data-role="project-detail-tabpanel-automation"]',
+        '[data-role="project-auto-dispatch-on-blocker-completion"]',
+      );
+
+      await waitForProjectSectionToRender(
+        sessionId,
+        "source-control",
+        '[data-role="project-detail-tabpanel-source-control"]',
+        '[data-role="project-source-control-settings"]',
+      );
+
+      await waitForProjectSectionToRender(
+        sessionId,
+        "secrets",
         '[data-role="project-detail-tabpanel-secrets"]',
         '[data-role="project-secrets-status"]',
       );
