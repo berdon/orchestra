@@ -382,7 +382,7 @@ function TaskCommentActionMenu({
           <span aria-hidden="true">⋯</span>
         </button>
         {open ? (
-          <div className="task-action-menu__dropdown" data-role="task-comment-overflow-menu" data-comment-id={comment.id} role="menu">
+          <div className="task-action-menu__dropdown task-comment-actions-menu__dropdown" data-role="task-comment-overflow-menu" data-comment-id={comment.id} role="menu">
             <button
               className="secondary-button secondary-button--danger task-action-menu__dropdown-button"
               data-role="comment-delete"

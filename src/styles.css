@@ -4967,6 +4967,12 @@ strong {
   display: inline-flex;
 }
 
+.task-comment-actions-menu__dropdown {
+  left: 0;
+  right: auto;
+  width: min(160px, calc(100vw - 32px));
+}
+
 .task-comment-actions-menu__trigger {
   min-width: 44px;
   padding-inline: 12px;

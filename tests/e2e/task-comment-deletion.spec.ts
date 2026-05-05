@@ -70,7 +70,13 @@ async function seedTaskCommentDeletionData(page: Page, task: Record<string, unkn
 
 async function openTask(page: Page, title: string) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Tasks" }).click();
+
+  const tasksButton = page.getByRole("button", { name: "Tasks" });
+  if (!(await tasksButton.isVisible().catch(() => false))) {
+    await page.getByRole("button", { name: "Open navigation" }).click();
+  }
+
+  await tasksButton.click();
   await expect(page.locator('[data-role="task-card"]', { hasText: title })).toBeVisible();
   await page.locator('[data-role="task-card"]', { hasText: title }).click();
   await expect(page.locator('[data-role="task-comments"]')).toBeVisible({ timeout: 10000 });
@@ -163,6 +169,73 @@ test.describe("Task comment deletion", () => {
 
     await expect((await openCommentOverflowMenu(page, "comment-parent")).locator('[data-role="comment-delete"]')).toHaveText("Delete");
     await expect((await openCommentOverflowMenu(page, "comment-child")).locator('[data-role="comment-delete"]')).toHaveText("Delete");
+  });
+
+  test("keeps comment overflow menus within the mobile viewport", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+
+    const timestamp = new Date().toISOString();
+    await seedTaskCommentDeletionData(page, {
+      ...buildTaskBase(timestamp),
+      id: "task-comment-mobile-overflow-test",
+      number: "ORC-CDM1",
+      title: "Mobile comment overflow test task",
+      commentCount: 2,
+      comments: [
+        {
+          id: "comment-parent-mobile",
+          taskId: "task-comment-mobile-overflow-test",
+          author: "User",
+          originType: "user",
+          message: "Parent comment",
+          interruptAgent: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          parentCommentId: null,
+          originId: null,
+          repositoryId: null,
+          relativePath: null,
+          lineStart: null,
+          lineEnd: null,
+          columnStart: null,
+          columnEnd: null,
+          selectedText: null,
+          anchorCommitHash: null,
+          anchorHasUncommittedChanges: null,
+        },
+        {
+          id: "comment-child-mobile",
+          taskId: "task-comment-mobile-overflow-test",
+          author: "User",
+          originType: "user",
+          message: "Nested reply",
+          interruptAgent: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          parentCommentId: "comment-parent-mobile",
+          originId: null,
+          repositoryId: null,
+          relativePath: null,
+          lineStart: null,
+          lineEnd: null,
+          columnStart: null,
+          columnEnd: null,
+          selectedText: null,
+          anchorCommitHash: null,
+          anchorHasUncommittedChanges: null,
+        },
+      ],
+    }, timestamp);
+
+    await openTask(page, "Mobile comment overflow test task");
+
+    for (const commentId of ["comment-parent-mobile", "comment-child-mobile"]) {
+      const menu = await openCommentOverflowMenu(page, commentId);
+      const box = await menu.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+    }
   });
 
   test("shows delete impact modal and cascade-deletes comment with replies", async ({ page }) => {
