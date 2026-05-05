@@ -13,6 +13,7 @@ import {
   invokeCommand,
   setActiveProject,
   setInputValue,
+  setWindowRect,
   sleep,
   waitForSelector,
   waitForText,
@@ -300,6 +301,241 @@ describe("desktop task detail navigation", () => {
       await clickSelector(sessionId, '[data-role="session-header-actions-trigger"]');
       await waitForSelector(sessionId, '[data-role="session-header-actions-menu"]');
       await clickSelector(sessionId, '[data-role="session-header-action-open-task"]');
+
+      const navigationState = await waitForCondition(
+        () => executeScript<{
+          activeProjectId: string;
+          selectedTaskId: string;
+          search: string;
+        }>(sessionId, `
+          return {
+            activeProjectId: window.localStorage.getItem('orchestra.mock.active-project-id') || '',
+            selectedTaskId: document.querySelector('[data-role="task-detail-panel"]')?.getAttribute('data-task-id') || '',
+            search: window.location.search,
+          };
+        `),
+        (value) => value.activeProjectId === targetProject.id
+          && value.selectedTaskId === targetTask.id
+          && value.search.includes(`page=tasks`)
+          && value.search.includes(`projectId=${targetProject.id}`)
+          && value.search.includes(`selectedTaskId=${targetTask.id}`),
+        30_000,
+      );
+
+      expect(navigationState.selectedTaskId).toBe(targetTask.id);
+      await waitForText(sessionId, targetTask.title);
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 180_000);
+
+  it.skipIf(!isDesktopE2E)("opens the exact linked task from the sessions mobile header menu", async () => {
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+
+      const targetProject = await invokeCommand<{ id: string }>(sessionId, "create_project", {
+        input: {
+          name: "Mobile Session Link Target",
+          taskPrefix: "MSL",
+          description: "Project used to verify mobile session -> task links.",
+        },
+      });
+      await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
+
+      const targetTask = await invokeCommand<{ id: string; title: string; number: string }>(sessionId, "create_task", {
+        projectId: targetProject.id,
+        input: {
+          title: "Mobile session linked task target",
+          description: "This task should open from the mobile session header menu.",
+          type: "task",
+          status: "ready",
+          priority: "P2",
+          assigneeType: "unassigned",
+          assigneeId: null,
+        },
+      });
+
+      await clickByText(sessionId, "button", "Sessions");
+      await waitForSelector(sessionId, '[data-role="session-filter-active"]');
+
+      const timestamp = new Date().toISOString();
+      const linkedSessionId = "session-mobile-cross-project-target";
+      await injectSessionRecord(sessionId, {
+        id: linkedSessionId,
+        title: "Mobile cross-project session link",
+        status: "active",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        subscribed: false,
+        events: [{ id: "session-event-mobile-cross-project", kind: "assistant", message: "Open the linked mobile task.", timestamp }],
+        taskId: targetTask.id,
+        taskProjectId: targetProject.id,
+        taskNumber: targetTask.number,
+        taskTitle: targetTask.title,
+        activeTaskId: targetTask.id,
+        activeTaskProjectId: targetProject.id,
+        activeTaskNumber: targetTask.number,
+        activeTaskTitle: targetTask.title,
+        workerType: "role",
+        workerName: "Developer",
+      });
+      await dispatchWindowEvent(sessionId, "orchestra:session-change", {
+        sessionIds: [linkedSessionId],
+        reason: "test.desktop_mobile_session_open_task",
+      });
+
+      await waitForSelector(sessionId, `[data-role="session-link"][data-session-id="${linkedSessionId}"]`);
+      await clickSelector(sessionId, `[data-role="session-link"][data-session-id="${linkedSessionId}"]`);
+      await setWindowRect(sessionId, { width: 390, height: 844, x: 0, y: 0 });
+      await waitForCondition(
+        () => executeScript<{ innerWidth: number; triggerVisible: boolean; headerHidden: boolean }>(sessionId, `
+          const trigger = document.querySelector('[data-role="session-mobile-transcript-controls-trigger"]');
+          const header = document.querySelector('[data-role="session-chat-panel"] > .panel__header');
+          return {
+            innerWidth: window.innerWidth,
+            triggerVisible: Boolean(trigger && trigger.getClientRects().length > 0),
+            headerHidden: Boolean(header) && header.getClientRects().length === 0,
+          };
+        `),
+        (value) => value.innerWidth <= 500 && value.triggerVisible && value.headerHidden,
+        30_000,
+      );
+
+      await clickSelector(sessionId, '[data-role="session-mobile-transcript-controls-trigger"]');
+      await waitForSelector(sessionId, '[data-role="session-mobile-transcript-controls-menu"]');
+      await clickSelector(sessionId, '[data-role="session-mobile-open-task"]');
+
+      const navigationState = await waitForCondition(
+        () => executeScript<{
+          activeProjectId: string;
+          selectedTaskId: string;
+          search: string;
+        }>(sessionId, `
+          return {
+            activeProjectId: window.localStorage.getItem('orchestra.mock.active-project-id') || '',
+            selectedTaskId: document.querySelector('[data-role="task-detail-panel"]')?.getAttribute('data-task-id') || '',
+            search: window.location.search,
+          };
+        `),
+        (value) => value.activeProjectId === targetProject.id
+          && value.selectedTaskId === targetTask.id
+          && value.search.includes(`page=tasks`)
+          && value.search.includes(`projectId=${targetProject.id}`)
+          && value.search.includes(`selectedTaskId=${targetTask.id}`),
+        30_000,
+      );
+
+      expect(navigationState.selectedTaskId).toBe(targetTask.id);
+      await waitForText(sessionId, targetTask.title);
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 180_000);
+
+  it.skipIf(!isDesktopE2E)("opens the exact linked task from the chat mobile header menu", async () => {
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+
+      const targetProject = await invokeCommand<{ id: string }>(sessionId, "create_project", {
+        input: {
+          name: "Mobile Chat Link Target",
+          taskPrefix: "MCL",
+          description: "Project used to verify mobile chat -> task links.",
+        },
+      });
+      await dispatchWindowEvent(sessionId, "orchestra:projects-changed");
+
+      const targetTask = await invokeCommand<{ id: string; title: string; number: string }>(sessionId, "create_task", {
+        projectId: targetProject.id,
+        input: {
+          title: "Mobile chat linked task target",
+          description: "This task should open from the mobile chat header menu.",
+          type: "task",
+          status: "ready",
+          priority: "P2",
+          assigneeType: "unassigned",
+          assigneeId: null,
+        },
+      });
+
+      await clickByText(sessionId, "button", "Chat");
+      await waitForSelector(sessionId, '[data-role="chat-agent-nav-supervisor"]');
+      await clickSelector(sessionId, '[data-role="chat-agent-nav-supervisor"]');
+      await waitForText(sessionId, 'Supervisor chat');
+
+      const supervisorAgent = await waitForCondition(
+        () => invokeCommand<Array<{ id: string; slug: string }>>(sessionId, "list_agents", {
+          includeArchived: false,
+          projectId: null,
+        }),
+        (agents) => agents.some((agent) => agent.slug === "supervisor"),
+        45_000,
+      );
+      const supervisorAgentId = supervisorAgent.find((agent) => agent.slug === "supervisor")?.id;
+      expect(supervisorAgentId).toBeTruthy();
+      const linkedSessionId = "session-mobile-chat-open-task-target";
+      const timestamp = new Date().toISOString();
+      await injectSessionRecord(sessionId, {
+        id: linkedSessionId,
+        title: "Supervisor chat",
+        status: "active",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        subscribed: false,
+        events: [{ id: "session-event-mobile-chat-open-task", kind: "assistant", message: "Open the linked mobile chat task.", timestamp }],
+        taskId: targetTask.id,
+        taskProjectId: targetProject.id,
+        taskNumber: targetTask.number,
+        taskTitle: targetTask.title,
+        activeTaskId: targetTask.id,
+        activeTaskProjectId: targetProject.id,
+        activeTaskNumber: targetTask.number,
+        activeTaskTitle: targetTask.title,
+      });
+      await executeScript(sessionId, `
+        const hydrate = window.__orchestraTestHydrateChatAgentSession;
+        if (typeof hydrate !== 'function') {
+          throw new Error('Missing __orchestraTestHydrateChatAgentSession test hook');
+        }
+        hydrate(arguments[0]);
+        return true;
+      `, [{
+        agentId: supervisorAgentId,
+        sessionId: linkedSessionId,
+        select: true,
+      }]);
+      await waitForCondition(
+        () => executeScript<{ activeSessionId: string; hasHeaderAction: boolean }>(sessionId, `
+          return {
+            activeSessionId: document.querySelector('[data-role="session-chat-panel"]')?.getAttribute('data-session-id') || '',
+            hasHeaderAction: Boolean(document.querySelector('[data-role="session-header-actions-trigger"]')),
+          };
+        `),
+        (value) => value.activeSessionId === linkedSessionId && value.hasHeaderAction,
+        30_000,
+      );
+
+      await setWindowRect(sessionId, { width: 390, height: 844, x: 0, y: 0 });
+      await waitForCondition(
+        () => executeScript<{ innerWidth: number; triggerVisible: boolean; headerHidden: boolean }>(sessionId, `
+          const trigger = document.querySelector('[data-role="session-mobile-transcript-controls-trigger"]');
+          const header = document.querySelector('[data-role="session-chat-panel"] > .panel__header');
+          return {
+            innerWidth: window.innerWidth,
+            triggerVisible: Boolean(trigger && trigger.getClientRects().length > 0),
+            headerHidden: Boolean(header) && header.getClientRects().length === 0,
+          };
+        `),
+        (value) => value.innerWidth <= 500 && value.triggerVisible && value.headerHidden,
+        30_000,
+      );
+
+      await clickSelector(sessionId, '[data-role="session-mobile-transcript-controls-trigger"]');
+      await waitForSelector(sessionId, '[data-role="session-mobile-transcript-controls-menu"]');
+      await waitForSelector(sessionId, '[data-role="session-mobile-open-task"]');
+      await clickSelector(sessionId, '[data-role="session-mobile-open-task"]');
 
       const navigationState = await waitForCondition(
         () => executeScript<{

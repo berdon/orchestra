@@ -1362,6 +1362,7 @@ export function App() {
   const tasksMobileHeaderSignatureRef = useRef<string | null>(null);
   const shouldRestoreMobileNavigationFocusRef = useRef(false);
   const viewedSessionIdRef = useRef<string | null>(null);
+  const chatAgentsRef = useRef(chatAgents);
   const chatSessionAgentIdRef = useRef<string | null>(null);
   const chatSessionRecoveryMissRef = useRef<{
     sessionId: string;
@@ -1420,6 +1421,10 @@ export function App() {
   useEffect(() => {
     selectedSessionIdRef.current = selectedSessionId;
   }, [selectedSessionId]);
+
+  useEffect(() => {
+    chatAgentsRef.current = chatAgents;
+  }, [chatAgents]);
 
   useEffect(() => {
     chatSessionIdStateRef.current = chatSessionId;
@@ -3288,14 +3293,18 @@ export function App() {
       sessionId,
       select = true,
     }) => {
-      let matchedAgent = false;
+      const matchedAgent = chatAgentsRef.current.some(
+        (snapshot) => snapshot.agent.id === agentId,
+      );
+      if (!matchedAgent) {
+        throw new Error(`Missing chat agent ${agentId}`);
+      }
       const timestamp = new Date().toISOString();
       setChatAgents((current) =>
         current.map((snapshot) => {
           if (snapshot.agent.id !== agentId) {
             return snapshot;
           }
-          matchedAgent = true;
           return {
             ...snapshot,
             runtimeState: {
@@ -3306,9 +3315,6 @@ export function App() {
           };
         }),
       );
-      if (!matchedAgent) {
-        throw new Error(`Missing chat agent ${agentId}`);
-      }
       if (select) {
         setSelectedChatAgentId(agentId);
       }
