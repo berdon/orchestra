@@ -77,12 +77,12 @@ npm run build:adhoc:verified
 
 That verified command runs repository guardrails before and after the bundle build:
 - `npm run scan:secrets` for current-source secret scanning via gitleaks
-- `npm run scan:history` for reachable git-history secret scanning via gitleaks
+- `npm run scan:history` for gitleaks secret scanning across all commits reachable from local refs (`git log --all`)
 - `npm run scan:machine-refs` for usernames and concrete local/workspace path checks
 - a sanitized release-mode adhoc bundle build with Rust path remapping enabled
 - `npm run scan:artifacts:release` for post-build bundle/resource scanning that snapshots extracted text plus `strings`, then runs artifact-specific gitleaks and machine-reference classification
 
-If `gitleaks` is not already installed, the wrapper will fetch the repo-pinned version into `.tmp/tools/gitleaks/` so developers and future CI can run the same scanner version.
+If `gitleaks` is not already installed, the wrapper will fetch the repo-pinned version into `.tmp/tools/gitleaks/` so developers and future CI can run the same scanner version. The history step now runs `gitleaks git --log-opts="--all"`, so it checks every commit currently reachable from any local branch or tag. Vetted false positives can still be suppressed at fingerprint scope through the repo `.gitleaksignore` so the history scan remains actionable.
 
 `npm run scan:artifacts:release` is the canonical built-app leak scan. Treat these results as release-blocking:
 - any unsuppressed artifact `gitleaks` finding

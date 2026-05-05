@@ -79,12 +79,12 @@ npm run build:adhoc:verified
 
 That command runs:
 - `gitleaks` against the current source tree
-- `gitleaks` against reachable git history
+- `gitleaks` against all commits reachable from local refs (`git log --all`)
 - the repo-local machine-reference scanner for usernames and concrete local paths
 - a sanitized release-mode adhoc bundle build with Rust path remapping enabled
 - a post-build artifact scan that snapshots built app/resources text plus `strings`, then runs artifact-specific `gitleaks` and machine-reference classification over that snapshot
 
-If `gitleaks` is not already installed, the wrapper script will download the repo-pinned version into `.tmp/tools/gitleaks/` for repeatable local use.
+If `gitleaks` is not already installed, the wrapper script will download the repo-pinned version into `.tmp/tools/gitleaks/` for repeatable local use. `npm run scan:history` now runs `gitleaks git --log-opts="--all"`, so it scans every commit currently reachable from any local branch or tag, not just the checked-out branch tip. Vetted false positives can still be suppressed at fingerprint scope through the repo `.gitleaksignore` so the history report stays actionable.
 
 For individual checks, use:
 
