@@ -27,6 +27,7 @@ import {
 } from "./mockOrchestra/sessions";
 import { getHostedWebOrchestraClientBinding } from "./orchestraClient/runtime";
 import { createDownloadBlob, triggerBrowserDownload } from "./orchestraClient/browserDownloads";
+import { normalizeTaskAttachmentUploadInput } from "./taskAttachments";
 import { getTaskTags } from "./taskListQuery";
 import { getEffectiveTaskReviewAssignmentStatus } from "./taskReviewState";
 import {
@@ -67,7 +68,7 @@ import type {
   SessionStats,
   SessionStreamEnvelope,
   TaskAttachment,
-  TaskAttachmentInput,
+  TaskAttachmentUploadInput,
   TaskFileReference,
   TaskFileReferenceInput,
   TaskComment,
@@ -7958,7 +7959,7 @@ export async function removeTaskFileReference(
 
 export async function addTaskAttachment(
   taskId: string,
-  input: TaskAttachmentInput,
+  input: TaskAttachmentUploadInput,
 ): Promise<TaskAttachment> {
   if (!isTauriAvailable()) {
     const tasks = ensureMockTasks();
@@ -7967,23 +7968,24 @@ export async function addTaskAttachment(
       throw new Error(`Task ${taskId} was not found`);
     }
 
-    const bytes = atob(input.base64Data);
-    const imageDataUrl = input.mediaType.startsWith("image/")
-      ? `data:${input.mediaType};base64,${input.base64Data}`
+    const normalizedInput = await normalizeTaskAttachmentUploadInput(input);
+    const bytes = atob(normalizedInput.base64Data);
+    const imageDataUrl = normalizedInput.mediaType.startsWith("image/")
+      ? `data:${normalizedInput.mediaType};base64,${normalizedInput.base64Data}`
       : null;
     const previewText =
-      input.mediaType.startsWith("text/") ||
-      input.mediaType === "application/json"
+      normalizedInput.mediaType.startsWith("text/") ||
+      normalizedInput.mediaType === "application/json"
         ? bytes
         : null;
     const attachment: TaskAttachment = {
       id: createId("task-attachment"),
       taskId,
-      fileName: input.fileName,
-      mediaType: input.mediaType || "application/octet-stream",
+      fileName: normalizedInput.fileName,
+      mediaType: normalizedInput.mediaType || "application/octet-stream",
       byteSize: bytes.length,
-      storedPath: `/mock/attachments/${taskId}/${input.fileName}`,
-      caption: input.caption?.trim() || null,
+      storedPath: `/mock/attachments/${taskId}/${normalizedInput.fileName}`,
+      caption: normalizedInput.caption?.trim() || null,
       previewText,
       imageDataUrl,
       createdAt: nowIso(),
@@ -7999,7 +8001,7 @@ export async function addTaskAttachment(
     saveStoredMockAttachmentBytes({
       ...getStoredMockAttachmentBytes(),
       [attachment.id]: {
-        base64Data: input.base64Data,
+        base64Data: normalizedInput.base64Data,
         mediaType: attachment.mediaType,
         fileName: attachment.fileName,
       },
@@ -8020,7 +8022,8 @@ export async function addTaskAttachment(
     return attachment;
   }
 
-  return invoke<TaskAttachment>("add_task_attachment", { taskId, input });
+  const normalizedInput = await normalizeTaskAttachmentUploadInput(input);
+  return invoke<TaskAttachment>("add_task_attachment", { taskId, input: normalizedInput });
 }
 
 export async function downloadTaskAttachment(

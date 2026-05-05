@@ -94,6 +94,7 @@ import {
   moveProjectNotesDirectory,
   updateProjectNote,
 } from "../projectNotes";
+import { normalizeTaskAttachmentUploadInput } from "../taskAttachments";
 import type {
   AgentSkillLinks,
   AgentSummary,
@@ -117,7 +118,7 @@ import type {
   SkillSummary,
   SkillsCatalogDiagnostics,
   TaskAttachment,
-  TaskAttachmentInput,
+  TaskAttachmentUploadInput,
   TaskComment,
   TaskCommentDeleteImpact,
   TaskCommentFileMentionCandidate,
@@ -378,7 +379,10 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
       invokeTauri<TaskFileReference>("set_default_task_file_reference", { referenceId }),
     removeFileReference: (referenceId) => invokeTauri<TaskFileReference>("remove_task_file_reference", { referenceId }),
     getFileContent: (path) => invokeTauri<string>("get_task_file_content", { path }),
-    addAttachment: (taskId, input: TaskAttachmentInput) => invokeTauri<TaskAttachment>("add_task_attachment", { taskId, input }),
+    addAttachment: async (taskId, input: TaskAttachmentUploadInput) => {
+      const normalizedInput = await normalizeTaskAttachmentUploadInput(input);
+      return invokeTauri<TaskAttachment>("add_task_attachment", { taskId, input: normalizedInput });
+    },
     downloadAttachment: async (attachmentId) => {
       await invokeTauri<string | null>("download_task_attachment", { attachmentId });
     },

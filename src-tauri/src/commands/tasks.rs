@@ -919,6 +919,43 @@ pub fn remove_task_file_reference(
     Ok(reference)
 }
 
+pub fn add_task_attachment_bytes(
+    app: AppHandle,
+    state: &AppState,
+    task_id: String,
+    input: task_attachments::TaskAttachmentBytesInput,
+) -> Result<TaskAttachment, String> {
+    let mut connection = database::open_connection()?;
+    let attachment = task_attachments::add_task_attachment_bytes(&mut connection, &task_id, input)?;
+    state.log(
+        "info",
+        "task.attachment.added",
+        &format!("Added attachment {} to task {}", attachment.id, task_id),
+    );
+    state.log_authorized_action(
+        "auth.audit",
+        "add_task_attachment",
+        None,
+        None,
+        &attachment.id,
+        "success",
+    );
+    if let Ok(task) = tasks::get_task_context(&connection, &task_id) {
+        record_task_domain_event(
+            &connection,
+            "task.attachment_added",
+            &task,
+            json!({
+                "taskId": task.id.clone(),
+                "attachmentId": attachment.id.clone(),
+                "fileName": attachment.file_name.clone(),
+            }),
+        );
+    }
+    emit_task_change(&app, "task.attachment.added", [task_id]);
+    Ok(attachment)
+}
+
 #[tauri::command]
 pub fn add_task_attachment(
     app: AppHandle,

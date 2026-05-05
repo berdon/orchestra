@@ -196,6 +196,55 @@ describe("remote api orchestra client", () => {
     await expect(subscribePromise).resolves.toEqual(expect.any(Function));
   });
 
+  test("uploads task attachments through the remote multipart route", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://orchestra.example.test/api/v1/tasks/task-1/attachments");
+      expect(init).toMatchObject({
+        method: "POST",
+        credentials: "same-origin",
+      });
+      expect(init?.headers).toBeInstanceOf(Headers);
+      expect((init?.headers as Headers).get("Content-Type")).toBeNull();
+      expect(init?.body).toBeInstanceOf(FormData);
+
+      const formData = init?.body as FormData;
+      expect(formData.get("mediaType")).toBe("audio/wav");
+      expect(formData.get("caption")).toBe("Meeting recording");
+      const uploadedFile = formData.get("file");
+      expect(uploadedFile).toBeInstanceOf(File);
+      expect((uploadedFile as File).name).toBe("meeting.wav");
+      expect(await (uploadedFile as File).text()).toBe("RIFF-WAVE");
+
+      return jsonResponse({
+        id: "task-attachment-1",
+        taskId: "task-1",
+        fileName: "meeting.wav",
+        mediaType: "audio/wav",
+        byteSize: 9,
+        storedPath: "/tmp/meeting.wav",
+        caption: "Meeting recording",
+        previewText: null,
+        imageDataUrl: null,
+        createdAt: "2026-05-04T00:00:00.000Z",
+      });
+    });
+
+    const binding = createRemoteApiOrchestraClientBinding(createBootstrap("same_origin_cookie"), {
+      fetchImpl,
+    });
+
+    await expect(binding.client.tasks.addAttachment("task-1", {
+      fileName: "meeting.wav",
+      mediaType: "audio/wav",
+      file: new File(["RIFF-WAVE"], "meeting.wav", { type: "audio/wav" }),
+      caption: "Meeting recording",
+    })).resolves.toMatchObject({
+      id: "task-attachment-1",
+      mediaType: "audio/wav",
+      fileName: "meeting.wav",
+    });
+  });
+
   test("downloads task attachments through the remote binary route", async () => {
     const anchor = {
       click: vi.fn(),

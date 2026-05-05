@@ -64,7 +64,7 @@ import type {
   SkillsCatalogDiagnostics,
   SourceControlSettings,
   TaskAttachment,
-  TaskAttachmentInput,
+  TaskAttachmentUploadInput,
   TaskComment,
   TaskCommentDeleteImpact,
   TaskCommentFileMentionCandidate,
@@ -105,6 +105,7 @@ import type {
 import { createLocalNotificationsExtension } from "./localNotificationsExtension";
 import type { OrchestraHostAdminExtension } from "./extensions";
 import { triggerBrowserDownload } from "./browserDownloads";
+import { isBase64TaskAttachmentInput } from "../taskAttachments";
 import { RemoteApiEventManager } from "./remoteApiEvents";
 import {
   createRemoteApiTaskListQuery,
@@ -1318,12 +1319,27 @@ export function createRemoteApiOrchestraClientBinding(
           },
         });
       },
-      addAttachment: (taskId, input) => {
+      addAttachment: (taskId, input: TaskAttachmentUploadInput) => {
         transport.assertCapability("tasks.addAttachment", bootstrap.capabilities.tasks.attachments);
+        if (isBase64TaskAttachmentInput(input)) {
+          return transport.requestJson<TaskAttachment>("tasks.addAttachment", {
+            method: "POST",
+            path: `/api/v1/tasks/${encodeURIComponent(taskId)}/attachments`,
+            body: input,
+          });
+        }
+
+        const formData = new FormData();
+        formData.set("file", input.file, input.fileName);
+        formData.set("mediaType", input.mediaType || "application/octet-stream");
+        if (input.caption?.trim()) {
+          formData.set("caption", input.caption.trim());
+        }
+
         return transport.requestJson<TaskAttachment>("tasks.addAttachment", {
           method: "POST",
           path: `/api/v1/tasks/${encodeURIComponent(taskId)}/attachments`,
-          body: input,
+          rawBody: formData,
         });
       },
       downloadAttachment: async (attachmentId) => {

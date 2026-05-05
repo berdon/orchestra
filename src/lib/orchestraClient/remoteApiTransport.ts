@@ -34,6 +34,9 @@ interface RemoteApiRequestOptions {
   path: string;
   query?: Record<string, RemoteApiQueryValue>;
   body?: unknown;
+  rawBody?: BodyInit | null;
+  contentType?: string | null;
+  accept?: string;
   parseAs?: RemoteApiResponseParser;
   allowAnonymous?: boolean;
 }
@@ -349,7 +352,7 @@ export function createRemoteApiTransport(
 
     const url = new URL(`${options.path}${buildQueryString(options.query)}`, getApiBaseUrl(operation)).toString();
     const headers = new Headers({
-      Accept: "application/json",
+      Accept: options.accept ?? "application/json",
     });
     const init: RequestInit = {
       method: options.method ?? "GET",
@@ -384,9 +387,30 @@ export function createRemoteApiTransport(
         break;
     }
 
+    if (options.body !== undefined && options.rawBody !== undefined) {
+      throw normalizeOrchestraClientError(
+        `Remote request for ${operation} cannot send both JSON and raw request bodies.`,
+        {
+          operation,
+          source: "adapter",
+          fallbackMessage: `Remote request for ${operation} cannot send both JSON and raw request bodies.`,
+          code: "transport",
+          retryable: false,
+          details: createBootstrapDetails(bootstrap, {
+            path: options.path,
+          }),
+        },
+      );
+    }
+
     if (options.body !== undefined) {
       headers.set("Content-Type", "application/json");
       init.body = JSON.stringify(options.body);
+    } else if (options.rawBody !== undefined) {
+      if (options.contentType) {
+        headers.set("Content-Type", options.contentType);
+      }
+      init.body = options.rawBody;
     }
 
     let response: Response;

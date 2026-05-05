@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        Path, Query, State as AxumState, WebSocketUpgrade,
+        FromRequest, Multipart, Path, Query, Request, State as AxumState, WebSocketUpgrade,
     },
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse, Response},
@@ -939,6 +939,7 @@ mod tests {
         Ok(RemoteApiParityFixture { app, auth_header })
     }
 
+
     fn perform_authenticated_json_request(
         app: &tauri::App,
         auth_header: &str,
@@ -1086,6 +1087,15 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         run_production_route_probe("task_attachment_content", &[])
             .expect("task attachment content production probe should pass");
+    }
+
+    #[test]
+    fn remote_api_accepts_multipart_binary_task_attachments() {
+        let _probe_lock = crate::test_support::global_test_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        run_production_route_probe("task_attachment_multipart", &[])
+            .expect("task attachment multipart production probe should pass");
     }
 
     fn unique_temp_dir(label: &str) -> PathBuf {
@@ -2423,6 +2433,165 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
                         return Err(format!(
                             "task attachment content probe returned unexpected bytes: {:?}",
                             body
+                        ));
+                    }
+                    Ok(())
+                }
+                "task_attachment_multipart" => {
+                    let mut connection = database::open_connection().map_err(|error| {
+                        format!("task attachment multipart probe could not open database: {error}")
+                    })?;
+                    let project_id = crate::services::projects::require_requested_or_default_project_id(
+                        &connection,
+                        None,
+                        "Task attachment multipart probe requires a default project.",
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "task attachment multipart probe could not resolve project: {error}"
+                        )
+                    })?;
+                    let task = tasks::create_task(
+                        &mut connection,
+                        Some(&project_id),
+                        TaskUpsertInput {
+                            title: "Multipart attachment route probe".into(),
+                            description: None,
+                            task_type: "task".into(),
+                            tags: vec![],
+                            status: "ready".into(),
+                            priority: "P2".into(),
+                            workflow_id: None,
+                            current_lane_id: None,
+                            assignee_type: "unassigned".into(),
+                            assignee_id: None,
+                            repository_id: None,
+                            repository_ids: vec![],
+                            parent_task_id: None,
+                            whip_max_attempts: Some(10),
+                            archived: Some(false),
+                        },
+                    )
+                    .map_err(|error| {
+                        format!("task attachment multipart probe could not create task: {error}")
+                    })?;
+                    drop(connection);
+
+                    let boundary = "----orchestra-attachment-boundary";
+                    let payload = vec![80_u8, 75, 3, 4, 20, 0, 255, 42, 7];
+                    let mut body = Vec::new();
+                    body.extend_from_slice(
+                        format!(
+                            "--{boundary}\r\nContent-Disposition: form-data; name=\"mediaType\"\r\n\r\napplication/zip\r\n"
+                        )
+                        .as_bytes(),
+                    );
+                    body.extend_from_slice(
+                        format!(
+                            "--{boundary}\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\nRelease bundle\r\n"
+                        )
+                        .as_bytes(),
+                    );
+                    body.extend_from_slice(
+                        format!(
+                            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"bundle.zip\"\r\nContent-Type: application/zip\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    );
+                    body.extend_from_slice(&payload);
+                    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+                    let response = client
+                        .post(format!("{base_url}/api/v1/tasks/{}/attachments", task.id))
+                        .header("authorization", &auth_header)
+                        .header(
+                            "content-type",
+                            format!("multipart/form-data; boundary={boundary}"),
+                        )
+                        .body(body)
+                        .send()
+                        .await
+                        .map_err(|error| {
+                            format!(
+                                "task attachment multipart probe request failed: {error}"
+                            )
+                        })?;
+                    if response.status() != StatusCode::OK {
+                        return Err(format!(
+                            "task attachment multipart probe returned {}",
+                            response.status()
+                        ));
+                    }
+                    let attachment: Value = response.json().await.map_err(|error| {
+                        format!(
+                            "task attachment multipart probe body failed to deserialize: {error}"
+                        )
+                    })?;
+                    if attachment["fileName"] != "bundle.zip"
+                        || attachment["mediaType"] != "application/zip"
+                        || attachment["byteSize"] != payload.len() as i64
+                        || !attachment["previewText"].is_null()
+                    {
+                        return Err(format!(
+                            "task attachment multipart probe returned unexpected payload: {}",
+                            attachment
+                        ));
+                    }
+
+                    let attachment_id = attachment["id"].as_str().ok_or_else(|| {
+                        format!(
+                            "task attachment multipart probe returned missing attachment id: {}",
+                            attachment
+                        )
+                    })?;
+                    let download = client
+                        .get(format!(
+                            "{base_url}/api/v1/task-attachments/{attachment_id}/content"
+                        ))
+                        .header("authorization", &auth_header)
+                        .send()
+                        .await
+                        .map_err(|error| {
+                            format!(
+                                "task attachment multipart probe download request failed: {error}"
+                            )
+                        })?;
+                    if download.status() != StatusCode::OK {
+                        return Err(format!(
+                            "task attachment multipart probe download returned {}",
+                            download.status()
+                        ));
+                    }
+                    let download_headers = download.headers().clone();
+                    let download_body = download.bytes().await.map_err(|error| {
+                        format!(
+                            "task attachment multipart probe download body failed to read: {error}"
+                        )
+                    })?;
+                    if download_headers
+                        .get(header::CONTENT_TYPE)
+                        .and_then(|value| value.to_str().ok())
+                        != Some("application/zip")
+                    {
+                        return Err(format!(
+                            "task attachment multipart probe download returned unexpected content type: {:?}",
+                            download_headers.get(header::CONTENT_TYPE)
+                        ));
+                    }
+                    if download_headers
+                        .get(header::CONTENT_DISPOSITION)
+                        .and_then(|value| value.to_str().ok())
+                        != Some("attachment; filename=\"bundle.zip\"")
+                    {
+                        return Err(format!(
+                            "task attachment multipart probe download returned unexpected content disposition: {:?}",
+                            download_headers.get(header::CONTENT_DISPOSITION)
+                        ));
+                    }
+                    if download_body.as_ref() != payload {
+                        return Err(format!(
+                            "task attachment multipart probe download returned unexpected bytes: {:?}",
+                            download_body
                         ));
                     }
                     Ok(())
@@ -5911,13 +6080,132 @@ async fn get_task_file_content_route(
     task_commands::get_task_file_content(query.path).map_err(command_api_error)
 }
 
+async fn parse_task_attachment_multipart(
+    mut multipart: Multipart,
+) -> Result<crate::services::task_attachments::TaskAttachmentBytesInput, (StatusCode, Json<ApiError>)>
+{
+    let mut file_name = None;
+    let mut media_type = None;
+    let mut caption = None;
+    let mut bytes = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|error| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            format!("Unable to read multipart attachment upload: {error}"),
+        )
+    })? {
+        let field_name = field.name().unwrap_or_default().to_string();
+        match field_name.as_str() {
+            "file" => {
+                file_name = field.file_name().map(|value| value.to_string());
+                if media_type.is_none() {
+                    media_type = field.content_type().map(|value| value.to_string());
+                }
+                bytes = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|error| {
+                            api_error(
+                                StatusCode::BAD_REQUEST,
+                                format!("Unable to read multipart attachment bytes: {error}"),
+                            )
+                        })?
+                        .to_vec(),
+                );
+            }
+            "mediaType" => {
+                media_type = Some(field.text().await.map_err(|error| {
+                    api_error(
+                        StatusCode::BAD_REQUEST,
+                        format!("Unable to read multipart attachment media type: {error}"),
+                    )
+                })?);
+            }
+            "caption" => {
+                caption = Some(field.text().await.map_err(|error| {
+                    api_error(
+                        StatusCode::BAD_REQUEST,
+                        format!("Unable to read multipart attachment caption: {error}"),
+                    )
+                })?);
+            }
+            _ => {
+                let _ = field.bytes().await.map_err(|error| {
+                    api_error(
+                        StatusCode::BAD_REQUEST,
+                        format!("Unable to read multipart attachment field: {error}"),
+                    )
+                })?;
+            }
+        }
+    }
+
+    let file_name = file_name.ok_or_else(|| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "Task attachment uploads require a file field.",
+        )
+    })?;
+    let bytes = bytes.ok_or_else(|| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "Task attachment uploads require file bytes.",
+        )
+    })?;
+
+    Ok(crate::services::task_attachments::TaskAttachmentBytesInput {
+        file_name,
+        media_type: media_type.unwrap_or_else(|| "application/octet-stream".into()),
+        bytes,
+        caption,
+    })
+}
+
 async fn post_task_attachment_create(
     AxumState(context): AxumState<RemoteApiContext>,
     headers: HeaderMap,
     Path(task_id): Path<String>,
-    Json(input): Json<TaskAttachmentInput>,
+    request: Request,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if content_type.starts_with("multipart/form-data") {
+        let multipart = Multipart::from_request(request, &())
+            .await
+            .map_err(|error| {
+                api_error(
+                    StatusCode::BAD_REQUEST,
+                    format!("Unable to parse multipart attachment upload: {error}"),
+                )
+            })?;
+        let input = parse_task_attachment_multipart(multipart).await?;
+        let state = context.app.state::<AppState>();
+        return task_commands::add_task_attachment_bytes(
+            context.app.clone(),
+            state.inner(),
+            task_id,
+            input,
+        )
+        .map(Json)
+        .map_err(command_api_error);
+    }
+
+    let Json(input) = Json::<TaskAttachmentInput>::from_request(request, &())
+        .await
+        .map_err(|error| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                format!("Unable to parse attachment JSON payload: {error}"),
+            )
+        })?;
     task_commands::add_task_attachment(
         context.app.clone(),
         context.app.state::<AppState>(),

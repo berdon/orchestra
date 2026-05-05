@@ -15,10 +15,26 @@ const DEFAULT_PROJECT_ID: &str = "orchestra";
 const MAX_TEXT_PREVIEW_BYTES: usize = 64 * 1024;
 const MAX_IMAGE_PREVIEW_BYTES: usize = 512 * 1024;
 
+#[derive(Debug, Clone)]
+pub struct TaskAttachmentBytesInput {
+    pub file_name: String,
+    pub media_type: String,
+    pub bytes: Vec<u8>,
+    pub caption: Option<String>,
+}
+
 pub fn add_task_attachment(
     connection: &mut Connection,
     task_id: &str,
     input: TaskAttachmentInput,
+) -> Result<TaskAttachment, String> {
+    add_task_attachment_bytes(connection, task_id, decode_attachment_input(input)?)
+}
+
+pub fn add_task_attachment_bytes(
+    connection: &mut Connection,
+    task_id: &str,
+    input: TaskAttachmentBytesInput,
 ) -> Result<TaskAttachment, String> {
     let project_id = task_project_id(connection, task_id)?;
     let attachment_id = attachment_id();
@@ -32,11 +48,9 @@ pub fn add_task_attachment(
     })?;
 
     let file_name = sanitize_file_name(&input.file_name);
+    let media_type = normalized_media_type(&input.media_type);
     let stored_path = attachment_dir.join(format!("{}-{}", attachment_id, file_name));
-    let bytes = STANDARD
-        .decode(input.base64_data.as_bytes())
-        .map_err(|error| format!("Unable to decode attachment payload: {error}"))?;
-    fs::write(&stored_path, &bytes).map_err(|error| {
+    fs::write(&stored_path, &input.bytes).map_err(|error| {
         format!(
             "Unable to write attachment {}: {error}",
             stored_path.display()
@@ -68,8 +82,8 @@ pub fn add_task_attachment(
             project_id,
             task_id,
             file_name,
-            normalized_media_type(&input.media_type),
-            bytes.len() as i64,
+            media_type,
+            input.bytes.len() as i64,
             stored_path.display().to_string(),
             normalized_optional_string(input.caption),
             now,
@@ -304,6 +318,18 @@ fn build_attachment(
     })
 }
 
+fn decode_attachment_input(input: TaskAttachmentInput) -> Result<TaskAttachmentBytesInput, String> {
+    let bytes = STANDARD
+        .decode(input.base64_data.as_bytes())
+        .map_err(|error| format!("Unable to decode attachment payload: {error}"))?;
+    Ok(TaskAttachmentBytesInput {
+        file_name: input.file_name,
+        media_type: input.media_type,
+        bytes,
+        caption: input.caption,
+    })
+}
+
 fn task_project_id(connection: &Connection, task_id: &str) -> Result<String, String> {
     connection
         .query_row(
@@ -476,6 +502,51 @@ mod tests {
                 load_attachment_bytes(&connection, &attachment.id).expect("load bytes");
             assert_eq!(loaded_attachment.file_name, "large.txt");
             assert_eq!(bytes, large_text.as_bytes());
+        });
+    }
+
+    #[test]
+    fn stores_non_text_binary_attachments_without_preview_and_preserves_bytes() {
+        with_temp_storage_root("binary-roundtrip", |_| {
+            let mut connection = in_memory_connection();
+            let task_id = create_task_record(&mut connection);
+            let zip_bytes = vec![80_u8, 75, 3, 4, 20, 0, 255, 42, 7];
+            let audio_bytes = b"RIFF-WAVE".to_vec();
+
+            let zip_attachment = add_task_attachment(
+                &mut connection,
+                &task_id,
+                TaskAttachmentInput {
+                    file_name: "bundle.zip".into(),
+                    media_type: "application/zip".into(),
+                    base64_data: STANDARD.encode(&zip_bytes),
+                    caption: Some("Release bundle".into()),
+                },
+            )
+            .expect("zip attachment should store");
+            let audio_attachment = add_task_attachment(
+                &mut connection,
+                &task_id,
+                TaskAttachmentInput {
+                    file_name: "meeting.wav".into(),
+                    media_type: "audio/wav".into(),
+                    base64_data: STANDARD.encode(&audio_bytes),
+                    caption: None,
+                },
+            )
+            .expect("audio attachment should store");
+
+            assert_eq!(zip_attachment.preview_text, None);
+            assert_eq!(zip_attachment.image_data_url, None);
+            assert_eq!(audio_attachment.preview_text, None);
+            assert_eq!(audio_attachment.image_data_url, None);
+
+            let (_, stored_zip_bytes) =
+                load_attachment_bytes(&connection, &zip_attachment.id).expect("zip bytes should load");
+            let (_, stored_audio_bytes) = load_attachment_bytes(&connection, &audio_attachment.id)
+                .expect("audio bytes should load");
+            assert_eq!(stored_zip_bytes, zip_bytes);
+            assert_eq!(stored_audio_bytes, audio_bytes);
         });
     }
 

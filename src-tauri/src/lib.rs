@@ -126,7 +126,7 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
 pub fn run_remote_api_route_probe_from_process_args() -> Result<(), String> {
     let options = services::startup_options::prepare_process_startup(false)?;
     let case = options.remaining_args.get(1).ok_or_else(|| {
-        "usage: remote_api_route_probe <frontend_bootstrap|session_message|hosted_web_entrypoint|task_attachment_content|task_list_parity|inbox_parity|sessions_parity|skills_parity|skills_permissions>".to_string()
+        "usage: remote_api_route_probe <frontend_bootstrap|session_message|hosted_web_entrypoint|task_attachment_content|task_attachment_multipart|task_list_parity|inbox_parity|sessions_parity|skills_parity|skills_permissions>".to_string()
     })?;
     services::remote_api::run_remote_api_route_probe(&case.to_string_lossy())
 }

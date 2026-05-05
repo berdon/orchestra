@@ -36,6 +36,7 @@ import { buildTaskBoardModel, getVisibleTaskBoardTags, isDraftTask, type TaskBoa
 import { TasksOverviewPage } from "./tasks/TasksOverviewPage";
 import { DEFAULT_TASK_OVERVIEW_STATE, type TaskOverviewState } from "./tasks/taskOverviewState";
 import { buildTaskDependencyTree, collectTaskDependencyTreeNeighborIds, type TaskDependencyTreeNode } from "./tasks/taskDependencyTree";
+import { formatTaskAttachmentSize } from "../lib/taskAttachments";
 
 type TasksRoute =
   | { kind: "overview" }
@@ -327,7 +328,7 @@ export function TasksPage({
       id: `attachment-${attachment.id}`,
       kind: "attachment",
       title: `Attachment added: ${attachment.fileName}`,
-      description: `${attachment.mediaType} · ${Math.max(1, Math.round(attachment.byteSize / 1024))} KB`,
+      description: `${attachment.mediaType} · ${formatTaskAttachmentSize(attachment.byteSize)}`,
       timestamp: attachment.createdAt,
       tone: "neutral",
     }));
@@ -962,21 +963,10 @@ export function TasksPage({
     setTaskActionError(null);
     try {
       for (const file of Array.from(files)) {
-        const base64Data = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onerror = () => reject(new Error(`Unable to read ${file.name}.`));
-          reader.onload = () => {
-            const result = typeof reader.result === "string" ? reader.result : "";
-            const commaIndex = result.indexOf(",");
-            resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
-          };
-          reader.readAsDataURL(file);
-        });
-
         await orchestraClient.tasks.addAttachment(route.taskId, {
           fileName: file.name,
           mediaType: file.type || "application/octet-stream",
-          base64Data,
+          file,
           caption: null,
         });
       }

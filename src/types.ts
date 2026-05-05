@@ -1570,6 +1570,15 @@ export interface TaskAttachmentInput {
   caption?: string | null;
 }
 
+export interface TaskAttachmentFileInput {
+  fileName: string;
+  mediaType: string;
+  file: Blob;
+  caption?: string | null;
+}
+
+export type TaskAttachmentUploadInput = TaskAttachmentInput | TaskAttachmentFileInput;
+
 export interface TaskFileReference {
   id: string;
   taskId: string;

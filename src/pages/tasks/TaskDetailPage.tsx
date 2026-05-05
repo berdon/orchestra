@@ -14,6 +14,7 @@ import { TaskCommentComposer } from "../../components/TaskCommentComposer";
 import { TaskCommentMessage } from "../../components/TaskCommentMessage";
 import { TaskEditorForm } from "./TaskEditorForm";
 import { getTaskTags } from "../../lib/taskListQuery";
+import { formatTaskAttachmentSize, getTaskAttachmentFallbackCopy, getTaskAttachmentKind } from "../../lib/taskAttachments";
 import { getEffectiveTaskDetailAssignmentStatus } from "./taskDetailActionState";
 import { buildTaskDetailHeaderActions } from "./taskDetailHeaderActions";
 import { resolveTaskAssigneeLabel } from "./taskBoardModel";
@@ -1812,20 +1813,33 @@ export function TaskDetailPage({
 
             {task.attachments.length ? (
               <div className="task-attachment-grid" data-role="task-attachments">
-                {task.attachments.map((attachment) => (
-                  <article className="task-attachment-card" key={attachment.id}>
-                    <div className="workflow-section__header">
-                      <strong>{attachment.fileName}</strong>
-                      <div className="button-row">
-                        <button className="secondary-button" data-attachment-id={attachment.id} data-role="download-task-attachment" type="button" onClick={() => onDownloadAttachment(attachment.id)}>Download</button>
-                        <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveAttachment(attachment.id)}>Remove</button>
+                {task.attachments.map((attachment) => {
+                  const kind = getTaskAttachmentKind(attachment.mediaType, attachment.fileName);
+                  const fallback = getTaskAttachmentFallbackCopy(kind);
+                  const showImagePreview = kind === "image" && Boolean(attachment.imageDataUrl);
+                  const showTextPreview = kind === "text" && Boolean(attachment.previewText);
+
+                  return (
+                    <article className="task-attachment-card" key={attachment.id}>
+                      <div className="workflow-section__header">
+                        <strong>{attachment.fileName}</strong>
+                        <div className="button-row">
+                          <button className="secondary-button" data-attachment-id={attachment.id} data-role="download-task-attachment" type="button" onClick={() => onDownloadAttachment(attachment.id)}>Download</button>
+                          <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveAttachment(attachment.id)}>Remove</button>
+                        </div>
                       </div>
-                    </div>
-                    <p className="muted-copy">{attachment.mediaType} · {Math.max(1, Math.round(attachment.byteSize / 1024))} KB</p>
-                    {attachment.imageDataUrl ? <img alt={attachment.fileName} className="task-attachment-card__image" src={attachment.imageDataUrl} /> : null}
-                    {attachment.previewText ? <pre className="task-attachment-card__text">{attachment.previewText}</pre> : null}
-                  </article>
-                ))}
+                      <p className="muted-copy">{attachment.mediaType} · {formatTaskAttachmentSize(attachment.byteSize)}</p>
+                      {showImagePreview ? <img alt={attachment.fileName} className="task-attachment-card__image" src={attachment.imageDataUrl ?? undefined} /> : null}
+                      {showTextPreview ? <pre className="task-attachment-card__text">{attachment.previewText}</pre> : null}
+                      {!showImagePreview && !showTextPreview ? (
+                        <div className="task-attachment-card__fallback" data-attachment-kind={kind} data-role="task-attachment-fallback">
+                          <strong>{fallback.label}</strong>
+                          <p className="supporting-copy">{fallback.description}</p>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
               </div>
             ) : <p className="supporting-copy">No attachments yet.</p>}
           </section>

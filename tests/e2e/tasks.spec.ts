@@ -3170,12 +3170,26 @@ test("task detail supports attachments, comments, recent activity, and review in
       mimeType: "image/png",
       buffer: Buffer.from(TINY_PNG_BASE64, "base64"),
     },
+    {
+      name: "meeting.wav",
+      mimeType: "audio/wav",
+      buffer: Buffer.from("RIFF-WAVE"),
+    },
+    {
+      name: "bundle.zip",
+      mimeType: "application/zip",
+      buffer: Buffer.from("PK\u0003\u0004zip"),
+    },
   ]);
 
   await expect(page.locator('[data-role="task-attachments"]')).toContainText("notes.txt");
   await expect(page.locator('[data-role="task-attachments"]')).toContainText("pixel.png");
+  await expect(page.locator('[data-role="task-attachments"]')).toContainText("meeting.wav");
+  await expect(page.locator('[data-role="task-attachments"]')).toContainText("bundle.zip");
   await expect(page.locator('.task-attachment-card__text')).toContainText("Attachment preview text");
   await expect(page.locator('.task-attachment-card__image')).toHaveCount(1);
+  await expect(page.locator('[data-role="task-attachment-fallback"][data-attachment-kind="audio"]')).toContainText("Audio attachment");
+  await expect(page.locator('[data-role="task-attachment-fallback"][data-attachment-kind="archive"]')).toContainText("Archive attachment");
 
   const downloadPromise = page.waitForEvent("download");
   await page
@@ -3205,7 +3219,7 @@ test("task detail supports attachments, comments, recent activity, and review in
   await expect(page.locator('[data-role="task-comment-reply"]')).toContainText("I checked the task context and updated the plan.");
 
   const recentHistory = page.locator('.task-detail-summary__history-list');
-  await expect(recentHistory).toContainText("Attachment added: notes.txt");
+  await expect(recentHistory).toContainText("Attachment added: bundle.zip");
   await expect(recentHistory).toContainText("Reviewer commented");
   await expect(recentHistory).toContainText("Worker replied");
 
@@ -3227,7 +3241,7 @@ test("task detail supports attachments, comments, recent activity, and review in
 
 test("task attachment downloads preserve filenames and contents in browser mode", async ({ page }, testInfo) => {
   const textPayload = Buffer.from("Download me from Orchestra.");
-  const binaryPayload = Buffer.from([0, 159, 255, 42, 7]);
+  const archivePayload = Buffer.from([80, 75, 3, 4, 20, 0, 255, 42, 7]);
 
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -3244,9 +3258,9 @@ test("task attachment downloads preserve filenames and contents in browser mode"
       buffer: textPayload,
     },
     {
-      name: "archive.bin",
-      mimeType: "application/octet-stream",
-      buffer: binaryPayload,
+      name: "archive.zip",
+      mimeType: "application/zip",
+      buffer: archivePayload,
     },
   ]);
 
@@ -3261,12 +3275,12 @@ test("task attachment downloads preserve filenames and contents in browser mode"
 
   const [binaryDownload] = await Promise.all([
     page.waitForEvent("download"),
-    page.locator(".task-attachment-card").filter({ hasText: "archive.bin" }).locator('[data-role="download-task-attachment"]').click(),
+    page.locator(".task-attachment-card").filter({ hasText: "archive.zip" }).locator('[data-role="download-task-attachment"]').click(),
   ]);
-  expect(binaryDownload.suggestedFilename()).toBe("archive.bin");
-  const binaryDownloadPath = testInfo.outputPath("archive.bin");
+  expect(binaryDownload.suggestedFilename()).toBe("archive.zip");
+  const binaryDownloadPath = testInfo.outputPath("archive.zip");
   await binaryDownload.saveAs(binaryDownloadPath);
-  expect(await readFile(binaryDownloadPath)).toEqual(binaryPayload);
+  expect(await readFile(binaryDownloadPath)).toEqual(archivePayload);
 });
 
 test("task comment unread badges hide on completed tasks but still clear for active tasks when comments are opened", async ({ page }) => {

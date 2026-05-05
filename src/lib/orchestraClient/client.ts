@@ -60,7 +60,7 @@ import type {
   SkillsCatalogDiagnostics,
   SourceControlSettings,
   TaskAttachment,
-  TaskAttachmentInput,
+  TaskAttachmentUploadInput,
   TaskComment,
   TaskCommentDeleteImpact,
   TaskCommentFileMentionCandidate,
@@ -157,7 +157,7 @@ export type {
   SkillsCatalogDiagnostics,
   SourceControlSettings,
   TaskAttachment,
-  TaskAttachmentInput,
+  TaskAttachmentUploadInput,
   TaskComment,
   TaskCommentDeleteImpact,
   TaskCommentFileMentionCandidate,
@@ -361,7 +361,7 @@ export interface OrchestraTaskService {
   setDefaultFileReference(referenceId: string): Promise<TaskFileReference>;
   removeFileReference(referenceId: string): Promise<TaskFileReference>;
   getFileContent(path: string): Promise<string>;
-  addAttachment(taskId: string, input: TaskAttachmentInput): Promise<TaskAttachment>;
+  addAttachment(taskId: string, input: TaskAttachmentUploadInput): Promise<TaskAttachment>;
   downloadAttachment(attachmentId: string): Promise<void>;
   removeAttachment(attachmentId: string): Promise<TaskAttachment>;
   listSchedules(projectId?: string | null): Promise<TaskScheduleSummary[]>;
