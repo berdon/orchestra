@@ -47,6 +47,81 @@ test("settings agents panel creates a global agent definition with access contro
   expect(storedState.overlay?.prompt).toBe("In this project, optimize for small focused commits.");
 });
 
+test("settings agents panel persists access and configuration changes from the mobile action menu", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByRole("tab", { name: "Agents" })).toBeVisible();
+  await page.getByRole("tab", { name: "Agents" }).click();
+  await page.locator('[data-role="new-agent"]').click();
+
+  await page.locator('[data-role="agent-name"]').fill("Mobile Save Regression Agent");
+  await page.locator('[data-role="agent-provider"]').selectOption("openai-codex");
+  await page.locator('[data-role="agent-model"]').selectOption("gpt-5.4");
+  await page.locator('[data-role="agent-thinking"]').selectOption("medium");
+  await page.locator('[data-role="save-agent"]').click();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('[data-role="agent-mobile-subnav-shell"]')).toBeVisible();
+
+  await page.locator('[data-role="agent-detail-tab-access"]').click();
+  await page.locator('[data-role="agent-permission-roles.dispatch"]').check();
+  await page.locator('[data-role="agent-mobile-subnav-menu-trigger"]').click();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+
+  await expect.poll(async () => page.evaluate(() => {
+    const agents = JSON.parse(window.localStorage.getItem("orchestra.mock.agents") ?? "[]");
+    const agent = agents.find((entry: { name: string }) => entry.name === "Mobile Save Regression Agent") ?? null;
+    return agent
+      ? {
+          directPermissions: agent.directPermissions ?? [],
+          thinkingLevel: agent.thinkingLevel ?? null,
+        }
+      : null;
+  })).toEqual({
+    directPermissions: ["roles.dispatch"],
+    thinkingLevel: "medium",
+  });
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Open navigation menu' }).click();
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.locator('[data-role="settings-tab-agents"]').click();
+  await expect(page.locator('[data-role="agent-mobile-subnav-shell"]')).toBeVisible();
+  await page.locator('[data-role="agent-detail-tab-access"]').click();
+  await expect(page.locator('[data-role="agent-permission-roles.dispatch"]')).toBeChecked();
+
+  await page.locator('[data-role="agent-detail-tab-configuration"]').click();
+  await page.locator('[data-role="agent-thinking"]').selectOption('high');
+  await page.locator('[data-role="agent-mobile-subnav-menu-trigger"]').click();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+
+  await expect.poll(async () => page.evaluate(() => {
+    const agents = JSON.parse(window.localStorage.getItem("orchestra.mock.agents") ?? "[]");
+    const agent = agents.find((entry: { name: string }) => entry.name === "Mobile Save Regression Agent") ?? null;
+    return agent
+      ? {
+          directPermissions: agent.directPermissions ?? [],
+          thinkingLevel: agent.thinkingLevel ?? null,
+        }
+      : null;
+  })).toEqual({
+    directPermissions: ["roles.dispatch"],
+    thinkingLevel: "high",
+  });
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Open navigation menu' }).click();
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.locator('[data-role="settings-tab-agents"]').click();
+  await page.locator('[data-role="agent-detail-tab-configuration"]').click();
+  await expect(page.locator('[data-role="agent-thinking"]')).toHaveValue('high');
+});
+
 test("protected supervisor keeps access locked while allowing model and overlay edits", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

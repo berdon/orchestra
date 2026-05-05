@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AccessEditor } from "../components/access/AccessEditor";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
@@ -111,6 +111,15 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
   const [savingOverlay, setSavingOverlay] = useState(false);
   const [policyDefinitions, setPolicyDefinitions] = useState<PolicyDefinition[]>([]);
   const [skillLinks, setSkillLinks] = useState<AgentSkillLinks | null>(null);
+  const agentDraftRef = useRef(agentDraft);
+  const loadedAgentIdRef = useRef(loadedAgentId);
+  const isCreatingAgentRef = useRef(isCreatingAgent);
+  const activeProjectIdRef = useRef(activeProjectId);
+
+  agentDraftRef.current = agentDraft;
+  loadedAgentIdRef.current = loadedAgentId;
+  isCreatingAgentRef.current = isCreatingAgent;
+  activeProjectIdRef.current = activeProjectId;
 
   const selectedAgentSummary = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null,
@@ -377,12 +386,16 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
     };
   }, [canReadSkills, isCreatingAgent, selectedAgentSummary?.id]);
 
+  function resolveAgentSaveInput(nextDraft: AgentUpsertInput, projectId = activeProjectIdRef.current) {
+    return {
+      ...nextDraft,
+      projectId: nextDraft.scope === "project" ? projectId ?? nextDraft.projectId ?? null : null,
+    };
+  }
+
   async function refreshAgentValidation(nextDraft: AgentUpsertInput) {
     try {
-      const validation = await validateAgent({
-        ...nextDraft,
-        projectId: nextDraft.scope === "project" ? activeProjectId ?? nextDraft.projectId ?? null : null,
-      });
+      const validation = await validateAgent(resolveAgentSaveInput(nextDraft));
       setAgentValidation(validation.errors);
       return validation.errors;
     } catch (error) {
@@ -418,15 +431,18 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
     setAgentActionError(null);
 
     try {
-      const validation = await validateAgent({ ...agentDraft, projectId: agentDraft.scope === "project" ? activeProjectId ?? agentDraft.projectId ?? null : null });
+      const currentDraft = agentDraftRef.current;
+      const saveInput = resolveAgentSaveInput(currentDraft);
+      const validation = await validateAgent(saveInput);
       setAgentValidation(validation.errors);
       if (!validation.valid) {
         setAgentActionError("Fix the agent validation errors before saving.");
         return;
       }
 
-      const saveInput = { ...agentDraft, projectId: agentDraft.scope === "project" ? activeProjectId ?? agentDraft.projectId ?? null : null };
-      const saved = loadedAgentId && !isCreatingAgent ? await updateAgent(loadedAgentId, saveInput) : await createAgent(saveInput);
+      const currentLoadedAgentId = loadedAgentIdRef.current;
+      const creatingAgent = isCreatingAgentRef.current;
+      const saved = currentLoadedAgentId && !creatingAgent ? await updateAgent(currentLoadedAgentId, saveInput) : await createAgent(saveInput);
 
       await loadAgents();
       setSelectedAgentId(saved.id);
