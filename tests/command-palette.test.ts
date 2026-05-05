@@ -132,8 +132,26 @@ describe("command palette items", () => {
       supportsHarnessSettings: true,
       supportsSkillsSettings: true,
       supportsAgentTerminal: true,
+      supportsRemoteAccess: true,
     });
 
+    const settingsTitles = items
+      .filter((item) => item.action.type === "navigate-settings")
+      .map((item) => item.title);
+
+    expect(settingsTitles).toEqual([
+      "Open Settings → General",
+      "Open Settings → Agents",
+      "Open Settings → Channels",
+      "Open Settings → Harness",
+      "Open Settings → Projects",
+      "Open Settings → Prompting",
+      "Open Settings → Remote",
+      "Open Settings → Roles",
+      "Open Settings → Skills",
+      "Open Settings → Source Control",
+      "Open Settings → Workflows",
+    ]);
     expect(items.some((item) => item.action.type === "create-task")).toBe(true);
     expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "harness" && item.title === "Open Settings → Harness")).toBe(true);
     expect(items.some((item) => item.action.type === "launch-agent-session" && item.action.agentId === "agent-1")).toBe(true);
@@ -143,6 +161,8 @@ describe("command palette items", () => {
     expect(items.some((item) => item.action.type === "open-session" && item.action.sessionId === "session-1")).toBe(true);
     expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "prompting")).toBe(true);
     expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "skills" && item.title === "Open Settings → Skills")).toBe(true);
+    expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "channels" && item.title === "Open Settings → Channels")).toBe(true);
+    expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "remote" && item.title === "Open Settings → Remote")).toBe(true);
     expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "source_control")).toBe(true);
     expect(items.some((item) => item.action.type === "open-logs")).toBe(true);
   });
@@ -195,6 +215,7 @@ describe("command palette items", () => {
 
     expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "harness")).toBe(false);
     expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "skills")).toBe(false);
+    expect(items.some((item) => item.action.type === "navigate-settings" && item.action.tab === "remote")).toBe(false);
     expect(items.some((item) => item.action.type === "open-logs")).toBe(false);
     expect(items.some((item) => item.action.type === "launch-agent-session-terminal")).toBe(false);
     expect(items.some((item) => item.action.type === "launch-agent-session")).toBe(true);

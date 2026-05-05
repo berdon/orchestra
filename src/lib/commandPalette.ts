@@ -9,6 +9,7 @@ import type {
   WorkflowSummary,
 } from "../types";
 import type { FuzzySearchCandidate } from "./fuzzy";
+import { getVisibleSettingsTabs } from "./settingsTabs";
 
 export type CommandPaletteAction =
   | { type: "navigate-page"; page: PrimaryPage }
@@ -71,6 +72,21 @@ export function buildCommandPaletteItems({
   supportsAgentTerminal = false,
   supportsRemoteAccess = false,
 }: BuildCommandPaletteItemsOptions): CommandPaletteItem[] {
+  const settingsItems = getVisibleSettingsTabs({
+    supportsHarnessSettings,
+    supportsRemoteAccess,
+    supportsSkillsSettings,
+  }).map((tab) =>
+    commandItem({
+      id: `settings-${tab.id.replace(/_/g, "-")}`,
+      title: `Open Settings → ${tab.label}`,
+      subtitle: tab.commandPaletteSubtitle,
+      group: "Pages",
+      keywords: ["settings", ...tab.commandPaletteKeywords],
+      action: { type: "navigate-settings", tab: tab.id },
+    }),
+  );
+
   const pageItems: CommandPaletteItem[] = [
     commandItem({
       id: "page-tasks",
@@ -112,78 +128,7 @@ export function buildCommandPaletteItems({
       keywords: ["notes", "docs", "markdown", "documentation"],
       action: { type: "navigate-page", page: "notes" },
     })] : []),
-    commandItem({
-      id: "settings-projects",
-      title: "Open Settings → Projects",
-      subtitle: "Project and repository management",
-      group: "Pages",
-      keywords: ["settings", "projects", "repositories"],
-      action: { type: "navigate-settings", tab: "projects" },
-    }),
-    commandItem({
-      id: "settings-agents",
-      title: "Open Settings → Agents",
-      subtitle: "Persistent agent definitions",
-      group: "Pages",
-      keywords: ["settings", "agents", "definitions"],
-      action: { type: "navigate-settings", tab: "agents" },
-    }),
-    commandItem({
-      id: "settings-roles",
-      title: "Open Settings → Roles",
-      subtitle: "Role definitions",
-      group: "Pages",
-      keywords: ["settings", "roles"],
-      action: { type: "navigate-settings", tab: "roles" },
-    }),
-    commandItem({
-      id: "settings-workflows",
-      title: "Open Settings → Workflows",
-      subtitle: "Workflow definitions",
-      group: "Pages",
-      keywords: ["settings", "workflows", "lanes"],
-      action: { type: "navigate-settings", tab: "workflows" },
-    }),
-    ...(supportsSkillsSettings ? [commandItem({
-      id: "settings-skills",
-      title: "Open Settings → Skills",
-      subtitle: "Managed local and external skills catalog",
-      group: "Pages",
-      keywords: ["settings", "skills", "catalog", "managed skills", "skill editor"],
-      action: { type: "navigate-settings", tab: "skills" },
-    })] : []),
-    commandItem({
-      id: "settings-source-control",
-      title: "Open Settings → Source Control",
-      subtitle: "Global git identity defaults and previews",
-      group: "Pages",
-      keywords: ["settings", "source control", "git", "identity", "commits"],
-      action: { type: "navigate-settings", tab: "source_control" },
-    }),
-    commandItem({
-      id: "settings-prompting",
-      title: "Open Settings → Prompting",
-      subtitle: "Project prompt templates and prompt tokens",
-      group: "Pages",
-      keywords: ["settings", "prompting", "prompt", "template", "worker context"],
-      action: { type: "navigate-settings", tab: "prompting" },
-    }),
-    ...(supportsHarnessSettings ? [commandItem({
-      id: "settings-harness",
-      title: "Open Settings → Harness",
-      subtitle: "Harness auth, model, runtime, and legacy import setup",
-      group: "Pages",
-      keywords: ["settings", "harness", "pi", "models", "auth", "providers", "runtime", "extensions", "compaction"],
-      action: { type: "navigate-settings", tab: "harness" },
-    })] : []),
-    commandItem({
-      id: "settings-general",
-      title: "Open Settings → General",
-      subtitle: "Appearance, diagnostics, notifications, and runtime logs",
-      group: "Pages",
-      keywords: ["settings", "general", "appearance", "theme", "notifications", "bridge", "diagnostics", "logs"],
-      action: { type: "navigate-settings", tab: "general" },
-    }),
+    ...settingsItems,
   ];
 
   const actionItems: CommandPaletteItem[] = [

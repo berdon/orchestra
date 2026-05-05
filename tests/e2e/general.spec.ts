@@ -135,6 +135,35 @@ function seedGeneralAndHarnessSettings() {
   );
 }
 
+function expectGeneralPinnedFirstAndRemainingAlphabetized(labels: string[]) {
+  expect(labels[0]).toBe("General");
+  expect(labels.slice(1)).toEqual([...labels.slice(1)].sort((left, right) => left.localeCompare(right)));
+}
+
+test("settings navigation keeps General first and alphabetizes remaining sections on desktop", async ({ page }) => {
+  await page.addInitScript(seedGeneralAndHarnessSettings);
+
+  await page.goto("/");
+  await page.locator('[data-role="nav-item-settings"]').click();
+
+  const labels = (await page.locator('.settings-subnav--settings:not(.settings-subnav--mobile) .settings-subnav__item').allTextContents()).map((value) => value.trim());
+
+  expectGeneralPinnedFirstAndRemainingAlphabetized(labels);
+});
+
+test("settings navigation keeps General first and alphabetizes remaining sections on mobile", async ({ page }) => {
+  await page.addInitScript(seedGeneralAndHarnessSettings);
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.goto("/");
+  await page.locator('[data-role="toggle-mobile-navigation"]').click();
+  await page.locator('[data-role="nav-item-settings"]').click();
+
+  const labels = (await page.locator('.settings-subnav--settings.settings-subnav--mobile .settings-subnav__item').allTextContents()).map((value) => value.trim());
+
+  expectGeneralPinnedFirstAndRemainingAlphabetized(labels);
+});
+
 test("settings general, harness, prompting, and source control panels render and persist", async ({ page }) => {
   await page.addInitScript(seedGeneralAndHarnessSettings);
 
@@ -180,6 +209,7 @@ test("settings general, harness, prompting, and source control panels render and
   await expect(page.getByRole("tab", { name: "General" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("tab", { name: "Harness" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Pi" })).toHaveCount(0);
+  await expect(page.locator('[data-role="general-version-display"]')).toContainText("0.1.0-mock0000");
   await expect(page.locator('[data-role="general-detail-tab-dock"]')).toBeVisible();
 
   await expect(page.locator('[data-role="theme-select"]')).toHaveValue("orchestra-dark");

@@ -1736,6 +1736,26 @@ strong {
   gap: 18px;
 }
 
+.general-panel__header {
+  gap: 14px;
+}
+
+.general-panel__version-card {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-subtle) 82%, transparent);
+}
+
+.general-panel__version-value {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
 .bridge-diagnostics-table-wrap {
   width: 100%;
   overflow-x: auto;

@@ -17,6 +17,7 @@ import {
   buildCommandPaletteItems,
   type CommandPaletteItem,
 } from "./lib/commandPalette";
+import { SETTINGS_TABS, getVisibleSettingsTabs } from "./lib/settingsTabs";
 import {
   applyPendingRunToSession,
   createPendingUserRun,
@@ -402,20 +403,6 @@ function NavIcon({
       return null;
   }
 }
-
-const SETTINGS_TABS = [
-  { id: "projects", label: "Projects" },
-  { id: "agents", label: "Agents" },
-  { id: "roles", label: "Roles" },
-  { id: "workflows", label: "Workflows" },
-  { id: "skills", label: "Skills" },
-  { id: "channels", label: "Channels" },
-  { id: "remote", label: "Remote" },
-  { id: "source_control", label: "Source Control" },
-  { id: "prompting", label: "Prompting" },
-  { id: "harness", label: "Harness" },
-  { id: "general", label: "General" },
-] as const;
 
 const SUPERVISOR_AGENT_ID = "agent-supervisor";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "orchestra.preferences.sidebar-collapsed";
@@ -1712,17 +1699,10 @@ export function App() {
   );
   const visibleSettingsTabs = useMemo(
     () =>
-      SETTINGS_TABS.filter((tab) => {
-        if (tab.id === "harness") {
-          return canManageHarnessSettings;
-        }
-        if (tab.id === "skills") {
-          return canManageSkillsSettings;
-        }
-        if (tab.id === "remote") {
-          return canManageRemoteAccess;
-        }
-        return true;
+      getVisibleSettingsTabs({
+        supportsHarnessSettings: canManageHarnessSettings,
+        supportsRemoteAccess: canManageRemoteAccess,
+        supportsSkillsSettings: canManageSkillsSettings,
       }),
     [canManageHarnessSettings, canManageRemoteAccess, canManageSkillsSettings],
   );
@@ -6191,6 +6171,7 @@ export function App() {
                   />
                 ) : (
                   <GeneralPanel
+                    orchestraVersionDisplay={appInfo?.versionDisplay ?? null}
                     availableThemes={BUILT_IN_ORCHESTRA_THEMES}
                     selectedThemeId={themeId}
                     canManageBridgeDiagnostics={canManageBridgeDiagnostics}

@@ -8,6 +8,7 @@ import type { OrchestraThemeDefinition, OrchestraThemeId } from "../lib/theme";
 import type { AgentSummary, BridgeDiagnostics, LogEntry, RoleSummary, SessionRecord, SystemNotificationEnvironmentStatus, SystemNotificationPermissionState } from "../types";
 
 interface GeneralPanelProps {
+  orchestraVersionDisplay?: string | null;
   availableThemes: readonly OrchestraThemeDefinition[];
   selectedThemeId: OrchestraThemeId;
   canManageBridgeDiagnostics: boolean;
@@ -78,6 +79,7 @@ function formatNotificationPermissionLabel(value: SystemNotificationPermissionSt
 }
 
 export function GeneralPanel({
+  orchestraVersionDisplay,
   availableThemes,
   selectedThemeId,
   canManageBridgeDiagnostics,
@@ -135,7 +137,13 @@ export function GeneralPanel({
       dataRolePrefix="general-detail"
       initialTabId="appearance"
       header={(
-        <div className="panel__header panel__header--stacked">
+        <div className="panel__header panel__header--stacked general-panel__header">
+          <div className="general-panel__version-card" data-role="general-version-display">
+            <p className="eyebrow">Orchestra version</p>
+            <p className="general-panel__version-value" data-role="general-version-value">
+              {orchestraVersionDisplay ?? "Loading…"}
+            </p>
+          </div>
           <div>
             <p className="eyebrow">General settings</p>
             <h3>Client preferences and diagnostics</h3>
