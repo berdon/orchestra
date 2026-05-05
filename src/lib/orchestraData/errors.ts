@@ -11,6 +11,7 @@ export type UiErrorKind =
   | "unsupported"
   | "authorization"
   | "validation"
+  | "not_found"
   | "conflict"
   | "timeout"
   | "transport"
@@ -37,6 +38,8 @@ function mapUiErrorKind(code: OrchestraClientErrorCode): UiErrorKind {
       return "authorization";
     case "validation":
       return "validation";
+    case "not_found":
+      return "not_found";
     case "conflict":
       return "conflict";
     case "timeout":
@@ -63,6 +66,8 @@ function mapUiErrorTitle(error: OrchestraClientErrorShape): string {
       return "Access denied";
     case "validation":
       return "Check the request";
+    case "not_found":
+      return "Not found";
     case "conflict":
       return "Refresh and try again";
     case "timeout":
@@ -92,6 +97,8 @@ function mapUiErrorMessage(error: OrchestraClientErrorShape, fallback: string): 
     case "forbidden":
       return "This action is not available with the current permissions.";
     case "validation":
+      return error.message || fallback;
+    case "not_found":
       return error.message || fallback;
     case "conflict":
       return "The data changed underneath you. Refresh the page data and try again.";

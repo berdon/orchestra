@@ -963,6 +963,7 @@ test("chat page recovers the active agent session after a prolonged background r
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
   await expect(page.locator('[data-role="composer-input"]')).toHaveValue("Keep this chat session visible");
   await expect(page.locator('[data-role="composer-input"]')).toBeFocused();
+  await expect(page.locator('[data-role="agent-chat-status-error"]')).toHaveCount(0);
 
   await page.evaluate(() => {
     const testWindow = window as Window & { __orchestraTestNow?: number };
@@ -975,4 +976,13 @@ test("chat page recovers the active agent session after a prolonged background r
   await expect(page.locator('[data-role="composer-input"]')).toBeVisible();
   await expect(page.locator('[data-role="composer-input"]')).toHaveValue("Keep this chat session visible");
   await expect(page.locator('[data-role="composer-input"]')).toBeFocused();
+  await expect(page.locator('[data-role="agent-chat-status-error"]')).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Sessions" }).click();
+  await expect(page.locator('[data-role="session-filter-active"]')).toBeVisible();
+  await page.getByRole("button", { name: "Chat" }).click();
+
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
+  await expect(page.locator('[data-role="session-chat-panel"]')).toBeVisible();
+  await expect(page.locator('[data-role="agent-chat-status-error"]')).toHaveCount(0);
 });

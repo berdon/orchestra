@@ -118,6 +118,40 @@ function getErrorMessage(error: unknown, fallbackMessage: string) {
   return fallbackMessage;
 }
 
+function deriveOperationSpecificErrorOverrides(
+  operation: string,
+  message: string,
+): Pick<OrchestraClientErrorShape, "code" | "userMessage"> | null {
+  const normalizedOperation = operation.trim();
+  if (
+    !normalizedOperation.startsWith("sessions.")
+    && normalizedOperation !== "workers.ensureAgentSession"
+  ) {
+    return null;
+  }
+
+  const normalizedMessage = message.trim().toLowerCase();
+  if (!normalizedMessage.includes("session")) {
+    return null;
+  }
+
+  if (
+    normalizedMessage.includes("canonical session row")
+    || normalizedMessage.includes("canonical session rows")
+    || normalizedMessage.includes("canonical transcript path")
+    || normalizedMessage.includes("unable to find session")
+    || (/^session\s+[a-z0-9-]+\s+was not found/.test(normalizedMessage))
+  ) {
+    return {
+      code: "not_found",
+      userMessage:
+        "This session is no longer available. Refresh the session list or reopen the latest chat to continue.",
+    };
+  }
+
+  return null;
+}
+
 export function inferOrchestraClientErrorCode(
   error: unknown,
   fallback: OrchestraClientErrorCode = "unknown",
@@ -169,14 +203,24 @@ export function normalizeOrchestraClientError(
   error: unknown,
   options: NormalizeOrchestraClientErrorOptions,
 ): OrchestraClientError {
-  const code = options.code ?? inferOrchestraClientErrorCode(error, mapHttpStatusToOrchestraClientErrorCode(options.status));
+  const message = getErrorMessage(error, options.fallbackMessage);
+  const overrides = deriveOperationSpecificErrorOverrides(
+    options.operation,
+    message,
+  );
+  const code = options.code
+    ?? overrides?.code
+    ?? inferOrchestraClientErrorCode(
+      error,
+      mapHttpStatusToOrchestraClientErrorCode(options.status),
+    );
   const retryable = options.retryable ?? isRetryableOrchestraClientErrorCode(code);
 
   return new OrchestraClientError({
     name: "OrchestraClientError",
     code,
-    message: getErrorMessage(error, options.fallbackMessage),
-    userMessage: options.userMessage ?? null,
+    message,
+    userMessage: options.userMessage ?? overrides?.userMessage ?? null,
     retryable,
     status: options.status ?? null,
     source: options.source,

@@ -43,6 +43,10 @@ import {
 } from "./lib/projectSettings";
 import { listenToAgentCatalogChanges } from "./lib/agentCatalogEvents";
 import {
+  isFallbackChatSessionView,
+  shouldSuppressPassiveChatSessionLoadError,
+} from "./lib/sessionErrorBehavior";
+import {
   BUILT_IN_ORCHESTRA_THEMES,
   applyOrchestraTheme,
   getOrchestraThemeDefinition,
@@ -416,6 +420,16 @@ const SETTINGS_TABS = [
 const SUPERVISOR_AGENT_ID = "agent-supervisor";
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "orchestra.preferences.sidebar-collapsed";
 const CHAT_SESSION_RECOVERY_GRACE_MS = 60_000;
+const PASSIVE_SESSION_LOAD_OPERATIONS = new Set([
+  "sessions.get",
+  "sessions.getModelState",
+  "sessions.getStats",
+  "sessions.subscribe",
+]);
+
+function isPassiveSessionLoadOperation(operation?: string | null) {
+  return Boolean(operation && PASSIVE_SESSION_LOAD_OPERATIONS.has(operation));
+}
 const APP_ROUTE_PAGES = new Set<PrimaryPage>([
   "tasks",
   "inbox",
@@ -1823,6 +1837,11 @@ export function App() {
   }, [chatSessionId, liveChatSession, selectedChatAgentId]);
 
   const viewedSession = activePage === "chat" ? chatSession : selectedSession;
+  const viewedSessionUsesFallbackChatState = isFallbackChatSessionView({
+    activePage,
+    chatSessionId: chatSession?.id ?? null,
+    hasLiveChatSession: Boolean(liveChatSession),
+  });
   const sessionSurfaceKey = useMemo(() => {
     if (activePage === "sessions") {
       return selectedSession?.id ? `sessions:${selectedSession.id}` : null;
@@ -1863,6 +1882,40 @@ export function App() {
   const supervisorPendingRuns = supervisorSessionId
     ? pendingRuns[supervisorSessionId]
     : undefined;
+
+  const suppressPassiveSessionLoadError = useCallback(
+    (
+      sessionId: string,
+      target: string,
+      error: unknown,
+      fallback: string,
+    ) => {
+      if (!shouldSuppressPassiveChatSessionLoadError({
+        activePage: activePageRef.current,
+        visibleChatSessionId: chatSessionIdStateRef.current,
+        erroredSessionId: sessionId,
+        liveSessionIds: sessionsRef.current.map((session) => session.id),
+      })) {
+        return false;
+      }
+
+      void reportUiError(orchestraClient, target, error, fallback);
+      return true;
+    },
+    [orchestraClient],
+  );
+
+  useEffect(() => {
+    if (!viewedSessionUsesFallbackChatState) {
+      return;
+    }
+
+    setSessionActionError((current) =>
+      current && isPassiveSessionLoadOperation(current.error.operation)
+        ? null
+        : current,
+    );
+  }, [viewedSessionUsesFallbackChatState]);
 
   useEffect(() => {
     if (
@@ -1986,7 +2039,8 @@ export function App() {
     if (
       isDetachedWindow ||
       !viewedSession?.id ||
-      hasPendingSessionRuns(viewedSessionPendingRuns)
+      hasPendingSessionRuns(viewedSessionPendingRuns) ||
+      viewedSessionUsesFallbackChatState
     ) {
       return;
     }
@@ -2006,13 +2060,24 @@ export function App() {
           }
         })
         .catch((error) => {
-          if (!cancelled) {
-            setSessionActionError(
-              (current) =>
-                current ??
-                toUiErrorState(error, "Unable to load session stats."),
-            );
+          if (cancelled) {
+            return;
           }
+          if (
+            suppressPassiveSessionLoadError(
+              sessionId,
+              "ui.sessions.stats.load",
+              error,
+              "Unable to load session stats.",
+            )
+          ) {
+            return;
+          }
+          setSessionActionError(
+            (current) =>
+              current ??
+              toUiErrorState(error, "Unable to load session stats."),
+          );
         })
         .finally(() => {
           if (!cancelled) {
@@ -2029,9 +2094,11 @@ export function App() {
     };
   }, [
     isDetachedWindow,
+    suppressPassiveSessionLoadError,
     viewedSession?.id,
     viewedSession?.updatedAt,
     hasPendingSessionRuns(viewedSessionPendingRuns),
+    viewedSessionUsesFallbackChatState,
   ]);
 
   useEffect(() => {
@@ -3666,6 +3733,11 @@ export function App() {
             selectedChatAgentSnapshot?.runtimeState.mainSessionId ?? null,
         });
         chatSessionRecoveryMissRef.current = null;
+        setSessionActionError((current) =>
+          current && isPassiveSessionLoadOperation(current.error.operation)
+            ? null
+            : current,
+        );
         mergeSessionRecord(session, { select: false });
         setChatSessionId(session.id);
         chatSessionAgentIdRef.current = selectedChatAgentId;
@@ -3733,6 +3805,11 @@ export function App() {
           return;
         }
         supervisorSessionRecoveryMissRef.current = null;
+        setSessionActionError((current) =>
+          current && isPassiveSessionLoadOperation(current.error.operation)
+            ? null
+            : current,
+        );
         mergeSessionRecord(session, { select: false });
         setSupervisorSessionId((current) =>
           current === session.id ? current : session.id,
@@ -3865,7 +3942,7 @@ export function App() {
   }, [activePage, activeSettingsTab, isDetachedWindow, activeProject?.slug]);
 
   useEffect(() => {
-    if (isDetachedWindow) {
+    if (isDetachedWindow || viewedSessionUsesFallbackChatState) {
       return;
     }
 
@@ -4008,7 +4085,8 @@ export function App() {
     if (
       isDetachedWindow ||
       (activePage !== "sessions" && activePage !== "chat") ||
-      !viewedSession
+      !viewedSession ||
+      viewedSessionUsesFallbackChatState
     ) {
       return;
     }
@@ -4030,16 +4108,27 @@ export function App() {
         }));
       })
       .catch(async (error) => {
-        if (!cancelled) {
-          setSessionActionError(
-            await reportUiError(
-              orchestraClient,
-              "ui.sessions.model_state.load",
-              error,
-              "Unable to load session model.",
-            ),
-          );
+        if (cancelled) {
+          return;
         }
+        if (
+          suppressPassiveSessionLoadError(
+            viewedSession.id,
+            "ui.sessions.model_state.load",
+            error,
+            "Unable to load session model.",
+          )
+        ) {
+          return;
+        }
+        setSessionActionError(
+          await reportUiError(
+            orchestraClient,
+            "ui.sessions.model_state.load",
+            error,
+            "Unable to load session model.",
+          ),
+        );
       })
       .finally(() => {
         if (!cancelled) {
@@ -4052,13 +4141,21 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [activePage, isDetachedWindow, orchestraClient, viewedSession?.id]);
+  }, [
+    activePage,
+    isDetachedWindow,
+    orchestraClient,
+    suppressPassiveSessionLoadError,
+    viewedSession?.id,
+    viewedSessionUsesFallbackChatState,
+  ]);
 
   useEffect(() => {
     if (
-      isDetachedWindow ||
-      (activePage !== "sessions" && activePage !== "chat") ||
-      !viewedSession?.id
+      isDetachedWindow
+      || (activePage !== "sessions" && activePage !== "chat")
+      || !viewedSession?.id
+      || viewedSessionUsesFallbackChatState
     ) {
       return;
     }
@@ -4075,28 +4172,47 @@ export function App() {
         }
       })
       .catch(async (error) => {
-        if (!cancelled) {
-          setSessionActionError(
-            await reportUiError(
-              orchestraClient,
-              "ui.sessions.record.load",
-              error,
-              "Unable to load session.",
-            ),
-          );
+        if (cancelled) {
+          return;
         }
+        if (
+          suppressPassiveSessionLoadError(
+            viewedSession.id,
+            "ui.sessions.record.load",
+            error,
+            "Unable to load session.",
+          )
+        ) {
+          return;
+        }
+        setSessionActionError(
+          await reportUiError(
+            orchestraClient,
+            "ui.sessions.record.load",
+            error,
+            "Unable to load session.",
+          ),
+        );
       });
 
     return () => {
       cancelled = true;
     };
-  }, [activePage, isDetachedWindow, mergeSessionRecord, viewedSession?.id]);
+  }, [
+    activePage,
+    isDetachedWindow,
+    mergeSessionRecord,
+    suppressPassiveSessionLoadError,
+    viewedSession?.id,
+    viewedSessionUsesFallbackChatState,
+  ]);
 
   useEffect(() => {
     if (
       isDetachedWindow ||
       (activePage !== "sessions" && activePage !== "chat") ||
       !viewedSession?.id ||
+      viewedSessionUsesFallbackChatState ||
       viewedSession.status !== "active" ||
       viewedSession.subscribed
     ) {
@@ -4139,6 +4255,7 @@ export function App() {
     mergeSessionRecord,
     viewedSession?.id,
     viewedSession?.status,
+    viewedSessionUsesFallbackChatState,
   ]);
 
   useLayoutEffect(() => {
@@ -4427,6 +4544,9 @@ export function App() {
 
   function navigateToChatAgent(agentId: string) {
     setActivePage("chat");
+    if (activePageRef.current === "chat" && selectedChatAgentId === agentId) {
+      return;
+    }
     setSelectedChatAgentId(agentId);
     // Clear chat-specific view state so recovery reopens the tracked agent
     // session instead of reusing stale UI state from the previously selected
