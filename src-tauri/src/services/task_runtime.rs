@@ -349,11 +349,17 @@ fn latest_lane_assignment_status(
         })
 }
 
-fn task_is_runnable_for_worker_runtime(
+#[derive(Clone, Copy)]
+struct TaskRuntimeRunnableOptions {
+    allow_latest_canceled_assignment: bool,
+}
+
+fn task_is_runnable_for_worker_runtime_with_options(
     connection: &Connection,
     task: &TaskDetail,
     workflow_id: Option<&str>,
     lane_id: &str,
+    options: TaskRuntimeRunnableOptions,
 ) -> Result<bool, String> {
     if task.archived
         || task.dependency_blocked
@@ -366,7 +372,8 @@ fn task_is_runnable_for_worker_runtime(
         return Ok(false);
     }
 
-    if task.status == "ready"
+    if !options.allow_latest_canceled_assignment
+        && task.status == "ready"
         && matches!(
             latest_lane_assignment_status(connection, &task.id, lane_id)?.as_deref(),
             Some(ASSIGNMENT_STATUS_CANCELED)
@@ -398,6 +405,23 @@ fn task_is_runnable_for_worker_runtime(
     ))
 }
 
+fn task_is_runnable_for_worker_runtime(
+    connection: &Connection,
+    task: &TaskDetail,
+    workflow_id: Option<&str>,
+    lane_id: &str,
+) -> Result<bool, String> {
+    task_is_runnable_for_worker_runtime_with_options(
+        connection,
+        task,
+        workflow_id,
+        lane_id,
+        TaskRuntimeRunnableOptions {
+            allow_latest_canceled_assignment: false,
+        },
+    )
+}
+
 pub fn task_lane_queue_source_is_valid(
     connection: &Connection,
     task_id: &str,
@@ -408,7 +432,15 @@ pub fn task_lane_queue_source_is_valid(
         return Ok(false);
     };
 
-    task_is_runnable_for_worker_runtime(connection, &task, workflow_id, lane_id)
+    task_is_runnable_for_worker_runtime_with_options(
+        connection,
+        &task,
+        workflow_id,
+        lane_id,
+        TaskRuntimeRunnableOptions {
+            allow_latest_canceled_assignment: true,
+        },
+    )
 }
 
 pub fn get_assignment_by_id(
@@ -1221,9 +1253,15 @@ fn canonical_session_is_available(
     Ok(!row.session_path.as_os_str().is_empty() && row.session_path.exists())
 }
 
-fn stale_assignment_reason(
+#[derive(Clone, Copy)]
+struct StaleAssignmentCheckOptions {
+    allow_missing_canonical_session: bool,
+}
+
+fn stale_assignment_reason_with_options(
     connection: &Connection,
     assignment: &TaskLaneAssignment,
+    options: StaleAssignmentCheckOptions,
 ) -> Result<Option<String>, String> {
     let task = tasks::get_task_context(connection, &assignment.task_id)?;
     let blocked_active_assignment =
@@ -1251,11 +1289,18 @@ fn stale_assignment_reason(
     }
 
     if assignment.status == ASSIGNMENT_STATUS_ACTIVE && !blocked_active_assignment {
-        let Some(session_id) = assignment.session_id.as_deref() else {
-            return Ok(Some("active assignment is missing a session".into()));
-        };
-        if !canonical_session_is_available(connection, session_id)? {
-            return Ok(Some(format!("assignment session {session_id} is missing")));
+        match assignment.session_id.as_deref() {
+            Some(session_id) => {
+                if !options.allow_missing_canonical_session
+                    && !canonical_session_is_available(connection, session_id)?
+                {
+                    return Ok(Some(format!("assignment session {session_id} is missing")));
+                }
+            }
+            None if !options.allow_missing_canonical_session => {
+                return Ok(Some("active assignment is missing a session".into()));
+            }
+            None => {}
         }
     }
 
@@ -1359,7 +1404,9 @@ fn stale_assignment_reason(
                         "assigned role instance {role_instance_id} is missing a session"
                     )));
                 };
-                if !canonical_session_is_available(connection, &session_id)? {
+                if !options.allow_missing_canonical_session
+                    && !canonical_session_is_available(connection, &session_id)?
+                {
                     return Ok(Some(format!(
                         "assigned role instance session {session_id} is missing"
                     )));
@@ -1370,6 +1417,32 @@ fn stale_assignment_reason(
     }
 
     Ok(None)
+}
+
+fn stale_assignment_reason(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+) -> Result<Option<String>, String> {
+    stale_assignment_reason_with_options(
+        connection,
+        assignment,
+        StaleAssignmentCheckOptions {
+            allow_missing_canonical_session: false,
+        },
+    )
+}
+
+fn stale_assignment_source_reason(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+) -> Result<Option<String>, String> {
+    stale_assignment_reason_with_options(
+        connection,
+        assignment,
+        StaleAssignmentCheckOptions {
+            allow_missing_canonical_session: true,
+        },
+    )
 }
 
 pub fn activate_queued_role_assignments(
@@ -1560,14 +1633,18 @@ fn dispatch_task_lane_in_transaction(
     }
 
     if let Some(existing) = find_open_assignment_for_task_lane(connection, task_id, &lane.id)? {
-        cancel_duplicate_open_assignments_for_task_lane(
-            connection,
-            task_id,
-            &lane.id,
-            &existing.id,
-            "Removed duplicate open task lane assignment",
-        )?;
-        return Ok(existing);
+        if let Some(reason) = stale_assignment_reason(connection, &existing)? {
+            clear_task_runtime_claims_preserving_status(connection, task_id, Some(reason))?;
+        } else {
+            cancel_duplicate_open_assignments_for_task_lane(
+                connection,
+                task_id,
+                &lane.id,
+                &existing.id,
+                "Removed duplicate open task lane assignment",
+            )?;
+            return Ok(existing);
+        }
     }
 
     let assignment_id = format!("task-assignment-{}", Uuid::new_v4().simple());
@@ -2361,6 +2438,13 @@ fn recover_missing_assignment_session(
     assignment: &TaskLaneAssignment,
     runtime_cwd: &str,
 ) -> Result<String, String> {
+    if let Some(reason) = stale_assignment_source_reason(connection, assignment)? {
+        return Err(format!(
+            "Refusing to recover missing session for stale assignment {}: {reason}",
+            assignment.id
+        ));
+    }
+
     let task = tasks::get_task_context(connection, &assignment.task_id)?;
     let context = pi_sessions::session_context_for_project_id(&task.project_id)?;
 
@@ -5735,15 +5819,16 @@ mod tests {
         }
     }
 
-    fn create_workflow_with_lanes(
+    fn create_named_workflow_with_lanes(
         connection: &mut Connection,
+        name: &str,
         role_slug: &str,
         agent_slug: &str,
     ) -> crate::models::WorkflowDefinition {
         workflows::create_workflow(
             connection,
             WorkflowUpsertInput {
-                name: "Runtime Flow".into(),
+                name: name.into(),
                 description: None,
                 lanes: vec![
                     WorkflowLaneInput {
@@ -5800,6 +5885,14 @@ mod tests {
             },
         )
         .expect("workflow should create")
+    }
+
+    fn create_workflow_with_lanes(
+        connection: &mut Connection,
+        role_slug: &str,
+        agent_slug: &str,
+    ) -> crate::models::WorkflowDefinition {
+        create_named_workflow_with_lanes(connection, "Runtime Flow", role_slug, agent_slug)
     }
 
     fn insert_project_and_repository(
@@ -10860,6 +10953,363 @@ mod tests {
                 .all(|candidate| candidate.task_id != task.id),
             "blocked active assignment should not be reported as stale"
         );
+    }
+
+    #[test]
+    fn stale_role_assignment_is_cleared_before_redispatching_current_lane() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Redispatch Guard Role".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Redispatch Guard Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow_one = create_named_workflow_with_lanes(
+            &mut connection,
+            "Redispatch Guard Flow v1",
+            &role.slug,
+            &agent.slug,
+        );
+        let workflow_two = create_named_workflow_with_lanes(
+            &mut connection,
+            "Redispatch Guard Flow v2",
+            &role.slug,
+            &agent.slug,
+        );
+        let project_root = init_test_repo("task-runtime-stale-redispatch");
+        insert_project_and_repository(
+            &connection,
+            "project-stale-redispatch",
+            "project-stale-redispatch",
+            "repo-stale-redispatch",
+            "repo-stale-redispatch",
+            "Stale Redispatch Repo",
+            &project_root,
+        );
+
+        let task = tasks::create_task(
+            &mut connection,
+            Some("project-stale-redispatch"),
+            TaskUpsertInput {
+                title: "Stale redispatch task".into(),
+                description: Some("Dispatch should replace stale role claims.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow_one.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-stale-redispatch".into()),
+                repository_ids: vec!["repo-stale-redispatch".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+
+        let original_assignment =
+            dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+                .expect("initial dispatch should succeed");
+        let original_session_id = original_assignment
+            .session_id
+            .clone()
+            .expect("original session should exist");
+        let original_role_instance_id = original_assignment
+            .role_instance_id
+            .clone()
+            .expect("original role instance should exist");
+        let original_queue_entry_id = original_assignment
+            .role_queue_entry_id
+            .clone()
+            .expect("original role queue entry should exist");
+
+        let dispatched_task =
+            tasks::get_task_context(&connection, &task.id).expect("task should reload");
+        tasks::update_task(
+            &mut connection,
+            &task.id,
+            TaskUpsertInput {
+                title: dispatched_task.title.clone(),
+                description: dispatched_task.description.clone(),
+                task_type: dispatched_task.task_type.clone(),
+                tags: dispatched_task.tags.clone(),
+                status: dispatched_task.status.clone(),
+                priority: dispatched_task.priority.clone(),
+                workflow_id: Some(workflow_two.id.clone()),
+                current_lane_id: dispatched_task.current_lane_id.clone(),
+                assignee_type: dispatched_task.assignee_type.clone(),
+                assignee_id: dispatched_task.assignee_id.clone(),
+                repository_id: dispatched_task.repository_id.clone(),
+                repository_ids: dispatched_task.repository_ids.clone(),
+                parent_task_id: dispatched_task.parent_task_id.clone(),
+                whip_max_attempts: Some(dispatched_task.whip_max_attempts),
+                archived: Some(false),
+            },
+        )
+        .expect("task workflow should update");
+
+        assert!(
+            !task_lane_queue_source_is_valid(
+                &connection,
+                &task.id,
+                Some(workflow_one.id.as_str()),
+                "lane-implement",
+            )
+            .expect("old workflow source should validate"),
+            "original assignment should now be stale"
+        );
+        assert!(
+            task_lane_queue_source_is_valid(
+                &connection,
+                &task.id,
+                Some(workflow_two.id.as_str()),
+                "lane-implement",
+            )
+            .expect("new workflow source should validate"),
+            "task should still be dispatchable on the current lane"
+        );
+
+        let redispatched =
+            dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+                .expect("redispatch should repair stale assignment state");
+        assert_ne!(redispatched.id, original_assignment.id);
+        assert_eq!(redispatched.workflow_id, workflow_two.id);
+        assert_eq!(redispatched.worker_type, "role");
+        assert_ne!(
+            redispatched.session_id.as_deref(),
+            Some(original_session_id.as_str())
+        );
+
+        let original_assignment_status: String = connection
+            .query_row(
+                "SELECT status FROM task_lane_assignments WHERE id = ?1",
+                [original_assignment.id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("original assignment should load");
+        assert_eq!(original_assignment_status, "canceled");
+
+        let original_queue_status: String = connection
+            .query_row(
+                "SELECT status FROM role_queue_entries WHERE id = ?1",
+                [original_queue_entry_id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("original queue entry should load");
+        assert_eq!(original_queue_status, "canceled");
+
+        let (original_instance_status, original_instance_session_id): (String, Option<String>) =
+            connection
+                .query_row(
+                    "SELECT status, session_id FROM role_instances WHERE id = ?1",
+                    [original_role_instance_id.as_str()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .expect("original role instance should load");
+        assert_eq!(original_instance_status, "canceled");
+        assert!(original_instance_session_id.is_none());
+
+        let open_assignments = list_open_task_lane_assignments(&connection, &task.id)
+            .expect("open assignments should load");
+        assert_eq!(open_assignments.len(), 1);
+        assert_eq!(open_assignments[0].id, redispatched.id);
+    }
+
+    #[test]
+    fn recover_missing_assignment_session_rejects_stale_role_assignment_without_creating_a_new_session(
+    ) {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Recovery Guard Role".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Recovery Guard Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow_one = create_named_workflow_with_lanes(
+            &mut connection,
+            "Recovery Guard Flow v1",
+            &role.slug,
+            &agent.slug,
+        );
+        let workflow_two = create_named_workflow_with_lanes(
+            &mut connection,
+            "Recovery Guard Flow v2",
+            &role.slug,
+            &agent.slug,
+        );
+        let project_root = init_test_repo("task-runtime-stale-recovery-guard");
+        insert_project_and_repository(
+            &connection,
+            "project-stale-recovery-guard",
+            "project-stale-recovery-guard",
+            "repo-stale-recovery-guard",
+            "repo-stale-recovery-guard",
+            "Stale Recovery Guard Repo",
+            &project_root,
+        );
+
+        let task = tasks::create_task(
+            &mut connection,
+            Some("project-stale-recovery-guard"),
+            TaskUpsertInput {
+                title: "Stale recovery task".into(),
+                description: Some(
+                    "Missing-session recovery should reject stale role claims.".into(),
+                ),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow_one.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-stale-recovery-guard".into()),
+                repository_ids: vec!["repo-stale-recovery-guard".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("initial dispatch should succeed");
+        let original_session_id = assignment
+            .session_id
+            .clone()
+            .expect("original session should exist");
+        let runtime_cwd = assignment
+            .runtime_cwd
+            .clone()
+            .expect("runtime cwd should exist");
+
+        let dispatched_task =
+            tasks::get_task_context(&connection, &task.id).expect("task should reload");
+        tasks::update_task(
+            &mut connection,
+            &task.id,
+            TaskUpsertInput {
+                title: dispatched_task.title.clone(),
+                description: dispatched_task.description.clone(),
+                task_type: dispatched_task.task_type.clone(),
+                tags: dispatched_task.tags.clone(),
+                status: dispatched_task.status.clone(),
+                priority: dispatched_task.priority.clone(),
+                workflow_id: Some(workflow_two.id.clone()),
+                current_lane_id: dispatched_task.current_lane_id.clone(),
+                assignee_type: dispatched_task.assignee_type.clone(),
+                assignee_id: dispatched_task.assignee_id.clone(),
+                repository_id: dispatched_task.repository_id.clone(),
+                repository_ids: dispatched_task.repository_ids.clone(),
+                parent_task_id: dispatched_task.parent_task_id.clone(),
+                whip_max_attempts: Some(dispatched_task.whip_max_attempts),
+                archived: Some(false),
+            },
+        )
+        .expect("task workflow should update");
+
+        let missing_session_path = project_root.join("missing-role-session.jsonl");
+        connection
+            .execute(
+                "UPDATE sessions SET session_path = ?2, transcript_path = ?2, transcript_exists = 0 WHERE id = ?1",
+                params![
+                    original_session_id.as_str(),
+                    missing_session_path.display().to_string(),
+                ],
+            )
+            .expect("session row should point at a missing transcript");
+
+        let session_count_before: i64 = connection
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+            .expect("session count should load");
+        let error = recover_missing_assignment_session(&connection, &assignment, &runtime_cwd)
+            .expect_err("stale assignment recovery should fail");
+        assert!(error.contains("Refusing to recover missing session for stale assignment"));
+        assert!(error.contains("task is no longer runnable for the queued/active lane claim"));
+
+        let session_count_after: i64 = connection
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+            .expect("session count should reload");
+        assert_eq!(session_count_after, session_count_before);
+
+        let assignment_session_rows: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE assignment_id = ?1",
+                [assignment.id.as_str()],
+                |row| row.get(0),
+            )
+            .expect("assignment session row count should load");
+        assert_eq!(assignment_session_rows, 1);
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::{Mutex, OnceLock},
     thread,
     time::UNIX_EPOCH,
 };
@@ -53,6 +54,55 @@ pub struct SessionContext {
 pub struct StoredSession {
     pub path: PathBuf,
     pub record: SessionRecord,
+}
+
+#[derive(Debug, Clone)]
+struct RegisteredSessionContext {
+    context: SessionContext,
+    session_path: PathBuf,
+}
+
+static REGISTERED_SESSION_CONTEXTS: OnceLock<Mutex<HashMap<String, RegisteredSessionContext>>> =
+    OnceLock::new();
+
+fn registered_session_contexts(
+) -> &'static Mutex<HashMap<String, RegisteredSessionContext>> {
+    REGISTERED_SESSION_CONTEXTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_session_context(session_id: &str, project_root: &Path, session_dir: &Path, session_path: &Path) {
+    if let Ok(mut registry) = registered_session_contexts().lock() {
+        registry.insert(
+            session_id.to_string(),
+            RegisteredSessionContext {
+                context: SessionContext {
+                    project_root: project_root.to_path_buf(),
+                    project_slug: session_dir
+                        .parent()
+                        .and_then(|value| value.file_name())
+                        .and_then(|value| value.to_str())
+                        .map(sanitize_slug)
+                        .unwrap_or_else(|| infer_project_slug(project_root)),
+                    orchestra_root: default_orchestra_root().unwrap_or_else(|_| {
+                        session_dir
+                            .parent()
+                            .and_then(|value| value.parent())
+                            .map(Path::to_path_buf)
+                            .unwrap_or_else(|| session_dir.to_path_buf())
+                    }),
+                    session_dir: session_dir.to_path_buf(),
+                },
+                session_path: session_path.to_path_buf(),
+            },
+        );
+    }
+}
+
+fn registered_session_context(session_id: &str) -> Option<RegisteredSessionContext> {
+    registered_session_contexts()
+        .lock()
+        .ok()
+        .and_then(|registry| registry.get(session_id).cloned())
 }
 
 #[derive(Debug, Clone)]
@@ -953,16 +1003,22 @@ pub fn list_sessions_with_connection(
 pub fn find_session_context_for_session(session_id: &str) -> Result<SessionContext, String> {
     let connection = database::open_connection()?;
     let Some(row) = session_records::load_session_row(&connection, session_id)? else {
-        return Err(format!(
-            "Session {session_id} was not found in canonical session rows; run explicit session reconciliation to inspect legacy drift"
-        ));
+        return registered_session_context(session_id)
+            .map(|registered| registered.context)
+            .ok_or_else(|| {
+                format!(
+                    "Session {session_id} was not found in canonical session rows; run explicit session reconciliation to inspect legacy drift"
+                )
+            });
     };
 
-    canonical_session_context(&row)?.ok_or_else(|| {
-        format!(
-            "Session {session_id} is missing canonical project/context metadata; run explicit session reconciliation to repair it"
-        )
-    })
+    canonical_session_context(&row)?
+        .or_else(|| registered_session_context(session_id).map(|registered| registered.context))
+        .ok_or_else(|| {
+            format!(
+                "Session {session_id} is missing canonical project/context metadata; run explicit session reconciliation to repair it"
+            )
+        })
 }
 
 pub(crate) fn session_file_header_cwd(path: &Path) -> Result<Option<PathBuf>, String> {
@@ -1048,7 +1104,9 @@ fn create_session_file_internal(
         )
     })?;
 
-    parse_session_file(&session_path, subscribed)
+    let stored = parse_session_file(&session_path, subscribed)?;
+    register_session_context(&stored.record.id, project_root, session_dir, &session_path);
+    Ok(stored)
 }
 
 pub(crate) fn create_session_file_unindexed(
@@ -1094,14 +1152,18 @@ pub fn get_session(
 pub fn get_session_path(session_dir: &Path, session_id: &str) -> Result<PathBuf, String> {
     if let Some(context) = session_context_for_session_dir(session_dir) {
         let connection = database::open_connection()?;
-        return resolve_session_path_with_canonical(&connection, &context, session_id)?.ok_or_else(
-            || {
-                format!(
-                    "Session {session_id} was not found in canonical session rows for project {}; run explicit session reconciliation to inspect legacy drift",
-                    context.project_slug
-                )
-            },
-        );
+        if let Some(path) = resolve_session_path_with_canonical(&connection, &context, session_id)? {
+            return Ok(path);
+        }
+        if let Some(registered) = registered_session_context(session_id)
+            .filter(|registered| registered.session_path.parent() == Some(session_dir))
+        {
+            return Ok(registered.session_path);
+        }
+        return Err(format!(
+            "Session {session_id} was not found in canonical session rows for project {}; run explicit session reconciliation to inspect legacy drift",
+            context.project_slug
+        ));
     }
 
     resolve_session(session_dir, session_id, true).map(|session| session.path)
@@ -1248,7 +1310,12 @@ pub fn get_session_model_state(
     session_dir: &Path,
     session_id: &str,
 ) -> Result<SessionModelState, String> {
-    let state = get_session_model_state_with_executable(project_root, session_dir, session_id, Path::new("pi"))?;
+    let state = get_session_model_state_with_executable(
+        project_root,
+        session_dir,
+        session_id,
+        Path::new("pi"),
+    )?;
     if let Some(model) = state.current_model.as_ref() {
         let _ = model_limits::record_session_model_snapshot(session_id, model, "runtime_observed");
     }
@@ -1446,7 +1513,10 @@ fn resolve_session(
 ) -> Result<StoredSession, String> {
     if let Some(context) = session_context_for_session_dir(session_dir) {
         let connection = database::open_connection()?;
+        let registered = registered_session_context(session_id)
+            .filter(|registered| registered.session_path.parent() == Some(session_dir));
         let path = resolve_session_path_with_canonical(&connection, &context, session_id)?
+            .or_else(|| registered.as_ref().map(|registered| registered.session_path.clone()))
             .ok_or_else(|| {
                 format!(
                     "Session {session_id} was not found in canonical session rows for project {}; run explicit session reconciliation to inspect legacy drift",
@@ -1454,19 +1524,21 @@ fn resolve_session(
                 )
             })?;
 
-        let row = session_records::load_session_row(&connection, session_id)?.ok_or_else(|| {
-            format!(
+        if let Some(row) = session_records::load_session_row(&connection, session_id)? {
+            let parsed = parse_session_file(&path, subscribed)?;
+            let mut record = row.to_record(subscribed);
+            record.title = parsed.record.title;
+            record.status = parsed.record.status;
+            record.updated_at = parsed.record.updated_at;
+            record.events = parsed.record.events;
+            Ok(StoredSession { path, record })
+        } else if registered.is_some() {
+            parse_session_file(&path, subscribed)
+        } else {
+            Err(format!(
                 "Session {session_id} was not found in canonical session rows; run explicit session reconciliation to inspect legacy drift"
-            )
-        })?;
-
-        let parsed = parse_session_file(&path, subscribed)?;
-        let mut record = row.to_record(subscribed);
-        record.title = parsed.record.title;
-        record.status = parsed.record.status;
-        record.updated_at = parsed.record.updated_at;
-        record.events = parsed.record.events;
-        Ok(StoredSession { path, record })
+            ))
+        }
     } else {
         if !session_dir.exists() {
             return Err(format!(

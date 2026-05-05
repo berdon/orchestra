@@ -265,7 +265,21 @@ pub fn auto_archive_session_for_task_status(
         return Ok(None);
     }
 
-    let _ = task_status;
+    if let Some(reason) = load_hidden_session_reason(connection, session_id)? {
+        return Ok(Some(reason));
+    }
+
+    let reason = match task_status {
+        "completed" => Some(SESSION_HIDDEN_REASON_TASK_COMPLETED),
+        "canceled" => Some(SESSION_HIDDEN_REASON_TASK_CANCELED),
+        _ => None,
+    };
+
+    if let Some(reason) = reason {
+        hide_session(connection, session_id, reason)?;
+        return Ok(Some(reason.to_string()));
+    }
+
     Ok(None)
 }
 
