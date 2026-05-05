@@ -251,6 +251,43 @@ export async function waitForSelector(sessionId: string, selector: string, timeo
   throw new Error(`Unable to locate selector ${selector}: ${JSON.stringify(lastState)}`);
 }
 
+export async function waitForVisibleSelector(sessionId: string, selector: string, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastState: unknown;
+
+  while (Date.now() < deadline) {
+    lastState = await executeScript(sessionId, `
+      const element = document.querySelector(arguments[0]);
+      const visible = element instanceof HTMLElement
+        ? (() => {
+            const style = window.getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display !== "none"
+              && style.visibility !== "hidden"
+              && rect.width > 0
+              && rect.height > 0
+              && element.offsetParent !== null;
+          })()
+        : false;
+      return {
+        ready: document.readyState,
+        exists: Boolean(element),
+        visible,
+        html: document.documentElement ? document.documentElement.outerHTML : "",
+        text: document.body ? document.body.innerText : "",
+      };
+    `, [selector]);
+
+    if ((lastState as { visible?: boolean }).visible) {
+      return lastState as { ready: string; exists: boolean; visible: boolean; html: string; text: string };
+    }
+
+    await sleep(250);
+  }
+
+  throw new Error(`Unable to locate visible selector ${selector}: ${JSON.stringify(lastState)}`);
+}
+
 export async function waitForText(sessionId: string, text: string, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   let lastState: unknown;

@@ -10,6 +10,13 @@ function fulfillJson(route: any, body: unknown, status = 200) {
   });
 }
 
+async function expectProjectSectionLoaded(page: { locator: (selector: string) => any }, sectionId: "automation" | "source-control" | "secrets", panelSelector: string, readySelector: string) {
+  await page.locator('[data-role="project-detail-section-select-control"]').selectOption(sectionId);
+  await expect(page.locator(panelSelector)).toBeVisible();
+  await expect(page.locator(readySelector)).toBeVisible();
+  await expect(page.locator(panelSelector)).not.toContainText("Loading");
+}
+
 function createHostedWebSecretsApiMock() {
   const now = () => new Date().toISOString();
   const project = {
@@ -425,8 +432,24 @@ test("project settings hides the floating tab dock on mobile scroll down and res
   await expect(sectionSelect).toBeVisible();
   await expect(page.locator('[data-role="project-detail-tab-general"]')).toBeHidden();
 
-  await sectionSelectControl.selectOption('secrets');
-  await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toBeVisible();
+  await expectProjectSectionLoaded(
+    page,
+    'automation',
+    '[data-role="project-detail-tabpanel-automation"]',
+    '[data-role="project-auto-dispatch-on-blocker-completion"]',
+  );
+  await expectProjectSectionLoaded(
+    page,
+    'source-control',
+    '[data-role="project-detail-tabpanel-source-control"]',
+    '[data-role="project-source-control-settings"]',
+  );
+  await expectProjectSectionLoaded(
+    page,
+    'secrets',
+    '[data-role="project-detail-tabpanel-secrets"]',
+    '[data-role="project-secrets-status"]',
+  );
 
   await page.evaluate(() => {
     const content = document.querySelector('.content') as HTMLElement | null;

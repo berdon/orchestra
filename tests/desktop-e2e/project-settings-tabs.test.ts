@@ -11,13 +11,14 @@ import {
   setWindowRect,
   waitForSelector,
   waitForText,
+  waitForVisibleSelector,
 } from "./driver";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 
 async function assertPanelRendered(sessionId: string, panelSelector: string, readySelector: string) {
-  await waitForSelector(sessionId, panelSelector);
-  await waitForSelector(sessionId, readySelector, 30_000);
+  await waitForVisibleSelector(sessionId, panelSelector);
+  await waitForVisibleSelector(sessionId, readySelector, 30_000);
 
   const loadingText = await executeScript<string>(sessionId, `
     const panel = document.querySelector(arguments[0]);
@@ -33,7 +34,7 @@ async function waitForProjectTabToRender(sessionId: string, tabSelector: string,
 }
 
 async function waitForProjectSectionToRender(sessionId: string, sectionId: "automation" | "source-control" | "secrets", panelSelector: string, readySelector: string) {
-  await waitForSelector(sessionId, '[data-role="project-detail-section-select-control"]');
+  await waitForVisibleSelector(sessionId, '[data-role="project-detail-section-select-control"]');
   await setInputValue(sessionId, '[data-role="project-detail-section-select-control"]', sectionId);
   await assertPanelRendered(sessionId, panelSelector, readySelector);
 }
@@ -87,7 +88,11 @@ describe("desktop project settings tabs", () => {
       await waitForText(sessionId, "Orchestra");
 
       await setWindowRect(sessionId, { width: 390, height: 844, x: 0, y: 0 });
-      await waitForSelector(sessionId, '[data-role="project-detail-section-select-control"]');
+      await waitForVisibleSelector(sessionId, '[data-role="project-detail-section-select-control"]');
+      const mobileNavigationState = await executeScript<string>(sessionId, `
+        return document.querySelector('.app-shell')?.getAttribute('data-mobile-navigation') ?? '';
+      `);
+      expect(mobileNavigationState).toBe('true');
 
       await waitForProjectSectionToRender(
         sessionId,
