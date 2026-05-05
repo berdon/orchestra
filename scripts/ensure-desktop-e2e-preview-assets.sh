@@ -16,6 +16,7 @@ hash_obj = hashlib.sha256()
 
 tracked_files = [
     "index.html",
+    "github.html",
     "package.json",
     "package-lock.json",
     "tsconfig.json",

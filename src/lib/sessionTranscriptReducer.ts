@@ -11,6 +11,7 @@ export type PendingSessionRunsById = Record<string, PendingSessionRun>;
 export interface SessionTranscriptReduction {
   session: SessionRecord;
   pendingRun?: PendingSessionRun;
+  clearPendingRun?: boolean;
   refreshFromBackend?: boolean;
   sessionActionError?: string;
 }
@@ -102,6 +103,26 @@ function buildStreamAssistantEvent(runId: string, timestamp: string, overrides?:
 
 function hasVisibleAssistantText(event?: SessionEvent) {
   return Boolean(event?.message.trim() && event.message.trim() !== "Running tools…");
+}
+
+function hasAssistantTranscriptContent(event?: SessionEvent) {
+  return Boolean(hasVisibleAssistantText(event) || event?.thinkingText?.trim());
+}
+
+function settleSessionRecord(
+  session: SessionRecord,
+  timestamp: string,
+  patchEvents: (events: SessionEvent[]) => SessionEvent[],
+) {
+  return patchSessionRecord(session, (current) => ({
+    ...current,
+    status: "active",
+    updatedAt: timestamp,
+    activityState: "idle",
+    activeToolName: null,
+    lastActivityAt: timestamp,
+    events: patchEvents(current.events),
+  }));
 }
 
 function formatJsonSummary(value: JsonValue | undefined | null) {
@@ -447,6 +468,18 @@ export function reconcilePendingRunsWithSession(
     session: nextSession,
     pendingRuns: nextPendingRuns,
   };
+}
+
+export function isPendingSessionRunActive(pendingRun?: PendingSessionRun | null) {
+  if (!pendingRun) {
+    return false;
+  }
+
+  if (pendingRun.userEvent.pending) {
+    return true;
+  }
+
+  return Boolean(pendingRun.assistantEvent?.pending || pendingRun.assistantEvent?.thinking);
 }
 
 export function reduceSessionTranscriptEvent(
@@ -843,45 +876,59 @@ export function reduceSessionTranscriptEvent(
     const rpcEvent = isObject(payload.event) ? payload.event : null;
     const finalMessage = extractRpcMessageText(rpcEvent?.message);
     const finalThinkingText = extractRpcThinkingText(rpcEvent?.message);
-    if (!finalMessage.trim() && !finalThinkingText.trim()) {
-      return null;
-    }
 
     if (pendingRun) {
-      const nextPendingRun: PendingSessionRun = {
-        ...pendingRun,
-        userEvent: {
-          ...pendingRun.userEvent,
-          pending: false,
-        },
-        assistantEvent: pendingRun.assistantEvent
-          ? {
-              ...pendingRun.assistantEvent,
-              message: finalMessage,
-              thinkingText: finalThinkingText || pendingRun.assistantEvent.thinkingText,
-              pending: false,
-              thinking: false,
-              timestamp: eventTimestamp,
-            }
-          : buildPendingAssistantEvent(runId, eventTimestamp, {
-              message: finalMessage,
-              thinkingText: finalThinkingText,
-              pending: false,
-              thinking: false,
-            }),
+      const nextUserEvent: SessionEvent = {
+        ...pendingRun.userEvent,
+        pending: false,
+        timestamp: eventTimestamp,
       };
-      return { session: updatePendingRun(session, nextPendingRun), pendingRun: nextPendingRun };
+      const nextAssistantEvent = pendingRun.assistantEvent
+        ? {
+            ...pendingRun.assistantEvent,
+            message: finalMessage,
+            thinkingText: finalThinkingText || pendingRun.assistantEvent.thinkingText,
+            pending: false,
+            thinking: false,
+            timestamp: eventTimestamp,
+          }
+        : buildPendingAssistantEvent(runId, eventTimestamp, {
+            message: finalMessage,
+            thinkingText: finalThinkingText,
+            pending: false,
+            thinking: false,
+          });
+
+      return {
+        session: settleSessionRecord(session, eventTimestamp, (events) => [
+          ...events.filter((event) => event.runId !== pendingRun.runId),
+          nextUserEvent,
+          ...(hasAssistantTranscriptContent(nextAssistantEvent) ? [nextAssistantEvent] : []),
+        ]),
+        clearPendingRun: true,
+      };
+    }
+
+    if (!finalMessage.trim() && !finalThinkingText.trim()) {
+      return {
+        session: settleSessionRecord(session, eventTimestamp, (events) =>
+          events.filter((event) => !(event.runId === runId && event.kind === "assistant"))),
+      };
     }
 
     return {
-      session: patchStreamingAssistantEvent(session, runId, eventTimestamp, (event) => ({
-        ...event,
-        message: finalMessage,
-        thinkingText: finalThinkingText || event.thinkingText,
-        pending: false,
-        thinking: false,
-        timestamp: eventTimestamp,
-      })),
+      session: settleSessionRecord(
+        patchStreamingAssistantEvent(session, runId, eventTimestamp, (event) => ({
+          ...event,
+          message: finalMessage,
+          thinkingText: finalThinkingText || event.thinkingText,
+          pending: false,
+          thinking: false,
+          timestamp: eventTimestamp,
+        })),
+        eventTimestamp,
+        (events) => events,
+      ),
     };
   }
 

@@ -21,6 +21,7 @@ import { SETTINGS_TABS, getVisibleSettingsTabs } from "./lib/settingsTabs";
 import {
   applyPendingRunToSession,
   createPendingUserRun,
+  isPendingSessionRunActive,
   type PendingSessionRunsById,
   reconcilePendingRunsWithSession,
   reduceSessionTranscriptEvent,
@@ -148,7 +149,10 @@ const COMMAND_PALETTE_SOURCE_TIMEOUT_MS = 4_000;
 type PendingSessionRunsBySession = Record<string, PendingSessionRunsById>;
 
 function hasPendingSessionRuns(pendingRuns?: PendingSessionRunsById) {
-  return Boolean(pendingRuns && Object.keys(pendingRuns).length > 0);
+  return Boolean(
+    pendingRuns &&
+      Object.values(pendingRuns).some((run) => isPendingSessionRunActive(run)),
+  );
 }
 
 function arePendingSessionRunsEqual(
@@ -2901,7 +2905,9 @@ export function App() {
               supervisorSessionIdRef.current,
               ...Array.from(testPinnedSessionIdsRef.current),
             ].filter((value): value is string => Boolean(value)),
-            pendingSessionIds: Object.keys(pendingRunsRef.current),
+            pendingSessionIds: Object.entries(pendingRunsRef.current)
+              .filter(([, runs]) => hasPendingSessionRuns(runs))
+              .map(([sessionId]) => sessionId),
           }),
         );
 
@@ -3226,7 +3232,11 @@ export function App() {
         }));
       } else if (
         currentPendingRun &&
-        (reduction.refreshFromBackend || reduction.session.status === "failed")
+        (
+          reduction.clearPendingRun
+          || reduction.refreshFromBackend
+          || reduction.session.status === "failed"
+        )
       ) {
         removePendingRun(payload.sessionId, payload.runId ?? undefined);
       }
@@ -4379,6 +4389,9 @@ export function App() {
   const selectedSessionPendingRuns = selectedSession
     ? pendingRuns[selectedSession.id]
     : undefined;
+  const selectedSessionPending = hasPendingSessionRuns(
+    selectedSessionPendingRuns,
+  );
   const selectedModelState = selectedSession
     ? modelStates[selectedSession.id]
     : undefined;
@@ -4388,18 +4401,15 @@ export function App() {
   const chatSessionPendingRuns = chatSession
     ? pendingRuns[chatSession.id]
     : undefined;
+  const chatSessionPending = hasPendingSessionRuns(chatSessionPendingRuns);
   const chatModelState = chatSession ? modelStates[chatSession.id] : undefined;
   const chatSessionDraftMessage = chatSession
     ? (draftMessages[chatSession.id] ?? "")
     : "";
-  const selectedSessionDisplayStatus: SessionStatus = hasPendingSessionRuns(
-    selectedSessionPendingRuns,
-  )
+  const selectedSessionDisplayStatus: SessionStatus = selectedSessionPending
     ? "streaming"
     : (selectedSession?.status ?? "idle");
-  const chatSessionDisplayStatus: SessionStatus = hasPendingSessionRuns(
-    chatSessionPendingRuns,
-  )
+  const chatSessionDisplayStatus: SessionStatus = chatSessionPending
     ? "streaming"
     : (chatSession?.status ?? "idle");
 
@@ -6284,7 +6294,7 @@ export function App() {
                   referenceAgents={referenceAgents}
                   referenceRoles={referenceRoles}
                   displayedEvents={displayedEvents}
-                  sessionPending={hasPendingSessionRuns(chatSessionPendingRuns)}
+                  sessionPending={chatSessionPending}
                   sessionDisplayStatus={chatSessionDisplayStatus}
                   selectedModelState={chatModelState}
                   selectedSessionStats={
@@ -6393,7 +6403,7 @@ export function App() {
                   selectedSession={selectedSession}
                   displayedEvents={selectedSession?.events ?? []}
                   selectedSessionPending={
-                    hasPendingSessionRuns(selectedSessionPendingRuns) ||
+                    selectedSessionPending ||
                     Boolean(pendingSelectedSessionId && !selectedSession)
                   }
                   selectedSessionDisplayStatus={selectedSessionDisplayStatus}

@@ -30,6 +30,29 @@ async function waitForCondition<T>(callback: () => Promise<T>, predicate: (value
   throw new Error(`Condition not met before timeout. Last value: ${JSON.stringify(lastValue)}`);
 }
 
+async function readAssistantTranscriptState(sessionId: string) {
+  return executeScript<{
+    assistantCount: number;
+    pendingAssistantCount: number;
+    lastAssistantMessage: string;
+    stuckPlaceholderCount: number;
+  }>(sessionId, `
+    const assistantEvents = Array.from(document.querySelectorAll('[data-role="transcript-event"][data-event-kind="assistant"]'));
+    const getMessage = (event) => {
+      const rendered = event.querySelector('[data-role="transcript-entry-rendered-markdown"]')?.textContent?.trim() || '';
+      const preview = event.querySelector('[data-role="transcript-entry-preview"]')?.textContent?.trim() || '';
+      const code = event.querySelector('[data-role="transcript-entry-code"]')?.textContent?.trim() || '';
+      return rendered || preview || code;
+    };
+    return {
+      assistantCount: assistantEvents.length,
+      pendingAssistantCount: assistantEvents.filter((event) => Boolean(event.querySelector('.pending-badge'))).length,
+      lastAssistantMessage: assistantEvents.length > 0 ? getMessage(assistantEvents[assistantEvents.length - 1]) : '',
+      stuckPlaceholderCount: assistantEvents.filter((event) => !event.querySelector('.pending-badge') && getMessage(event) === '…').length,
+    };
+  `);
+}
+
 describe("desktop agent chat navigation", () => {
   it.skipIf(!isDesktopE2E)("opens focused agent chat from Chat nav and keeps Sessions available for debugging", async () => {
     const sessionId = await createReadyWebdriverSession();
@@ -181,10 +204,32 @@ describe("desktop agent chat navigation", () => {
       await waitForText(sessionId, 'Reloaded');
 
       const longLine = `DESKTOP-CHAT-${'z'.repeat(240)}`;
+      const baselineAssistantState = await readAssistantTranscriptState(sessionId);
       await setInputValue(sessionId, '[data-role="composer-input"]', longLine);
       await waitForEnabledSelector(sessionId, '[data-role="send-message"]');
       await clickSelector(sessionId, '[data-role="send-message"]');
       await waitForText(sessionId, longLine);
+
+      const pendingAssistantState = await waitForCondition(
+        () => readAssistantTranscriptState(sessionId),
+        (value) => value.assistantCount > baselineAssistantState.assistantCount && value.pendingAssistantCount > 0,
+        90_000,
+      );
+      expect(pendingAssistantState.pendingAssistantCount).toBeGreaterThan(0);
+
+      const resolvedAssistantState = await waitForCondition(
+        () => readAssistantTranscriptState(sessionId),
+        (value) => (
+          value.assistantCount > baselineAssistantState.assistantCount
+          && value.pendingAssistantCount === 0
+          && Boolean(value.lastAssistantMessage)
+          && value.lastAssistantMessage !== '…'
+          && value.stuckPlaceholderCount === 0
+        ),
+        90_000,
+      );
+      expect(resolvedAssistantState.lastAssistantMessage).not.toBe('…');
+      expect(resolvedAssistantState.stuckPlaceholderCount).toBe(0);
 
       await clickByText(sessionId, 'button', 'Sessions');
       await waitForSelector(sessionId, '[data-role="session-filter-active"]');

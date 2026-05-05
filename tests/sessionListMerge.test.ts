@@ -126,6 +126,32 @@ describe("sessionListMerge", () => {
     expect(merged?.updatedAt).toBe(listed.updatedAt);
   });
 
+  it("lets authoritative listed runtime state replace stale optimistic streaming state once no run is still pending", () => {
+    const existing = makeSession({
+      status: "streaming",
+      updatedAt: "2026-04-08T00:00:06Z",
+      activityState: "streaming",
+      activeToolName: "bash",
+      lastActivityAt: "2026-04-08T00:00:06Z",
+    });
+    const listed = makeSession({
+      status: "active",
+      updatedAt: "2026-04-08T00:00:07Z",
+      activityState: "idle",
+      activeToolName: null,
+      lastActivityAt: "2026-04-08T00:00:07Z",
+    });
+
+    const [merged] = reconcileListedSessions([existing], [listed], {
+      pendingSessionIds: [],
+    });
+    expect(merged?.status).toBe("active");
+    expect(merged?.activityState).toBe("idle");
+    expect(merged?.activeToolName).toBeNull();
+    expect(merged?.lastActivityAt).toBe(listed.lastActivityAt);
+    expect(merged?.updatedAt).toBe(listed.updatedAt);
+  });
+
   it("drops transcript details for non-retained sessions so old history can collapse back to summaries", () => {
     const existing = makeSession({
       events: [

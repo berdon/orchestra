@@ -83,8 +83,10 @@ describe("sessionTranscriptReducer", () => {
     };
 
     const afterTurnEnd = reduceSessionTranscriptEvent(afterThinking!.session, afterThinking!.pendingRun, answerEnvelope);
-    expect(afterTurnEnd?.pendingRun?.assistantEvent?.thinkingText).toContain("Line four");
-    expect(afterTurnEnd?.pendingRun?.assistantEvent?.message).toBe("Visible answer");
+    const finalAssistantEvent = afterTurnEnd?.session.events.find((event) => event.runId === "run-1" && event.kind === "assistant");
+    expect(afterTurnEnd?.clearPendingRun).toBe(true);
+    expect(finalAssistantEvent?.thinkingText).toContain("Line four");
+    expect(finalAssistantEvent?.message).toBe("Visible answer");
   });
 
   it("prefers the authoritative message snapshot during assistant streaming deltas", () => {
@@ -346,5 +348,90 @@ describe("sessionTranscriptReducer", () => {
     expect(finished?.session.events.find((event) => event.id === "auto-compact-1")?.message).toBe("Session auto-compacted.");
     expect(finished?.session.events.find((event) => event.id === "auto-compact-1")?.message).not.toContain("/compact");
     expect(finished?.refreshFromBackend).toBe(true);
+  });
+
+  it("clears the optimistic pending run as soon as turn_end delivers the final assistant reply", () => {
+    const session = makeSession();
+    const pendingRun = createPendingUserRun("run-final", "hello", "2026-04-08T00:05:00Z");
+
+    const reduced = reduceSessionTranscriptEvent(session, pendingRun, {
+      sessionId: session.id,
+      runId: "run-final",
+      receivedAt: "2026-04-08T00:05:03Z",
+      event: {
+        type: "turn_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Final answer" }],
+        },
+      },
+    });
+
+    expect(reduced?.clearPendingRun).toBe(true);
+    expect(reduced?.pendingRun).toBeUndefined();
+    expect(reduced?.session.status).toBe("active");
+    expect(reduced?.session.events).toEqual([
+      {
+        id: "pending-user-run-final",
+        kind: "user",
+        message: "hello",
+        timestamp: "2026-04-08T00:05:03Z",
+        pending: false,
+        runId: "run-final",
+      },
+      {
+        id: "pending-assistant-run-final",
+        kind: "assistant",
+        message: "Final answer",
+        timestamp: "2026-04-08T00:05:03Z",
+        pending: false,
+        thinking: false,
+        thinkingText: "",
+        runId: "run-final",
+      },
+    ]);
+  });
+
+  it("drops an empty assistant placeholder when turn_end completes without final assistant text", () => {
+    const session = makeSession();
+    const pendingRun = createPendingUserRun("run-empty", "hello", "2026-04-08T00:06:00Z");
+
+    const started = reduceSessionTranscriptEvent(session, pendingRun, {
+      sessionId: session.id,
+      runId: "run-empty",
+      receivedAt: "2026-04-08T00:06:01Z",
+      event: {
+        type: "message_start",
+        message: { role: "assistant" },
+      },
+    });
+    expect(started?.pendingRun?.assistantEvent?.pending).toBe(true);
+
+    const reduced = reduceSessionTranscriptEvent(started!.session, started!.pendingRun, {
+      sessionId: session.id,
+      runId: "run-empty",
+      receivedAt: "2026-04-08T00:06:03Z",
+      event: {
+        type: "turn_end",
+        message: {
+          role: "assistant",
+          content: [],
+        },
+      },
+    });
+
+    expect(reduced?.clearPendingRun).toBe(true);
+    expect(reduced?.pendingRun).toBeUndefined();
+    expect(reduced?.session.status).toBe("active");
+    expect(reduced?.session.events).toEqual([
+      {
+        id: "pending-user-run-empty",
+        kind: "user",
+        message: "hello",
+        timestamp: "2026-04-08T00:06:03Z",
+        pending: false,
+        runId: "run-empty",
+      },
+    ]);
   });
 });
