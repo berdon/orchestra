@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
     models::SessionRecord,
-    services::{orchestra_paths::infer_project_slug, pi_sessions},
+    services::{orchestra_paths::infer_project_slug, pi_sessions, session_list},
     state::now_iso,
 };
 
@@ -332,10 +332,15 @@ pub fn rotate_session_record(
             supersedes_session_id: None,
             superseded_by_session_id: Some(stored.record.id.as_str()),
             closed_at: Some(now.as_str()),
-            archived_at: None,
+            archived_at: Some(now.as_str()),
             created_at: old_seed.created_at.as_str(),
             updated_at: now.as_str(),
         },
+    )?;
+    session_list::hide_session(
+        connection,
+        old_session_id,
+        session_list::SESSION_HIDDEN_REASON_SUPERSEDED,
     )?;
 
     Ok(stored)
@@ -1901,13 +1906,18 @@ mod tests {
             },
         )
         .unwrap();
-        let predecessor: (String, String, Option<String>) = connection.query_row(
-            "SELECT lifecycle_state, superseded_by_session_id, closed_at FROM sessions WHERE id = ?1",
-            [&created.record.id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        let predecessor: (String, String, Option<String>, Option<String>) = connection.query_row(
+            "SELECT lifecycle_state, superseded_by_session_id, closed_at, archived_at FROM sessions WHERE id = ?1",
+            [&created.record.id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ).unwrap();
         assert_eq!(predecessor.0, LIFECYCLE_SUPERSEDED);
         assert_eq!(predecessor.1, rotated.record.id);
         assert!(predecessor.2.is_some());
+        assert!(predecessor.3.is_some());
+        assert_eq!(
+            session_list::load_hidden_session_reason(&connection, &created.record.id).unwrap(),
+            Some(session_list::SESSION_HIDDEN_REASON_SUPERSEDED.to_string())
+        );
         let successor: (Option<String>, String) = connection
             .query_row(
                 "SELECT supersedes_session_id, lifecycle_state FROM sessions WHERE id = ?1",

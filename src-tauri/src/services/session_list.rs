@@ -12,6 +12,7 @@ pub const SESSION_HIDDEN_REASON_USER_DISMISSED: &str = "user_dismissed";
 pub const SESSION_HIDDEN_REASON_TASK_COMPLETED: &str = "task_completed";
 pub const SESSION_HIDDEN_REASON_TASK_CANCELED: &str = "task_canceled";
 pub const SESSION_HIDDEN_REASON_STALE_ROLE_SESSION: &str = "stale_role_session";
+pub const SESSION_HIDDEN_REASON_SUPERSEDED: &str = "superseded";
 
 const DISMISSED_SESSION_RETENTION_DAYS: i64 = 30;
 

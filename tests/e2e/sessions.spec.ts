@@ -869,7 +869,7 @@ test("sessions composer New session rotates a selected worker-owned session inst
   await page.locator('[data-role="session-actions-trigger"]').click();
   await page.locator('[data-role="session-action-new"]').click();
 
-  await expect(page.locator('[data-role="session-link"]').filter({ hasText: "Data main session" })).toHaveCount(2);
+  await expect(page.locator('[data-role="session-link"]').filter({ hasText: "Data main session" })).toHaveCount(1);
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data main session");
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Fresh session is active.");
   await expect(page.locator('[data-role="session-transcript"]')).not.toContainText("Current Data session.");

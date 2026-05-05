@@ -19,6 +19,7 @@ type SessionRecordLike = {
   id: string;
   title?: string;
   status?: string;
+  listVisibility?: string | null;
 };
 
 async function getSelectedSessionId(webdriverSessionId: string): Promise<string> {
@@ -126,13 +127,23 @@ describe("desktop chat session recovery", () => {
         expect(mainAfter).toBe(newSessionId);
         expect(mainAfter).not.toBe(initialSessionId);
 
-        // Both sessions should exist in the session list
+        // The replacement should hide the superseded session from normal lists while
+        // keeping it directly inspectable for history/audit purposes.
         const sessionsAfter = await invokeCommand<Array<SessionRecordLike>>(
           webdriverSessionId,
           "list_sessions",
         );
-        expect(sessionsAfter.some((s) => s.id === initialSessionId)).toBe(true);
+        expect(sessionsAfter.some((s) => s.id === initialSessionId)).toBe(false);
         expect(sessionsAfter.some((s) => s.id === newSessionId)).toBe(true);
+
+        const supersededRecord = await invokeCommand<SessionRecordLike>(
+          webdriverSessionId,
+          "get_session_record",
+          { sessionId: initialSessionId },
+        );
+        expect(supersededRecord.id).toBe(initialSessionId);
+        expect(supersededRecord.status).toBe("closed");
+        expect(supersededRecord.listVisibility).toBe("hidden");
       } finally {
         await deleteWebdriverSession(webdriverSessionId);
       }

@@ -3544,6 +3544,28 @@ function createMockContextualSessionRecord(title: string): SessionRecord {
   };
 }
 
+function archiveSupersededMockSession(
+  sessionId: string,
+  timestamp: string,
+  projectId?: string | null,
+) {
+  const dismissed = getDismissedMockSessionIds(projectId);
+  dismissed.add(sessionId);
+  saveDismissedMockSessionIds(dismissed, projectId);
+  updateMockSession(sessionId, (current) => ({
+    ...current,
+    status: "closed",
+    subscribed: false,
+    listVisibility: "hidden",
+    messageability: "closed",
+    updatedAt: timestamp,
+    events: [
+      ...current.events,
+      createEvent("system", "Session replaced by a newer worker session."),
+    ],
+  }));
+}
+
 function createMockContextualSession(
   sessionId: string,
   projectSlug?: string | null,
@@ -3555,6 +3577,8 @@ function createMockContextualSession(
   }
 
   const timestamp = nowIso();
+  const resolvedProjectId =
+    resolveCurrentMockProjectId(projectSlug ?? getActiveProjectId()) ?? null;
   const tasks = ensureMockTasks();
   const task =
     tasks.find((entry) => {
@@ -3653,16 +3677,7 @@ function createMockContextualSession(
       );
     }
 
-    updateMockSession(sessionId, (current) => ({
-      ...current,
-      status: "closed",
-      subscribed: false,
-      updatedAt: timestamp,
-      events: [
-        ...current.events,
-        createEvent("system", "Session replaced by a newer worker session."),
-      ],
-    }));
+    archiveSupersededMockSession(sessionId, timestamp, task.projectId);
     appendMockLog(
       "info",
       "sessions.create_contextual",
@@ -3694,6 +3709,11 @@ function createMockContextualSession(
           : entry,
       ),
     );
+    archiveSupersededMockSession(
+      sessionId,
+      timestamp,
+      typeof agentRuntime.projectId === "string" ? agentRuntime.projectId : resolvedProjectId,
+    );
     appendMockLog(
       "info",
       "sessions.create_contextual",
@@ -3724,6 +3744,7 @@ function createMockContextualSession(
           : entry,
       ),
     );
+    archiveSupersededMockSession(sessionId, timestamp, resolvedProjectId);
     appendMockLog(
       "info",
       "sessions.create_contextual",

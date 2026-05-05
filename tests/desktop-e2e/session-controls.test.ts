@@ -38,6 +38,7 @@ type SessionRecordLike = {
   status?: string;
   updatedAt?: string;
   subscribed?: boolean;
+  listVisibility?: string | null;
   events?: SessionEventRecord[];
   controlOperation?: SessionControlOperationRecord | null;
 };
@@ -299,14 +300,20 @@ describe("desktop session controls", () => {
         webdriverSessionId,
         successorSessionId,
         () => invokeCommand<Array<SessionRecordLike>>(webdriverSessionId, "list_sessions"),
-        (sessions) => sessions.some((session) => session.id === firstChatSessionId)
-          && sessions.some((session) => session.id === successorSessionId)
-          && sessions.length >= sessionsBeforeNewAction.length + 1,
-        "new session action to create a new chat session while retaining the previous chat session",
+        (sessions) => !sessions.some((session) => session.id === firstChatSessionId)
+          && sessions.some((session) => session.id === successorSessionId),
+        "new session action to replace the previous chat session in normal lists",
         45_000,
       );
-      expect(sessionsAfterNewAction.some((session) => session.id === firstChatSessionId)).toBe(true);
+      expect(sessionsAfterNewAction.some((session) => session.id === firstChatSessionId)).toBe(false);
       expect(sessionsAfterNewAction.some((session) => session.id === successorSessionId)).toBe(true);
+
+      const supersededRecord = await invokeCommand<SessionRecordLike>(webdriverSessionId, "get_session_record", {
+        sessionId: firstChatSessionId,
+      });
+      expect(supersededRecord.id).toBe(firstChatSessionId);
+      expect(supersededRecord.status).toBe("closed");
+      expect(supersededRecord.listVisibility).toBe("hidden");
 
       await clickSessionAction(webdriverSessionId, '[data-role="session-action-reload"]');
 

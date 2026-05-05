@@ -16,11 +16,11 @@ use crate::{
     },
     services::{
         agent_dispatch, agent_runtime, agents, app_events, database, domain_events,
-        model_limits,
         live_sessions::{
             ensure_runtime, get_session_control_snapshot, is_unknown_command_error,
             maybe_auto_compact, maybe_runtime, perform_session_compaction, perform_session_reload,
         },
+        model_limits,
         pi_sessions::{
             detect_session_context, find_session_context_for_session, get_session,
             get_session_header_cwd, get_session_stats as load_session_stats_from_file,
@@ -95,6 +95,7 @@ fn create_contextual_agent_main_successor(
     connection: &mut rusqlite::Connection,
     runtime_root: &Path,
     session_dir: &Path,
+    old_session_id: &str,
     title: &str,
     project_id: &str,
     agent: &crate::models::AgentDefinition,
@@ -105,13 +106,14 @@ fn create_contextual_agent_main_successor(
         .clone()
         .unwrap_or_else(|| runtime_root.display().to_string());
     let tx = connection.transaction().map_err(|error| {
-        format!("Unable to start contextual agent main-session creation transaction: {error}")
+        format!("Unable to start contextual agent main-session rotation transaction: {error}")
     })?;
-    let created = session_records::create_session_record(
+    let created = session_records::rotate_session_record(
         &tx,
         runtime_root,
         session_dir,
-        session_records::CreateSessionRecordInput {
+        old_session_id,
+        session_records::RotateSessionRecordInput {
             project_id: Some(project_id),
             title: Some(title),
             session_kind: session_records::SESSION_KIND_AGENT_MAIN,
@@ -144,7 +146,7 @@ fn create_contextual_agent_main_successor(
     )?;
     tx.commit().map_err(|error| {
         format!(
-            "Unable to commit contextual agent main-session creation for project {}: {error}",
+            "Unable to commit contextual agent main-session rotation for project {}: {error}",
             project_id
         )
     })?;
@@ -1455,6 +1457,7 @@ pub async fn create_contextual_session(
                         &mut connection,
                         &runtime_root,
                         &old_context.session_dir,
+                        &session_id_for_task,
                         old_record.title.as_str(),
                         project_id.as_str(),
                         &agent,
@@ -1534,6 +1537,7 @@ pub async fn create_contextual_session(
                 &mut connection,
                 &runtime_root,
                 &old_context.session_dir,
+                &session_id_for_task,
                 old_record.title.as_str(),
                 project_id.as_str(),
                 &agent,
@@ -1601,6 +1605,7 @@ pub async fn create_contextual_session(
                         &mut connection,
                         &runtime_root,
                         &old_context.session_dir,
+                        &session_id_for_task,
                         old_record.title.as_str(),
                         project_id.as_str(),
                         &agent,
@@ -1697,6 +1702,7 @@ pub async fn create_contextual_session(
                         &mut connection,
                         &runtime_root,
                         &old_context.session_dir,
+                        &session_id_for_task,
                         old_record.title.as_str(),
                         project_id.as_str(),
                         &agent,
@@ -1746,6 +1752,7 @@ pub async fn create_contextual_session(
                 &mut connection,
                 &runtime_root,
                 &old_context.session_dir,
+                &session_id_for_task,
                 old_record.title.as_str(),
                 project_id.as_str(),
                 &agent,
@@ -1796,6 +1803,7 @@ pub async fn create_contextual_session(
                             &mut connection,
                             &runtime_root,
                             &current_context.session_dir,
+                            current_main_session_id,
                             current_record.title.as_str(),
                             project_id.as_str(),
                             &agent,
@@ -1952,6 +1960,7 @@ pub async fn create_contextual_session(
                     &mut connection,
                     &runtime_root,
                     &old_context.session_dir,
+                    &session_id_for_task,
                     old_record.title.as_str(),
                     project_id.as_str(),
                     &agent,
@@ -4133,7 +4142,7 @@ mod tests {
     }
 
     #[test]
-    fn contextual_agent_main_successor_keeps_prior_main_session_visible_in_lists() {
+    fn contextual_agent_main_successor_auto_archives_prior_main_session_from_lists() {
         let mut connection =
             rusqlite::Connection::open_in_memory().expect("in-memory db should open");
         database::apply_migrations(&connection).expect("migrations should succeed");
@@ -4211,6 +4220,7 @@ mod tests {
             &mut connection,
             &context.project_root,
             &context.session_dir,
+            &original.record.id,
             "Supervisor main session",
             "project-1",
             &agent,
@@ -4237,8 +4247,8 @@ mod tests {
             .filter(|session| session.title == "Supervisor main session")
             .collect::<Vec<_>>();
 
-        assert_eq!(supervisor_sessions.len(), 2);
-        assert!(listed
+        assert_eq!(supervisor_sessions.len(), 1);
+        assert!(!listed
             .iter()
             .any(|session| session.id == original.record.id));
         assert!(listed
@@ -4249,7 +4259,20 @@ mod tests {
             .expect("original row should exist");
         assert_eq!(
             original_row.lifecycle_state,
-            session_records::LIFECYCLE_ACTIVE
+            session_records::LIFECYCLE_SUPERSEDED
+        );
+        let archived_at = connection
+            .query_row(
+                "SELECT archived_at FROM sessions WHERE id = ?1",
+                [&original.record.id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .expect("archived_at should query");
+        assert!(archived_at.is_some());
+        assert_eq!(
+            session_list::load_hidden_session_reason(&connection, &original.record.id)
+                .expect("hidden reason should load"),
+            Some(session_list::SESSION_HIDDEN_REASON_SUPERSEDED.to_string())
         );
     }
 
