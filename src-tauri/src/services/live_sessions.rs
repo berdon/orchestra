@@ -9,15 +9,16 @@ use std::{
 };
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 use crate::{
     models::{
-        AuthorizationContext, ManagedSkillRuntimeDiagnostics, PiRuntimeHealth,
-        SessionControlCapabilities, SessionControlCapability, SessionControlOperationState,
-        SessionModel, SessionModelState, SessionRuntimeDetails, SessionStats,
-        SessionStreamEnvelope,
+        AuthorizationContext, ManagedSkillRuntimeDiagnostics, OrchestraToolDefinition,
+        PiRuntimeHealth, SessionControlCapabilities, SessionControlCapability,
+        SessionControlOperationState, SessionModel, SessionModelState, SessionRuntimeDetails,
+        SessionStats, SessionStreamEnvelope,
     },
     services::{
         app_events, database, harness_settings,
@@ -98,6 +99,70 @@ fn format_path_diagnostic(path: &std::path::Path) -> String {
     )
 }
 
+#[derive(Debug, Clone)]
+struct RuntimeAuthorizationSnapshot {
+    authorization_context: Option<AuthorizationContext>,
+    allowed_tools: Vec<OrchestraToolDefinition>,
+    hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SessionRuntimeReuseDecision {
+    Reuse,
+    ReuseUntilIdle {
+        cwd_changed: bool,
+        skills_changed: bool,
+        auth_tools_changed: bool,
+    },
+    Respawn {
+        cwd_changed: bool,
+        skills_changed: bool,
+        auth_tools_changed: bool,
+    },
+}
+
+fn compute_runtime_authorization_snapshot_hash(
+    authorization_context: Option<&AuthorizationContext>,
+    allowed_tools: &[OrchestraToolDefinition],
+) -> Result<String, String> {
+    let payload = serde_json::to_vec(&json!({
+        "authorizationContext": authorization_context,
+        "allowedTools": allowed_tools,
+    }))
+    .map_err(|error| format!("Unable to serialize runtime authorization snapshot: {error}"))?;
+    Ok(format!("{:x}", Sha256::digest(payload)))
+}
+
+fn decide_session_runtime_reuse(
+    current_project_root: &Path,
+    requested_project_root: &Path,
+    current_skill_context_hash: &str,
+    desired_skill_context_hash: &str,
+    current_auth_tool_snapshot_hash: &str,
+    desired_auth_tool_snapshot_hash: &str,
+    has_active_prompt: bool,
+) -> SessionRuntimeReuseDecision {
+    let cwd_changed = current_project_root != requested_project_root;
+    let skills_changed = current_skill_context_hash != desired_skill_context_hash;
+    let auth_tools_changed = current_auth_tool_snapshot_hash != desired_auth_tool_snapshot_hash;
+
+    if !cwd_changed && !skills_changed && !auth_tools_changed {
+        SessionRuntimeReuseDecision::Reuse
+    } else if has_active_prompt {
+        SessionRuntimeReuseDecision::ReuseUntilIdle {
+            cwd_changed,
+            skills_changed,
+            auth_tools_changed,
+        }
+    } else {
+        SessionRuntimeReuseDecision::Respawn {
+            cwd_changed,
+            skills_changed,
+            auth_tools_changed,
+        }
+    }
+}
+
 pub struct SessionRuntime {
     session_id: String,
     project_root: Mutex<PathBuf>,
@@ -111,6 +176,7 @@ pub struct SessionRuntime {
     orchestra_extension_path: PathBuf,
     extra_extensions: Vec<String>,
     skill_context_hash: String,
+    auth_tool_snapshot_hash: String,
     managed_skills: ManagedSkillRuntimeDiagnostics,
     stdin: Mutex<Option<ChildStdin>>,
     child: Mutex<Option<Child>>,
@@ -128,20 +194,21 @@ pub struct SessionRuntime {
 }
 
 impl SessionRuntime {
-    pub fn spawn(
+    fn spawn(
         app: AppHandle,
         project_root: PathBuf,
         session_dir: PathBuf,
         session_id: String,
         session_path: PathBuf,
         skill_launch_plan: runtime_skills::ManagedPiSkillLaunchPlan,
+        authorization_snapshot: RuntimeAuthorizationSnapshot,
     ) -> Result<Arc<Self>, String> {
         let bridge_config = app.state::<crate::state::AppState>().tool_bridge.clone();
-        let authorization_context = runtime_authorization_context(&session_id)?;
-        let allowed_tools = crate::services::tool_bridge::list_bridge_tools(
-            &database::open_connection()?,
-            authorization_context.as_ref(),
-        )?;
+        let RuntimeAuthorizationSnapshot {
+            authorization_context,
+            allowed_tools,
+            hash: auth_tool_snapshot_hash,
+        } = authorization_snapshot;
         let bridge_client_id = format!("bridge-client-{}", Uuid::new_v4().simple());
         let extension_path =
             crate::services::orchestra_paths::resolve_orchestra_extension_path(Some(&app))?;
@@ -180,12 +247,13 @@ impl SessionRuntime {
                 .join(", ")
         };
         let shell_path = crate::services::pi_sessions::resolve_user_shell_path();
+        let allowed_tool_count = allowed_tools.len();
 
         app.state::<crate::state::AppState>().log(
             "info",
             "sessions.runtime.spawn.request",
             &format!(
-                "Session {} spawn request: pi={} runtime_source={} runtime_mode={} runtime_version={} cwd={} session_dir={} session_path={} orchestra_extension={} extra_extensions={} scoped_skills={} skill_context_hash={} shell_path={}",
+                "Session {} spawn request: pi={} runtime_source={} runtime_mode={} runtime_version={} cwd={} session_dir={} session_path={} orchestra_extension={} extra_extensions={} scoped_skills={} skill_context_hash={} auth_tool_snapshot_hash={} allowed_tool_count={} shell_path={}",
                 session_id,
                 pi_executable_diagnostic,
                 pi_runtime_health.source,
@@ -198,6 +266,8 @@ impl SessionRuntime {
                 &extra_extension_diagnostics,
                 &scoped_skill_diagnostics,
                 skill_launch_plan.context_hash,
+                auth_tool_snapshot_hash,
+                allowed_tool_count,
                 shell_path.as_deref().unwrap_or("<unavailable>"),
             ),
         );
@@ -283,6 +353,7 @@ impl SessionRuntime {
             orchestra_extension_path: extension_path,
             extra_extensions,
             skill_context_hash: skill_launch_plan.context_hash,
+            auth_tool_snapshot_hash,
             managed_skills: skill_launch_plan.diagnostics,
             stdin: Mutex::new(Some(stdin)),
             child: Mutex::new(Some(child)),
@@ -1264,6 +1335,21 @@ pub fn ensure_runtime(
         }
     };
     let desired_skill_context_hash = desired_skill_launch_plan.context_hash.clone();
+    let desired_authorization_snapshot = match resolve_runtime_authorization_snapshot(session_id) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            app.state::<crate::state::AppState>().log(
+                "error",
+                "sessions.runtime.authorization.failed",
+                &format!(
+                    "Failed to resolve runtime authorization snapshot for session {}: {}",
+                    session_id, error
+                ),
+            );
+            return Err(error);
+        }
+    };
+    let desired_auth_tool_snapshot_hash = desired_authorization_snapshot.hash.clone();
 
     let existing_runtime = if let Ok(mut runtimes_guard) = runtimes.lock() {
         if let Some(existing) = runtimes_guard.get(session_id).cloned() {
@@ -1273,14 +1359,16 @@ pub fn ensure_runtime(
                     .lock()
                     .map(|current| current.clone())
                     .unwrap_or_else(|_| project_root.clone());
-                match runtime_skills::decide_runtime_reuse(
+                match decide_session_runtime_reuse(
                     &current_project_root,
                     &project_root,
                     &existing.skill_context_hash,
                     &desired_skill_context_hash,
+                    &existing.auth_tool_snapshot_hash,
+                    &desired_auth_tool_snapshot_hash,
                     existing.has_active_prompt(),
                 ) {
-                    runtime_skills::RuntimeReuseDecision::Reuse => {
+                    SessionRuntimeReuseDecision::Reuse => {
                         app.state::<crate::state::AppState>().log(
                             "info",
                             "sessions.runtime.reuse",
@@ -1288,45 +1376,58 @@ pub fn ensure_runtime(
                         );
                         return Ok(existing);
                     }
-                    runtime_skills::RuntimeReuseDecision::ReuseUntilIdle {
+                    SessionRuntimeReuseDecision::ReuseUntilIdle {
                         cwd_changed,
                         skills_changed,
+                        auth_tools_changed,
                     } => {
                         app.state::<crate::state::AppState>().log(
                             "info",
                             "sessions.runtime.reuse.busy",
                             &format!(
-                                "Reusing busy live pi RPC runtime for session {} until idle (cwd_changed={} skills_changed={} desired_skill_context_hash={})",
+                                "Reusing busy live pi RPC runtime for session {} until idle (cwd_changed={} skills_changed={} auth_tools_changed={} desired_skill_context_hash={} desired_auth_tool_snapshot_hash={})",
                                 session_id,
                                 cwd_changed,
                                 skills_changed,
+                                auth_tools_changed,
                                 desired_skill_context_hash,
+                                desired_auth_tool_snapshot_hash,
                             ),
                         );
                         return Ok(existing);
                     }
-                    runtime_skills::RuntimeReuseDecision::Respawn {
+                    SessionRuntimeReuseDecision::Respawn {
                         cwd_changed,
                         skills_changed,
+                        auth_tools_changed,
                     } => {
-                        let reason = match (cwd_changed, skills_changed) {
-                            (true, true) => format!(
-                                "switch cwd to {} and apply new skill context {}",
-                                project_root.display(),
+                        let mut reasons = Vec::new();
+                        if cwd_changed {
+                            reasons.push(format!("switch cwd to {}", project_root.display()));
+                        }
+                        if skills_changed {
+                            reasons.push(format!(
+                                "apply new skill context {}",
                                 desired_skill_context_hash
-                            ),
-                            (true, false) => {
-                                format!("switch cwd to {}", project_root.display())
-                            }
-                            (false, true) => {
-                                format!("apply new skill context {}", desired_skill_context_hash)
-                            }
-                            (false, false) => "refresh runtime".into(),
+                            ));
+                        }
+                        if auth_tools_changed {
+                            reasons.push(format!(
+                                "apply new authorization/tool snapshot {}",
+                                desired_auth_tool_snapshot_hash
+                            ));
+                        }
+                        let reason = if reasons.is_empty() {
+                            "refresh runtime".to_string()
+                        } else {
+                            reasons.join(" and ")
                         };
                         app.state::<crate::state::AppState>().log(
                             "info",
                             if skills_changed {
                                 "sessions.runtime.respawn.skills_changed"
+                            } else if auth_tools_changed {
+                                "sessions.runtime.respawn.authorization_changed"
                             } else {
                                 "sessions.runtime.respawn"
                             },
@@ -1366,6 +1467,7 @@ pub fn ensure_runtime(
         session_id.to_string(),
         session_path,
         desired_skill_launch_plan,
+        desired_authorization_snapshot,
     )?;
 
     if preserved_subscription {
@@ -1562,16 +1664,19 @@ pub fn perform_session_compaction(
     }
 }
 
-fn busy_skill_context_reload_error() -> String {
-    "Wait for the current response to finish before reloading this session so the updated skill context can be applied".into()
+fn busy_runtime_context_reload_error() -> String {
+    "Wait for the current response to finish before reloading this session so the updated runtime context can be applied".into()
 }
 
 fn perform_session_reload_with_launch_plan(
     runtime: Arc<SessionRuntime>,
     trigger: &str,
     desired_skill_launch_plan: runtime_skills::ManagedPiSkillLaunchPlan,
+    desired_auth_tool_snapshot_hash: &str,
 ) -> Result<(), String> {
-    if desired_skill_launch_plan.context_hash != runtime.skill_context_hash {
+    if desired_skill_launch_plan.context_hash != runtime.skill_context_hash
+        || desired_auth_tool_snapshot_hash != runtime.auth_tool_snapshot_hash
+    {
         let project_root = runtime
             .project_root
             .lock()
@@ -1579,26 +1684,30 @@ fn perform_session_reload_with_launch_plan(
             .unwrap_or_else(|_| PathBuf::from("."));
 
         if matches!(
-            runtime_skills::decide_runtime_reuse(
+            decide_session_runtime_reuse(
                 &project_root,
                 &project_root,
                 &runtime.skill_context_hash,
                 &desired_skill_launch_plan.context_hash,
+                &runtime.auth_tool_snapshot_hash,
+                desired_auth_tool_snapshot_hash,
                 runtime.has_active_prompt(),
             ),
-            runtime_skills::RuntimeReuseDecision::ReuseUntilIdle { .. }
+            SessionRuntimeReuseDecision::ReuseUntilIdle { .. }
         ) {
             runtime.app.state::<crate::state::AppState>().log(
                 "info",
-                "sessions.reload.deferred.skills_changed",
+                "sessions.reload.deferred.runtime_context_changed",
                 &format!(
-                    "Rejecting reload for busy session {} until idle because the desired skill context changed from {} to {}",
+                    "Rejecting reload for busy session {} until idle because the desired runtime context changed (skill_context {} -> {}, auth_tool_snapshot {} -> {})",
                     runtime.session_id,
                     runtime.skill_context_hash,
                     desired_skill_launch_plan.context_hash,
+                    runtime.auth_tool_snapshot_hash,
+                    desired_auth_tool_snapshot_hash,
                 ),
             );
-            return Err(busy_skill_context_reload_error());
+            return Err(busy_runtime_context_reload_error());
         }
 
         let replacement = ensure_runtime(
@@ -1614,15 +1723,17 @@ fn perform_session_reload_with_launch_plan(
         if Arc::ptr_eq(&replacement, &runtime) {
             runtime.app.state::<crate::state::AppState>().log(
                 "warn",
-                "sessions.reload.deferred.skills_changed",
+                "sessions.reload.deferred.runtime_context_changed",
                 &format!(
-                    "Reload for session {} did not respawn immediately even though the skill context changed from {} to {}",
+                    "Reload for session {} did not respawn immediately even though the desired runtime context changed (skill_context {} -> {}, auth_tool_snapshot {} -> {})",
                     runtime.session_id,
                     runtime.skill_context_hash,
                     desired_skill_launch_plan.context_hash,
+                    runtime.auth_tool_snapshot_hash,
+                    desired_auth_tool_snapshot_hash,
                 ),
             );
-            return Err(busy_skill_context_reload_error());
+            return Err(busy_runtime_context_reload_error());
         }
         replacement.set_subscribed(runtime.is_subscribed());
         replacement.mark_control_operation_success("reload", trigger, "Session reloaded.");
@@ -1690,7 +1801,14 @@ pub fn perform_session_reload(runtime: Arc<SessionRuntime>, trigger: &str) -> Re
 
     let desired_skill_launch_plan =
         runtime_skills::resolve_managed_pi_skill_launch_plan(&runtime.session_id)?;
-    perform_session_reload_with_launch_plan(runtime, trigger, desired_skill_launch_plan)
+    let desired_authorization_snapshot =
+        resolve_runtime_authorization_snapshot(&runtime.session_id)?;
+    perform_session_reload_with_launch_plan(
+        runtime,
+        trigger,
+        desired_skill_launch_plan,
+        &desired_authorization_snapshot.hash,
+    )
 }
 
 fn should_auto_compact_for_usage(
@@ -1940,8 +2058,33 @@ pub fn authorization_context_for_session(
     runtime_authorization_context_for_connection(&connection, session_id)
 }
 
-fn runtime_authorization_context(session_id: &str) -> Result<Option<AuthorizationContext>, String> {
-    authorization_context_for_session(session_id)
+fn resolve_runtime_authorization_snapshot(
+    session_id: &str,
+) -> Result<RuntimeAuthorizationSnapshot, String> {
+    let connection = database::open_connection()?;
+    resolve_runtime_authorization_snapshot_for_connection(&connection, session_id)
+}
+
+fn resolve_runtime_authorization_snapshot_for_connection(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<RuntimeAuthorizationSnapshot, String> {
+    let authorization_context =
+        runtime_authorization_context_for_connection(connection, session_id)?;
+    let allowed_tools = crate::services::tool_bridge::list_bridge_tools(
+        connection,
+        authorization_context.as_ref(),
+    )?;
+    let hash = compute_runtime_authorization_snapshot_hash(
+        authorization_context.as_ref(),
+        &allowed_tools,
+    )?;
+
+    Ok(RuntimeAuthorizationSnapshot {
+        authorization_context,
+        allowed_tools,
+        hash,
+    })
 }
 
 fn runtime_authorization_context_for_connection(
@@ -2083,6 +2226,7 @@ mod tests {
         app_handle: &tauri::AppHandle,
         session_id: &str,
         skill_context_hash: &str,
+        auth_tool_snapshot_hash: &str,
         active_prompt: bool,
     ) -> Arc<SessionRuntime> {
         Arc::new(SessionRuntime {
@@ -2110,6 +2254,7 @@ mod tests {
             orchestra_extension_path: PathBuf::from("/tmp/orchestra-tools.ts"),
             extra_extensions: Vec::new(),
             skill_context_hash: skill_context_hash.into(),
+            auth_tool_snapshot_hash: auth_tool_snapshot_hash.into(),
             managed_skills: runtime_skills::ManagedPiSkillLaunchPlan {
                 context: runtime_skills::ManagedSkillRuntimeContext {
                     session_id: Some(session_id.into()),
@@ -2298,12 +2443,186 @@ mod tests {
     }
 
     #[test]
+    fn runtime_authorization_snapshot_refreshes_after_agent_permission_grant() {
+        let connection = in_memory_connection();
+        seed_agent(&connection, "agent-refresh");
+        connection
+            .execute(
+                "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, archived, created_at, updated_at) VALUES ('task-agent-refresh', 'orchestra', 3, 'ORC-3', 'Agent refresh', NULL, 'task', 'in_progress', 'P1', NULL, NULL, 'agent', 'agent-refresh', NULL, NULL, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .expect("task should seed");
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status,
+                    session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    'assignment-agent-refresh', 'task-agent-refresh', 'workflow-1', 'lane-1', 'agent', 'agent-refresh', 'active',
+                    'session-agent-refresh', '/tmp/runtime', NULL, NULL, NULL,
+                    '2026-01-01T00:00:00Z', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+                )
+                "#,
+                [],
+            )
+            .expect("agent assignment should seed");
+
+        let before = resolve_runtime_authorization_snapshot_for_connection(
+            &connection,
+            "session-agent-refresh",
+        )
+        .expect("snapshot should resolve");
+        assert!(!before
+            .allowed_tools
+            .iter()
+            .any(|tool| tool.name == "list_tasks"));
+
+        connection
+            .execute(
+                "UPDATE agents SET direct_permissions = '[\"tasks.read\"]' WHERE id = 'agent-refresh'",
+                [],
+            )
+            .expect("agent permissions should update");
+
+        let after = resolve_runtime_authorization_snapshot_for_connection(
+            &connection,
+            "session-agent-refresh",
+        )
+        .expect("updated snapshot should resolve");
+        assert_ne!(before.hash, after.hash);
+        assert!(after
+            .allowed_tools
+            .iter()
+            .any(|tool| tool.name == "list_tasks"));
+    }
+
+    #[test]
+    fn runtime_authorization_snapshot_refreshes_for_role_instance_after_role_permission_grant() {
+        let connection = in_memory_connection();
+        seed_role(&connection, "role-refresh");
+        connection
+            .execute(
+                "INSERT INTO role_instances (id, role_id, display_name, status, current_queue_entry_id, session_id, worktree_path, last_heartbeat_at, last_error, created_at, updated_at) VALUES ('instance-refresh', 'role-refresh', 'Refresh instance', 'running', NULL, 'session-role-refresh', NULL, NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .expect("role instance should seed");
+        connection
+            .execute(
+                "INSERT INTO tasks (id, project_id, sequence_number, number, title, description, task_type, status, priority, workflow_id, current_lane_id, assignee_type, assignee_id, repository_id, parent_task_id, archived, created_at, updated_at) VALUES ('task-role-refresh', 'orchestra', 4, 'ORC-4', 'Role refresh', NULL, 'task', 'in_progress', 'P1', NULL, NULL, 'role', 'role-refresh', NULL, NULL, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .expect("task should seed");
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_lane_assignments (
+                    id, task_id, workflow_id, lane_id, worker_type, worker_id, status,
+                    session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt,
+                    started_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    'assignment-role-refresh', 'task-role-refresh', 'workflow-1', 'lane-1', 'role', 'role-refresh', 'active',
+                    'session-role-refresh', '/tmp/runtime', NULL, 'instance-refresh', NULL,
+                    '2026-01-01T00:00:00Z', NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+                )
+                "#,
+                [],
+            )
+            .expect("role assignment should seed");
+
+        let before = resolve_runtime_authorization_snapshot_for_connection(
+            &connection,
+            "session-role-refresh",
+        )
+        .expect("snapshot should resolve");
+        assert_eq!(
+            before
+                .authorization_context
+                .as_ref()
+                .map(|value| value.actor_type.as_str()),
+            Some("role_instance")
+        );
+        assert!(!before
+            .allowed_tools
+            .iter()
+            .any(|tool| tool.name == "list_tasks"));
+
+        connection
+            .execute(
+                "UPDATE roles SET direct_permissions = '[\"tasks.read\"]' WHERE id = 'role-refresh'",
+                [],
+            )
+            .expect("role permissions should update");
+
+        let after = resolve_runtime_authorization_snapshot_for_connection(
+            &connection,
+            "session-role-refresh",
+        )
+        .expect("updated snapshot should resolve");
+        assert_ne!(before.hash, after.hash);
+        assert!(after
+            .allowed_tools
+            .iter()
+            .any(|tool| tool.name == "list_tasks"));
+    }
+
+    #[test]
+    fn runtime_reuse_decision_respawns_when_authorization_snapshot_changes_and_defers_when_busy() {
+        assert_eq!(
+            decide_session_runtime_reuse(
+                Path::new("/tmp/a"),
+                Path::new("/tmp/a"),
+                "skill-1",
+                "skill-1",
+                "auth-1",
+                "auth-2",
+                false,
+            ),
+            SessionRuntimeReuseDecision::Respawn {
+                cwd_changed: false,
+                skills_changed: false,
+                auth_tools_changed: true,
+            }
+        );
+        assert_eq!(
+            decide_session_runtime_reuse(
+                Path::new("/tmp/a"),
+                Path::new("/tmp/a"),
+                "skill-1",
+                "skill-1",
+                "auth-1",
+                "auth-2",
+                true,
+            ),
+            SessionRuntimeReuseDecision::ReuseUntilIdle {
+                cwd_changed: false,
+                skills_changed: false,
+                auth_tools_changed: true,
+            }
+        );
+        assert_eq!(
+            decide_session_runtime_reuse(
+                Path::new("/tmp/a"),
+                Path::new("/tmp/a"),
+                "skill-1",
+                "skill-1",
+                "auth-1",
+                "auth-1",
+                false,
+            ),
+            SessionRuntimeReuseDecision::Reuse
+        );
+    }
+
+    #[test]
     fn live_runtime_details_include_managed_skill_diagnostics() {
         let app_handle = test_app_handle();
         let runtime = test_runtime(
             &app_handle,
             "session-diagnostics",
             "hash-diagnostics",
+            "auth-hash-diagnostics",
             false,
         );
         let details = runtime.runtime_details();
@@ -2400,16 +2719,35 @@ mod tests {
     #[test]
     fn reload_rejects_busy_skill_context_change_without_reporting_success() {
         let app_handle = test_app_handle();
-        let runtime = test_runtime(&app_handle, "session-1", "old-hash", true);
+        let runtime = test_runtime(&app_handle, "session-1", "old-hash", "auth-hash-1", true);
 
         let error = perform_session_reload_with_launch_plan(
             Arc::clone(&runtime),
             "manual",
             test_skill_launch_plan("new-hash"),
+            "auth-hash-1",
         )
         .expect_err("busy reload should be rejected until idle");
 
-        assert_eq!(error, busy_skill_context_reload_error());
+        assert_eq!(error, busy_runtime_context_reload_error());
+        assert!(runtime.control_operation().is_none());
+        assert_eq!(runtime.control_capability("reload").status, "unknown");
+    }
+
+    #[test]
+    fn reload_rejects_busy_authorization_snapshot_change_without_reporting_success() {
+        let app_handle = test_app_handle();
+        let runtime = test_runtime(&app_handle, "session-1", "same-hash", "auth-hash-1", true);
+
+        let error = perform_session_reload_with_launch_plan(
+            Arc::clone(&runtime),
+            "manual",
+            test_skill_launch_plan("same-hash"),
+            "auth-hash-2",
+        )
+        .expect_err("busy reload should be rejected until idle");
+
+        assert_eq!(error, busy_runtime_context_reload_error());
         assert!(runtime.control_operation().is_none());
         assert_eq!(runtime.control_capability("reload").status, "unknown");
     }
