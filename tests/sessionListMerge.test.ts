@@ -108,6 +108,24 @@ describe("sessionListMerge", () => {
     expect(merged?.updatedAt).toBe(existing.updatedAt);
   });
 
+  it("preserves subscription state for actively viewed sessions when summary refreshes lag behind", () => {
+    const existing = makeSession({
+      subscribed: true,
+      updatedAt: "2026-04-08T00:00:08Z",
+    });
+    const listed = makeSession({
+      subscribed: false,
+      updatedAt: "2026-04-08T00:00:09Z",
+    });
+
+    const [merged] = reconcileListedSessions([existing], [listed], {
+      preserveSubscriptionSessionIds: [existing.id],
+    });
+
+    expect(merged?.subscribed).toBe(true);
+    expect(merged?.updatedAt).toBe(listed.updatedAt);
+  });
+
   it("drops transcript details for non-retained sessions so old history can collapse back to summaries", () => {
     const existing = makeSession({
       events: [

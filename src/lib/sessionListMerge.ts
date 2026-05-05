@@ -2,6 +2,7 @@ import type { SessionRecord } from "../types";
 
 interface ReconcileListedSessionsOptions {
   preserveDetailedSessionIds?: Iterable<string>;
+  preserveSubscriptionSessionIds?: Iterable<string>;
   pendingSessionIds?: Iterable<string>;
   preserveMissingSessionIds?: Iterable<string>;
 }
@@ -53,6 +54,7 @@ export function reconcileListedSessions(
   const currentById = new Map(currentSessions.map((session) => [session.id, session]));
   const pendingIds = new Set(options.pendingSessionIds ?? []);
   const preservedDetailedSessionIds = new Set(options.preserveDetailedSessionIds ?? []);
+  const preservedSubscriptionSessionIds = new Set(options.preserveSubscriptionSessionIds ?? []);
   const preservedMissingSessionIds = new Set(options.preserveMissingSessionIds ?? []);
   const listedIds = new Set(listedSessions.map((session) => session.id));
 
@@ -64,6 +66,7 @@ export function reconcileListedSessions(
 
     const preserveDetailedState = shouldPreserveDetailedState(existingSession, listedSession, preservedDetailedSessionIds);
     const preserveRuntimeState = shouldPreserveRuntimeState(existingSession, pendingIds);
+    const preserveSubscriptionState = preservedSubscriptionSessionIds.has(listedSession.id);
     const preserveDerivedState = preserveDetailedState || preserveRuntimeState;
 
     return {
@@ -71,6 +74,7 @@ export function reconcileListedSessions(
       updatedAt: preserveDerivedState && parseTimestamp(existingSession.updatedAt) > parseTimestamp(listedSession.updatedAt)
         ? existingSession.updatedAt
         : listedSession.updatedAt,
+      subscribed: preserveSubscriptionState ? existingSession.subscribed : listedSession.subscribed,
       status: preserveRuntimeState ? existingSession.status : listedSession.status,
       events: preserveDetailedState ? existingSession.events : listedSession.events,
       debugInfo: preserveDetailedState ? (listedSession.debugInfo ?? existingSession.debugInfo) : listedSession.debugInfo,

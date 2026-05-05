@@ -1366,6 +1366,7 @@ export function App() {
   const scheduledSessionRefreshRef = useRef<number | null>(null);
   const backgroundSessionRefreshInFlightRef = useRef(false);
   const pendingSessionRecordRequestKeyRef = useRef<string | null>(null);
+  const confirmedViewedSessionSubscriptionKeyRef = useRef<string | null>(null);
   const sessionListRefreshCountRef = useRef(0);
   const sessionRecordLoadCountsRef = useRef<Record<string, number>>({});
   const testPinnedSessionIdsRef = useRef<Set<string>>(new Set());
@@ -2773,6 +2774,10 @@ export function App() {
               chatSessionIdStateRef.current,
               supervisorSessionIdRef.current,
             ].filter((value): value is string => Boolean(value)),
+            preserveSubscriptionSessionIds: [
+              viewedSessionIdRef.current,
+              supervisorSessionIdRef.current,
+            ].filter((value): value is string => Boolean(value)),
             preserveMissingSessionIds: [
               viewedSessionIdRef.current,
               supervisorSessionIdRef.current,
@@ -3116,6 +3121,10 @@ export function App() {
         sessionId: string;
         select?: boolean;
       }) => void;
+      __orchestraTestSetSessionSubscribed?: (
+        sessionId: string,
+        subscribed: boolean,
+      ) => void;
       __orchestraTestPinSessionIds?: (sessionIds: string[]) => void;
     };
     testWindow.__orchestraTestInjectSessionStream = handleSessionStreamEvent;
@@ -3160,6 +3169,13 @@ export function App() {
       chatSessionRecoveryMissRef.current = null;
       setSessionActionError(null);
     };
+    testWindow.__orchestraTestSetSessionSubscribed = (sessionId, subscribed) => {
+      patchSessionRecord(sessionId, (record) => ({
+        ...record,
+        subscribed,
+        updatedAt: nowIso(),
+      }));
+    };
     testWindow.__orchestraTestPinSessionIds = (sessionIds) => {
       testPinnedSessionIdsRef.current = new Set(
         sessionIds.filter((value) => value.trim().length > 0),
@@ -3170,9 +3186,10 @@ export function App() {
       delete testWindow.__orchestraTestApplySessionRecord;
       delete testWindow.__orchestraTestSessionRefreshStats;
       delete testWindow.__orchestraTestHydrateChatAgentSession;
+      delete testWindow.__orchestraTestSetSessionSubscribed;
       delete testWindow.__orchestraTestPinSessionIds;
     };
-  }, [applySessionUpdate, handleSessionStreamEvent]);
+  }, [applySessionUpdate, handleSessionStreamEvent, patchSessionRecord]);
 
   useEffect(() => {
     const loadProjectCatalog = () => {
@@ -3763,12 +3780,21 @@ export function App() {
     }
 
     if (!sessionSurfaceActive || !viewedSession) {
+      confirmedViewedSessionSubscriptionKeyRef.current = null;
       return;
     }
 
     let cancelled = false;
+    const viewedSessionSubscriptionKey = `${activePage}:${viewedSession.id}`;
+    const shouldConfirmViewedSessionSubscription =
+      !viewedSession.terminalAttached &&
+      (confirmedViewedSessionSubscriptionKeyRef.current !==
+        viewedSessionSubscriptionKey ||
+        !viewedSession.subscribed);
 
-    if (!viewedSession.subscribed && !viewedSession.terminalAttached) {
+    if (shouldConfirmViewedSessionSubscription) {
+      confirmedViewedSessionSubscriptionKeyRef.current =
+        viewedSessionSubscriptionKey;
       void orchestraClient.sessions
         .subscribe(viewedSession.id)
         .then((record) => {
@@ -3778,6 +3804,7 @@ export function App() {
         })
         .catch(async (error) => {
           if (!cancelled) {
+            confirmedViewedSessionSubscriptionKeyRef.current = null;
             setSessionActionError(
               await reportUiError(
                 orchestraClient,
