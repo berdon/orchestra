@@ -444,6 +444,79 @@ export async function setInputValue(sessionId: string, selector: string, value: 
   throw new Error(`Unable to set value for ${selector}`);
 }
 
+export async function typeIntoInput(
+  sessionId: string,
+  selector: string,
+  value: string,
+  options: { clear?: boolean; delayMs?: number } = {},
+) {
+  const response = await webdriverRequest(`/session/${sessionId}/execute/async`, {
+    method: "POST",
+    body: JSON.stringify({
+      script: `
+        const selector = arguments[0];
+        const text = String(arguments[1] ?? '');
+        const options = arguments[2] ?? {};
+        const done = arguments[arguments.length - 1];
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement)) {
+          done({ __error: 'Missing text input element' });
+          return;
+        }
+
+        const prototype = element instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+        if (!descriptor?.set) {
+          done({ __error: 'Missing writable value descriptor' });
+          return;
+        }
+
+        const delayMs = Math.max(0, Number(options.delayMs ?? 5));
+        let nextValue = options.clear ? '' : String(element.value ?? '');
+        descriptor.set.call(element, nextValue);
+        element.focus();
+
+        const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        let index = 0;
+
+        const applyNextCharacter = () => {
+          if (index >= text.length) {
+            const finishedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+            done({
+              value: element.value,
+              durationMs: Number((finishedAt - startedAt).toFixed(1)),
+              charactersTyped: text.length,
+            });
+            return;
+          }
+
+          nextValue += text[index] ?? '';
+          index += 1;
+          descriptor.set.call(element, nextValue);
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+          element.dispatchEvent(new KeyboardEvent('keyup', { key: text[index - 1] ?? '' }));
+          if (typeof element.setSelectionRange === 'function') {
+            element.setSelectionRange(nextValue.length, nextValue.length);
+          }
+          window.setTimeout(() => window.requestAnimationFrame(applyNextCharacter), delayMs);
+        };
+
+        window.requestAnimationFrame(applyNextCharacter);
+      `,
+      args: [selector, value, options],
+    }),
+  });
+
+  const errorMessage = String(response?.value?.__error ?? response?.value?.message ?? response?.value?.error ?? "");
+  if (errorMessage) {
+    throw new Error(`Unable to type into ${selector}: ${JSON.stringify(response)}`);
+  }
+
+  return response?.value as { value: string; durationMs: number; charactersTyped: number };
+}
+
 export async function setFieldByLabel(sessionId: string, labelText: string, value: string) {
   const deadline = Date.now() + 5_000;
 

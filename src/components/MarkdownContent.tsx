@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, memo, useMemo, type ReactNode } from "react";
 import hljs from "highlight.js";
 import { marked } from "marked";
 
@@ -238,10 +238,21 @@ function renderMarkdown(
   });
 }
 
-export function MarkdownContent({ message, className = "transcript-render transcript-render--markdown", dataRole, mentionLinkDataRole, mentionResolver }: MarkdownContentProps) {
+export const MarkdownContent = memo(function MarkdownContent({
+  message,
+  className = "transcript-render transcript-render--markdown",
+  dataRole,
+  mentionLinkDataRole,
+  mentionResolver,
+}: MarkdownContentProps) {
+  const renderedMarkdown = useMemo(
+    () => renderMarkdown(message, mentionResolver, mentionLinkDataRole),
+    [mentionLinkDataRole, mentionResolver, message],
+  );
+
   return (
     <div className={className} data-role={dataRole}>
-      {renderMarkdown(message, mentionResolver, mentionLinkDataRole)}
+      {renderedMarkdown}
     </div>
   );
-}
+});

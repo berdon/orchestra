@@ -3,6 +3,7 @@ import hljs from "highlight.js";
 
 import { MarkdownContent, type MarkdownMentionResolver } from "./MarkdownContent";
 import { buildCollapsedPreview, buildThinkingPreview, detectTranscriptContent, isFoldableTranscriptEvent, isToolCallTranscriptEvent } from "../lib/sessionTranscript";
+import { recordInputPerfRender } from "../lib/testInputPerformance";
 import type { SessionEvent } from "../types";
 
 interface TranscriptEventCardProps {
@@ -72,6 +73,7 @@ export const TranscriptEventCard = memo(function TranscriptEventCard({
   mentionResolver,
   mentionLinkDataRole,
 }: TranscriptEventCardProps) {
+  recordInputPerfRender("session-transcript-event-card");
   const [expanded, setExpanded] = useState(() => !isFoldableTranscriptEvent(event));
   const [copied, setCopied] = useState(false);
   const thinkingPreview = useMemo(() => {

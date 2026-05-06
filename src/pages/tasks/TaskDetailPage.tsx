@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 
 import hljs from "highlight.js";
 import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
@@ -94,7 +94,7 @@ interface TaskDetailPageProps {
   sendingMail?: boolean;
   pendingActionId?: string | null;
   onDraftChange: (draft: TaskUpsertInput) => void;
-  onCommentDraftChange: (draft: TaskCommentInput) => void;
+  onCommentDraftChange: Dispatch<SetStateAction<TaskCommentInput>>;
   onCommentsTabViewed: () => void;
   onSave: () => void;
   onCancelEdit: () => void;
@@ -752,7 +752,10 @@ export function TaskDetailPage({
   const taskHeading = draft.title.trim() || task.title;
   const headerAssigneeLabel = resolveTaskAssigneeLabel(task, agents, roles);
   const headerLaneLabel = getTaskLaneLabel(task, workflowLanes);
-  const commentThreads = sortTaskCommentThreadsByLatestActivityDesc(buildTaskCommentThreads(task.comments));
+  const commentThreads = useMemo(
+    () => sortTaskCommentThreadsByLatestActivityDesc(buildTaskCommentThreads(task.comments)),
+    [task.comments],
+  );
   const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
   const defaultFileAbsolutePath = defaultFile?.exists ? defaultFile.absolutePath ?? null : null;
   const recentHistory = timelineItems.slice(0, historyLimit);
@@ -767,6 +770,15 @@ export function TaskDetailPage({
   const currentLaneTodos = task.currentLaneId ? task.todos.filter((todo) => todo.laneId === task.currentLaneId) : [];
   const unfinishedCurrentLaneTodos = currentLaneTodos.filter((todo) => !todo.completed);
   const taskCommentDeleteAction = getTaskCommentDeleteActionState(bootstrap);
+  const handleTopLevelCommentAuthorChange = useCallback((author: string) => {
+    onCommentDraftChange((current) => current.author === author ? current : { ...current, author });
+  }, [onCommentDraftChange]);
+  const handleTopLevelCommentInterruptChange = useCallback((interruptAgent: boolean) => {
+    onCommentDraftChange((current) => current.interruptAgent === interruptAgent ? current : { ...current, interruptAgent });
+  }, [onCommentDraftChange]);
+  const handleTopLevelCommentMessageChange = useCallback((message: string) => {
+    onCommentDraftChange((current) => current.message === message ? current : { ...current, message });
+  }, [onCommentDraftChange]);
 
   useEffect(() => {
     return () => {
@@ -1242,22 +1254,22 @@ export function TaskDetailPage({
     clearDeleteHold();
   }
 
-  function openReplyComposer(threadComment: TaskComment) {
+  const openReplyComposer = useCallback((threadComment: TaskComment) => {
     setReplyTargetCommentId(threadComment.id);
     setReplyDraft(createReplyDraft(commentDraft.author, threadComment.id));
     setPendingReplyFocusTargetId(threadComment.id);
-  }
+  }, [commentDraft.author]);
 
   function handleCancelEdit() {
     onCancelEdit();
     setIsEditing(false);
   }
 
-  async function handleAddTopLevelComment() {
+  const handleAddTopLevelComment = useCallback(async () => {
     await onAddComment({ ...commentDraft, parentCommentId: null });
-  }
+  }, [commentDraft, onAddComment]);
 
-  async function handleAddReply() {
+  const handleAddReply = useCallback(async () => {
     if (!replyTargetCommentId) {
       return;
     }
@@ -1268,7 +1280,7 @@ export function TaskDetailPage({
     setReplyTargetCommentId(null);
     setReplyDraft(createReplyDraft(commentDraft.author));
     setPendingReplyFocusTargetId(null);
-  }
+  }, [commentDraft.author, onAddComment, replyDraft, replyTargetCommentId]);
 
   async function handleSendRuntimeMail() {
     if (!mailDraft.trim()) {
@@ -1306,7 +1318,7 @@ export function TaskDetailPage({
     setActiveTab(tabId);
   }
 
-  function handleOpenCommentFileReference(reference: TaskFileReference) {
+  const handleOpenCommentFileReference = useCallback((reference: TaskFileReference) => {
     setPendingScrollReferenceId(reference.id);
     selectTaskDetailTab("repo-files");
     setSelectedFileReference(reference.id);
@@ -1314,7 +1326,7 @@ export function TaskDetailPage({
     window.requestAnimationFrame(() => {
       tabBodyRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     });
-  }
+  }, [loadFileContent]);
 
   function handleScrollToTaskDetails() {
     setActiveNavAnchor("details");
@@ -2342,13 +2354,14 @@ export function TaskDetailPage({
                         tasks={tasks}
                         agents={agents}
                         roles={roles}
-                        commentDraft={commentDraft}
+                        commentAuthor={commentDraft.author}
+                        commentInterruptAgent={commentDraft.interruptAgent}
                         comments={task.comments}
                         content={defaultFileContent ?? ""}
                         fileReferences={task.fileReferences}
                         language={detectLanguage(defaultFile.relativePath)}
                         onAddComment={onAddComment}
-                        onCommentDraftChange={onCommentDraftChange}
+                        onCommentInterruptChange={handleTopLevelCommentInterruptChange}
                         onDeleteComment={onDeleteComment}
                         onOpenFileReference={handleOpenCommentFileReference}
                         onOpenTask={onOpenTask}
@@ -2425,9 +2438,9 @@ export function TaskDetailPage({
                 messageLabel="Add comment"
                 mentionListDataRole="task-comment-mention-list"
                 mentionOptionDataRole="task-comment-mention-option"
-                onAuthorChange={(author) => onCommentDraftChange({ ...commentDraft, author })}
-                onInterruptChange={(interruptAgent) => onCommentDraftChange({ ...commentDraft, interruptAgent })}
-                onMessageChange={(message) => onCommentDraftChange({ ...commentDraft, message })}
+                onAuthorChange={handleTopLevelCommentAuthorChange}
+                onInterruptChange={handleTopLevelCommentInterruptChange}
+                onMessageChange={handleTopLevelCommentMessageChange}
                 onSubmit={() => void handleAddTopLevelComment()}
                 rows={4}
                 submitDataRole="add-task-comment"

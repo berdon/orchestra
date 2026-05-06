@@ -253,6 +253,16 @@ export function TasksPage({
   const taskScheduleLoadRequestRef = useRef(0);
   const getTooltipProps = useExplanatoryTooltipProps();
 
+  const noopOpenTaskTag = useCallback((_tag: string) => {}, []);
+  const noopOpenSession = useCallback((_sessionId: string, _projectId?: string | null) => {}, []);
+  const noopOpenAgent = useCallback((_agentId: string) => {}, []);
+  const noopOpenRole = useCallback((_roleId: string) => {}, []);
+
+  const openTaskTagHandler = onOpenTaskTag ?? noopOpenTaskTag;
+  const openSessionHandler = onOpenSession ?? noopOpenSession;
+  const openAgentHandler = onOpenAgent ?? noopOpenAgent;
+  const openRoleHandler = onOpenRole ?? noopOpenRole;
+
   const tagScopedTasks = useMemo(
     () => applyTaskListQuery(tasks, { tags: taskOverviewState.tags, tagMatch: taskOverviewState.tagMatch, sort: taskOverviewState.sort }),
     [taskOverviewState.sort, taskOverviewState.tagMatch, taskOverviewState.tags, tasks],
@@ -706,11 +716,11 @@ export function TasksPage({
     onTaskOverviewStateChange?.(nextState);
   }
 
-  function openTaskDetail(taskId: string) {
+  const openTaskDetail = useCallback((taskId: string) => {
     taskDetailLoadRequestRef.current += 1;
     setTaskScheduleDetail(null);
     setRoute({ kind: "detail", taskId });
-  }
+  }, []);
 
   function openTaskScheduleDetail(scheduleId: string) {
     taskScheduleLoadRequestRef.current += 1;
@@ -1107,7 +1117,7 @@ export function TasksPage({
     }
   }
 
-  async function handleAddComment(draft: TaskCommentInput): Promise<boolean> {
+  const handleAddComment = useCallback(async (draft: TaskCommentInput): Promise<boolean> => {
     if (route.kind !== "detail") {
       return false;
     }
@@ -1124,9 +1134,9 @@ export function TasksPage({
       setTaskActionError(toUiErrorState(error, "Unable to add comment."));
       return false;
     }
-  }
+  }, [loadTaskDetail, loadTasksData, orchestraClient.tasks, route.kind, route.kind === "detail" ? route.taskId : null]);
 
-  async function handleUpdateComment(commentId: string, message: string): Promise<boolean> {
+  const handleUpdateComment = useCallback(async (commentId: string, message: string): Promise<boolean> => {
     if (route.kind !== "detail") {
       return false;
     }
@@ -1140,9 +1150,9 @@ export function TasksPage({
       setTaskActionError(toUiErrorState(error, "Unable to update comment."));
       return false;
     }
-  }
+  }, [loadTaskDetail, loadTasksData, orchestraClient.tasks, route.kind, route.kind === "detail" ? route.taskId : null]);
 
-  async function handleDeleteComment(commentId: string): Promise<boolean> {
+  const handleDeleteComment = useCallback(async (commentId: string): Promise<boolean> => {
     if (route.kind !== "detail") {
       return false;
     }
@@ -1161,7 +1171,7 @@ export function TasksPage({
     } finally {
       setLoadingDeleteCommentImpact(false);
     }
-  }
+  }, [orchestraClient.tasks, route.kind]);
 
   async function handleConfirmDeleteComment(): Promise<boolean> {
     const commentId = pendingDeleteCommentId;
@@ -1536,7 +1546,7 @@ export function TasksPage({
           board={boardModel}
           onOpenTask={openTaskDetail}
           onOpenSchedule={openTaskScheduleDetail}
-          onOpenTag={onOpenTaskTag ?? (() => {})}
+          onOpenTag={openTaskTagHandler}
           onOverviewStateChange={updateTaskOverviewState}
           overviewState={taskOverviewState}
           roles={roles}
@@ -1608,9 +1618,9 @@ export function TasksPage({
             loading={loadingTaskDetail || taskDetailRenderState === "detail_pending"}
             onAddAttachment={(files) => void handleAttachmentInputChange(files)}
             onDownloadAttachment={(attachmentId) => void handleDownloadAttachment(attachmentId)}
-            onAddComment={(draft) => handleAddComment(draft)}
+            onAddComment={handleAddComment}
             onAddTaskTodo={(description, laneId) => void handleAddTaskTodo(description, laneId)}
-            onDeleteComment={(commentId) => handleDeleteComment(commentId)}
+            onDeleteComment={handleDeleteComment}
             onDeleteTaskTodo={(todoId) => void handleDeleteTaskTodo(todoId)}
             onAddDependency={() => void handleAddDependency()}
             onAddFileReference={() => void handleAddFileReference()}
@@ -1629,13 +1639,13 @@ export function TasksPage({
             onFileReferenceDraftChange={setFileReferenceDraft}
             onDependencyViewModeChange={setDependencyViewMode}
             onOpenTask={openTaskDetail}
-            onOpenTag={onOpenTaskTag ?? (() => {})}
-            onOpenSession={onOpenSession ?? (() => {})}
-            onOpenAgent={onOpenAgent ?? (() => {})}
-            onOpenRole={onOpenRole ?? (() => {})}
+            onOpenTag={openTaskTagHandler}
+            onOpenSession={openSessionHandler}
+            onOpenAgent={openAgentHandler}
+            onOpenRole={openRoleHandler}
             entityLookup={entityLookup}
             onPublish={() => void handlePublishDetailTask()}
-            onUpdateComment={(commentId, message) => handleUpdateComment(commentId, message)}
+            onUpdateComment={handleUpdateComment}
             onRemoveAttachment={(attachmentId) => void handleRemoveAttachment(attachmentId)}
             onRetry={() => void handleRetryTaskLane()}
             onPauseRuntime={() => void handlePauseTaskRuntime()}

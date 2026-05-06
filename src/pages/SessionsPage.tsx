@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
@@ -7,7 +7,8 @@ import { SessionTranscriptMobileControlsMenu } from "../components/SessionTransc
 import type { OrchestraConnectionSnapshot } from "../lib/orchestraClient";
 import type { UiErrorState } from "../lib/orchestraData/errors";
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
-import { useExplanatoryTooltipProps } from "../lib/tooltips";
+import { recordInputPerfRender } from "../lib/testInputPerformance";
+import { useExplanatoryTooltipProps, type ExplanatoryTooltipProps } from "../lib/tooltips";
 import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
 
 function formatListControlLabel(session: SessionRecord) {
@@ -47,6 +48,111 @@ function getActivityTone(activityState?: SessionActivityState) {
       return "neutral";
   }
 }
+
+interface SessionListContentProps {
+  sessions: SessionRecord[];
+  loadingSessions: boolean;
+  sessionFilter: "active" | "closed";
+  selectedSessionId: string | null;
+  touchFriendlySessionListActions: boolean;
+  revealedDeleteSessionId: string | null;
+  hintClassName: string;
+  onSelectSession: (sessionId: string) => void;
+  onCloseMobilePicker?: () => void;
+  onDeleteSession: (sessionId: string) => void;
+  scheduleDeleteReveal: (sessionId: string) => void;
+  hideDeleteReveal: () => void;
+  setRevealedDeleteSessionId: (sessionId: string | null) => void;
+  getTooltipProps: (message: string | null | undefined) => ExplanatoryTooltipProps;
+}
+
+const SessionListContent = memo(function SessionListContent({
+  sessions,
+  loadingSessions,
+  sessionFilter,
+  selectedSessionId,
+  touchFriendlySessionListActions,
+  revealedDeleteSessionId,
+  hintClassName,
+  onSelectSession,
+  onCloseMobilePicker,
+  onDeleteSession,
+  scheduleDeleteReveal,
+  hideDeleteReveal,
+  setRevealedDeleteSessionId,
+  getTooltipProps,
+}: SessionListContentProps) {
+  recordInputPerfRender("sessions-session-list");
+
+  return (
+    <div className="session-list-scroll">
+      <nav className="session-list" aria-label="Sessions">
+        {loadingSessions && sessions.length === 0 ? <p className={hintClassName}>Loading sessions…</p> : null}
+        {!loadingSessions && sessions.length === 0 ? <p className={hintClassName}>No {sessionFilter} sessions.</p> : null}
+        {sessions.map((session) => {
+          const isActive = session.id === selectedSessionId;
+          const showDeleteAction = touchFriendlySessionListActions || revealedDeleteSessionId === session.id;
+          return (
+            <div
+              key={session.id}
+              className={[
+                "session-list-row",
+                isActive ? "session-list-row--active" : "",
+                showDeleteAction ? "session-list-row--actions-visible" : "",
+              ].filter(Boolean).join(" ")}
+              onMouseEnter={() => scheduleDeleteReveal(session.id)}
+              onMouseLeave={hideDeleteReveal}
+              onFocusCapture={() => setRevealedDeleteSessionId(session.id)}
+              onBlurCapture={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  hideDeleteReveal();
+                }
+              }}
+            >
+              <a
+                data-role="session-link"
+                data-session-id={session.id}
+                className={isActive ? "session-list-link session-list-link--active" : "session-list-link"}
+                href="#"
+                onClick={(event) => {
+                  event.preventDefault();
+                  onSelectSession(session.id);
+                  onCloseMobilePicker?.();
+                }}
+              >
+                <div className="session-list-link__header">
+                  <span className="session-list-link__meta">{getSessionListMetadata(session)}</span>
+                  <span className={`status-badge status-badge--${session.terminalAttached ? "warning" : formatListControlLabel(session) ? "accent" : getActivityTone(session.activityState)}`}>
+                    {session.terminalAttached
+                      ? "Terminal attached"
+                      : formatListControlLabel(session) ?? formatActivityLabel(session.activityState, session.activeToolName)}
+                  </span>
+                </div>
+                <span className="session-list-link__title">{getSessionListTitle(session)}</span>
+              </a>
+              <button
+                className="session-delete-button"
+                type="button"
+                tabIndex={showDeleteAction ? 0 : -1}
+                aria-label={`Dismiss ${getSessionListTitle(session)}`}
+                {...getTooltipProps("Hide this session from the list without deleting its stored history.")}
+                onClick={() => onDeleteSession(session.id)}
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}, (previousProps, nextProps) => previousProps.sessions === nextProps.sessions
+  && previousProps.loadingSessions === nextProps.loadingSessions
+  && previousProps.sessionFilter === nextProps.sessionFilter
+  && previousProps.selectedSessionId === nextProps.selectedSessionId
+  && previousProps.touchFriendlySessionListActions === nextProps.touchFriendlySessionListActions
+  && previousProps.revealedDeleteSessionId === nextProps.revealedDeleteSessionId
+  && previousProps.hintClassName === nextProps.hintClassName);
 
 interface SessionsPageProps {
   sessions: SessionRecord[];
@@ -218,7 +324,7 @@ export function SessionsPage({
     onScrollLockChange(nextLockedState);
   }
 
-  function scheduleDeleteReveal(sessionId: string) {
+  const scheduleDeleteReveal = useCallback((sessionId: string) => {
     if (touchFriendlySessionListActions) {
       setRevealedDeleteSessionId(sessionId);
       return;
@@ -231,9 +337,9 @@ export function SessionsPage({
       setRevealedDeleteSessionId(sessionId);
       revealTimerRef.current = null;
     }, 2000);
-  }
+  }, [touchFriendlySessionListActions]);
 
-  function hideDeleteReveal() {
+  const hideDeleteReveal = useCallback(() => {
     if (touchFriendlySessionListActions) {
       return;
     }
@@ -242,7 +348,7 @@ export function SessionsPage({
       revealTimerRef.current = null;
     }
     setRevealedDeleteSessionId(null);
-  }
+  }, [touchFriendlySessionListActions]);
 
   function renderSessionFilterTabs(className?: string) {
     return (
@@ -273,68 +379,22 @@ export function SessionsPage({
 
   function renderSessionList({ mobile = false, hintClassName = "muted-copy" }: { mobile?: boolean; hintClassName?: string } = {}) {
     return (
-      <div className="session-list-scroll">
-        <nav className="session-list" aria-label="Sessions">
-          {loadingSessions && sessions.length === 0 ? <p className={hintClassName}>Loading sessions…</p> : null}
-          {!loadingSessions && sessions.length === 0 ? <p className={hintClassName}>No {sessionFilter} sessions.</p> : null}
-          {sessions.map((session) => {
-            const isActive = session.id === selectedSession?.id;
-            const showDeleteAction = touchFriendlySessionListActions || revealedDeleteSessionId === session.id;
-            return (
-              <div
-                key={session.id}
-                className={[
-                  "session-list-row",
-                  isActive ? "session-list-row--active" : "",
-                  showDeleteAction ? "session-list-row--actions-visible" : "",
-                ].filter(Boolean).join(" ")}
-                onMouseEnter={() => scheduleDeleteReveal(session.id)}
-                onMouseLeave={hideDeleteReveal}
-                onFocusCapture={() => setRevealedDeleteSessionId(session.id)}
-                onBlurCapture={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                    hideDeleteReveal();
-                  }
-                }}
-              >
-                <a
-                  data-role="session-link"
-                  data-session-id={session.id}
-                  className={isActive ? "session-list-link session-list-link--active" : "session-list-link"}
-                  href="#"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    onSelectSession(session.id);
-                    if (mobile) {
-                      setMobileSessionPickerOpen(false);
-                    }
-                  }}
-                >
-                  <div className="session-list-link__header">
-                    <span className="session-list-link__meta">{getSessionListMetadata(session)}</span>
-                    <span className={`status-badge status-badge--${session.terminalAttached ? "warning" : formatListControlLabel(session) ? "accent" : getActivityTone(session.activityState)}`}>
-                      {session.terminalAttached
-                        ? "Terminal attached"
-                        : formatListControlLabel(session) ?? formatActivityLabel(session.activityState, session.activeToolName)}
-                    </span>
-                  </div>
-                  <span className="session-list-link__title">{getSessionListTitle(session)}</span>
-                </a>
-                <button
-                  className="session-delete-button"
-                  type="button"
-                  tabIndex={showDeleteAction ? 0 : -1}
-                  aria-label={`Dismiss ${getSessionListTitle(session)}`}
-                  {...getTooltipProps("Hide this session from the list without deleting its stored history.")}
-                  onClick={() => onDeleteSession(session.id)}
-                >
-                  ×
-                </button>
-              </div>
-            );
-          })}
-        </nav>
-      </div>
+      <SessionListContent
+        sessions={sessions}
+        loadingSessions={loadingSessions}
+        sessionFilter={sessionFilter}
+        selectedSessionId={selectedSession?.id ?? null}
+        touchFriendlySessionListActions={touchFriendlySessionListActions}
+        revealedDeleteSessionId={revealedDeleteSessionId}
+        hintClassName={hintClassName}
+        onSelectSession={onSelectSession}
+        onCloseMobilePicker={mobile ? () => setMobileSessionPickerOpen(false) : undefined}
+        onDeleteSession={onDeleteSession}
+        scheduleDeleteReveal={scheduleDeleteReveal}
+        hideDeleteReveal={hideDeleteReveal}
+        setRevealedDeleteSessionId={setRevealedDeleteSessionId}
+        getTooltipProps={getTooltipProps}
+      />
     );
   }
 

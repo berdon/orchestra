@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import hljs from "highlight.js";
 
 import type { AgentSummary, RoleSummary, TaskComment, TaskCommentInput, TaskFileReference, TaskSummary } from "../types";
 import { buildTaskCommentThreads, type TaskCommentThread } from "../lib/taskCommentThreads";
+import { recordInputPerfRender } from "../lib/testInputPerformance";
 import { TaskCommentComposer } from "./TaskCommentComposer";
 import { TaskCommentMessage } from "./TaskCommentMessage";
 
@@ -53,8 +54,9 @@ interface CommentableFileViewerProps {
   content: string;
   language: string;
   comments: TaskComment[];
-  commentDraft: TaskCommentInput;
-  onCommentDraftChange: (draft: TaskCommentInput) => void;
+  commentAuthor: string;
+  commentInterruptAgent: boolean;
+  onCommentInterruptChange: (interruptAgent: boolean) => void;
   onAddComment: (draft: TaskCommentInput) => Promise<boolean>;
   onUpdateComment: (commentId: string, message: string) => Promise<boolean>;
   onDeleteComment: (commentId: string) => Promise<boolean>;
@@ -237,7 +239,7 @@ function buildThreadsByLine(threads: TaskCommentThread[]) {
   return byLine;
 }
 
-export function CommentableFileViewer({
+export const CommentableFileViewer = memo(function CommentableFileViewer({
   taskId,
   tasks,
   agents,
@@ -247,8 +249,9 @@ export function CommentableFileViewer({
   content,
   language,
   comments,
-  commentDraft,
-  onCommentDraftChange,
+  commentAuthor,
+  commentInterruptAgent,
+  onCommentInterruptChange,
   onAddComment,
   onUpdateComment,
   onDeleteComment,
@@ -257,6 +260,7 @@ export function CommentableFileViewer({
   onOpenAgent,
   onOpenRole,
 }: CommentableFileViewerProps) {
+  recordInputPerfRender("default-file-viewer");
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const selectionSyncFrameRef = useRef<number | null>(null);
@@ -557,7 +561,8 @@ export function CommentableFileViewer({
     }
 
     const created = await onAddComment({
-      ...commentDraft,
+      author: commentAuthor,
+      interruptAgent: commentInterruptAgent,
       message: floatingComment.message,
       parentCommentId: null,
       repositoryId: floatingComment.anchor.repositoryId,
@@ -582,7 +587,8 @@ export function CommentableFileViewer({
     }
 
     const created = await onAddComment({
-      ...commentDraft,
+      author: commentAuthor,
+      interruptAgent: commentInterruptAgent,
       message: replyMessage,
       parentCommentId,
       repositoryId: null,
@@ -779,14 +785,14 @@ export function CommentableFileViewer({
               agents={agents}
               roles={roles}
               className="task-comment-composer"
-              interruptChecked={commentDraft.interruptAgent}
+              interruptChecked={commentInterruptAgent}
               interruptDataRole="default-file-comment-interrupt"
               message={floatingComment.message}
               messageDataRole="default-file-comment-message"
               messageLabel="Comment"
               mentionListDataRole="default-file-comment-mention-list"
               mentionOptionDataRole="default-file-comment-mention-option"
-              onInterruptChange={(interruptAgent) => onCommentDraftChange({ ...commentDraft, interruptAgent })}
+              onInterruptChange={onCommentInterruptChange}
               onMessageChange={(message) => setFloatingComment((current) => current ? { ...current, message } : current)}
               onSubmit={() => void submitFloatingComment()}
               rows={3}
@@ -995,4 +1001,4 @@ export function CommentableFileViewer({
       </div>
     </div>
   );
-}
+});

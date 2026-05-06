@@ -3,6 +3,7 @@ import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type RefObj
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { TranscriptEventCard } from "./TranscriptEventCard";
 import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
+import { recordInputPerfRender } from "../lib/testInputPerformance";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
 
@@ -593,6 +594,7 @@ const SessionTranscript = memo(function SessionTranscript({
   formatTimestamp,
   getEventTone,
 }: SessionTranscriptProps) {
+  recordInputPerfRender("session-transcript");
 
   useEffect(() => {
     const node = transcriptRef.current;
