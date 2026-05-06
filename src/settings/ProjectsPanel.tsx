@@ -125,8 +125,14 @@ export function ProjectsPanel() {
   const [automationLoadedProjectSlug, setAutomationLoadedProjectSlug] = useState<string | null>(null);
   const [sourceControlLoadedProjectSlug, setSourceControlLoadedProjectSlug] = useState<string | null>(null);
   const [secretsLoadedProjectSlug, setSecretsLoadedProjectSlug] = useState<string | null>(null);
+  const [automationAttemptedProjectSlug, setAutomationAttemptedProjectSlug] = useState<string | null>(null);
+  const [sourceControlAttemptedProjectSlug, setSourceControlAttemptedProjectSlug] = useState<string | null>(null);
+  const [secretsAttemptedProjectSlug, setSecretsAttemptedProjectSlug] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [automationError, setAutomationError] = useState<string | null>(null);
+  const [sourceControlError, setSourceControlError] = useState<string | null>(null);
+  const [secretsError, setSecretsError] = useState<string | null>(null);
 
   const selectedProject = useMemo(
     () => (isCreatingProject ? null : projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? null),
@@ -211,6 +217,12 @@ export function ProjectsPanel() {
       setAutomationLoadedProjectSlug(null);
       setSourceControlLoadedProjectSlug(null);
       setSecretsLoadedProjectSlug(null);
+      setAutomationAttemptedProjectSlug(null);
+      setSourceControlAttemptedProjectSlug(null);
+      setSecretsAttemptedProjectSlug(null);
+      setAutomationError(null);
+      setSourceControlError(null);
+      setSecretsError(null);
       setSecretDraft(createBlankSecretDraft());
       setEditingSecretKey(null);
       setProjectTaskPrefixEdited(false);
@@ -226,23 +238,25 @@ export function ProjectsPanel() {
   }
 
   async function loadAutomationSettings(projectSlug: string) {
+    setAutomationAttemptedProjectSlug(projectSlug);
     setLoadingAutomation(true);
-    setError(null);
+    setAutomationError(null);
     try {
       const automationSettings = await getTaskAutomationSettings(projectSlug);
       setTaskAutomationSettings(automationSettings);
       setAutoDispatchOnBlockerCompletion(automationSettings.autoDispatchOnBlockerCompletion);
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to load task automation settings.");
-    } finally {
       setAutomationLoadedProjectSlug(projectSlug);
+    } catch (nextError) {
+      setAutomationError(nextError instanceof Error ? nextError.message : "Unable to load task automation settings.");
+    } finally {
       setLoadingAutomation(false);
     }
   }
 
   async function loadSourceControlTabSettings(projectSlug: string) {
+    setSourceControlAttemptedProjectSlug(projectSlug);
     setLoadingSourceControl(true);
-    setError(null);
+    setSourceControlError(null);
     try {
       const [globalSourceControlSettings, nextProjectSourceControlSettings] = await Promise.all([
         getSourceControlSettings(),
@@ -252,23 +266,24 @@ export function ProjectsPanel() {
       setProjectSourceControlSettings(nextProjectSourceControlSettings);
       setGitUserNameTemplate(nextProjectSourceControlSettings.gitUserNameTemplate ?? "");
       setGitEmailTemplate(nextProjectSourceControlSettings.gitEmailTemplate ?? "");
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to load project source control settings.");
-    } finally {
       setSourceControlLoadedProjectSlug(projectSlug);
+    } catch (nextError) {
+      setSourceControlError(nextError instanceof Error ? nextError.message : "Unable to load project source control settings.");
+    } finally {
       setLoadingSourceControl(false);
     }
   }
 
   async function loadSecrets(projectSlug: string) {
+    setSecretsAttemptedProjectSlug(projectSlug);
     setLoadingSecrets(true);
-    setError(null);
+    setSecretsError(null);
     try {
       setProjectSecretsState(await getProjectSecrets(projectSlug));
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Unable to load project secrets.");
-    } finally {
       setSecretsLoadedProjectSlug(projectSlug);
+    } catch (nextError) {
+      setSecretsError(nextError instanceof Error ? nextError.message : "Unable to load project secrets.");
+    } finally {
       setLoadingSecrets(false);
     }
   }
@@ -310,13 +325,13 @@ export function ProjectsPanel() {
         return;
       }
 
-      if (!loadingAutomation && automationLoadedProjectSlug !== projectSlug) {
+      if (!loadingAutomation && automationAttemptedProjectSlug !== projectSlug) {
         void loadAutomationSettings(projectSlug);
       }
-      if (!loadingSourceControl && sourceControlLoadedProjectSlug !== projectSlug) {
+      if (!loadingSourceControl && sourceControlAttemptedProjectSlug !== projectSlug) {
         void loadSourceControlTabSettings(projectSlug);
       }
-      if (!loadingSecrets && secretsLoadedProjectSlug !== projectSlug) {
+      if (!loadingSecrets && secretsAttemptedProjectSlug !== projectSlug) {
         void loadSecrets(projectSlug);
       }
     }, 0);
@@ -324,12 +339,15 @@ export function ProjectsPanel() {
     return () => window.clearTimeout(timeoutId);
   }, [
     activeDetailTab,
+    automationAttemptedProjectSlug,
     automationLoadedProjectSlug,
     loadingAutomation,
     loadingSecrets,
     loadingSourceControl,
     projectDetail?.slug,
+    secretsAttemptedProjectSlug,
     secretsLoadedProjectSlug,
+    sourceControlAttemptedProjectSlug,
     sourceControlLoadedProjectSlug,
   ]);
 
@@ -346,6 +364,38 @@ export function ProjectsPanel() {
   function resetSecretEditor() {
     setSecretDraft(createBlankSecretDraft());
     setEditingSecretKey(null);
+  }
+
+  function renderProjectTabLoadError({
+    title,
+    errorMessage,
+    dataRole,
+    retryDataRole,
+    onRetry,
+  }: {
+    title: string;
+    errorMessage: string | null;
+    dataRole: string;
+    retryDataRole: string;
+    onRetry: () => void;
+  }) {
+    if (!errorMessage) {
+      return null;
+    }
+
+    return (
+      <div className="session-readonly-banner app-status-banner" data-role={dataRole}>
+        <div>
+          <strong>{title}.</strong> Retry to continue loading this project-scoped settings tab.
+          <div className="muted-copy">{errorMessage}</div>
+        </div>
+        <div className="action-cluster action-cluster--wrap">
+          <button className="secondary-button" data-role={retryDataRole} type="button" onClick={onRetry}>
+            Retry load
+          </button>
+        </div>
+      </div>
+    );
   }
 
   function handleDetailTabSelect(tabId: ProjectDetailTabId) {
@@ -585,6 +635,12 @@ export function ProjectsPanel() {
     setAutomationLoadedProjectSlug(null);
     setSourceControlLoadedProjectSlug(null);
     setSecretsLoadedProjectSlug(null);
+    setAutomationAttemptedProjectSlug(null);
+    setSourceControlAttemptedProjectSlug(null);
+    setSecretsAttemptedProjectSlug(null);
+    setAutomationError(null);
+    setSourceControlError(null);
+    setSecretsError(null);
     setGitUserNameTemplate("");
     setGitEmailTemplate("");
     setAutoDispatchOnBlockerCompletion(false);
@@ -619,6 +675,12 @@ export function ProjectsPanel() {
       setAutomationLoadedProjectSlug(null);
       setSourceControlLoadedProjectSlug(null);
       setSecretsLoadedProjectSlug(null);
+      setAutomationAttemptedProjectSlug(null);
+      setSourceControlAttemptedProjectSlug(null);
+      setSecretsAttemptedProjectSlug(null);
+      setAutomationError(null);
+      setSourceControlError(null);
+      setSecretsError(null);
       setSelectedProjectId(null);
       setIsCreatingProject(false);
       setDeleteProjectConfirmationArmed(false);
@@ -681,6 +743,17 @@ export function ProjectsPanel() {
                 Save automation settings
               </button>
             </div>
+            {renderProjectTabLoadError({
+              title: "Unable to load task automation settings",
+              errorMessage: automationError,
+              dataRole: "project-automation-load-error",
+              retryDataRole: "project-automation-retry-load",
+              onRetry: () => {
+                if (projectDetail?.slug) {
+                  void loadAutomationSettings(projectDetail.slug);
+                }
+              },
+            })}
             {loadingAutomation && !taskAutomationSettings ? <p className="muted-copy">Loading automation settings…</p> : null}
             {taskAutomationSettings ? (
               <>
@@ -718,6 +791,17 @@ export function ProjectsPanel() {
                 Save source control overrides
               </button>
             </div>
+            {renderProjectTabLoadError({
+              title: "Unable to load project source control settings",
+              errorMessage: sourceControlError,
+              dataRole: "project-source-control-load-error",
+              retryDataRole: "project-source-control-retry-load",
+              onRetry: () => {
+                if (projectDetail?.slug) {
+                  void loadSourceControlTabSettings(projectDetail.slug);
+                }
+              },
+            })}
             {loadingSourceControl && (!sourceControlSettings || !projectSourceControlSettings) ? <p className="muted-copy">Loading source control settings…</p> : null}
             {sourceControlSettings && projectSourceControlSettings ? (
               <>
@@ -882,7 +966,18 @@ export function ProjectsPanel() {
             {!projectDetail ? (
               <p className="muted-copy">Create the project before adding project-scoped secrets.</p>
             ) : null}
-            {loadingSecrets ? <p className="muted-copy">Loading project secrets…</p> : null}
+            {renderProjectTabLoadError({
+              title: "Unable to load project secrets",
+              errorMessage: secretsError,
+              dataRole: "project-secrets-load-error",
+              retryDataRole: "project-secrets-retry-load",
+              onRetry: () => {
+                if (projectDetail?.slug) {
+                  void loadSecrets(projectDetail.slug);
+                }
+              },
+            })}
+            {loadingSecrets && !projectSecretsState ? <p className="muted-copy">Loading project secrets…</p> : null}
             {projectSecretsState ? (
               <>
                 <div className="task-history-card" data-role="project-secrets-status">

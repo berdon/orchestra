@@ -16,6 +16,46 @@ test.beforeEach(async ({ page }) => {
   await pairHostedWebBrowser(page);
 });
 
+async function expectProjectSectionLoaded(page: { locator: (selector: string) => any }, sectionId: "automation" | "source-control" | "secrets", panelSelector: string, readySelector: string) {
+  await page.locator('[data-role="project-detail-section-select-control"]').selectOption(sectionId);
+  await expect(page.locator(panelSelector)).toBeVisible();
+  await expect(page.locator(readySelector)).toBeVisible();
+  await expect(page.locator(panelSelector)).not.toContainText("Loading");
+}
+
+test("hosted-web mobile project settings load project-scoped tabs and clear refreshing states", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?page=settings&settingsTab=projects");
+
+  await expect(page.locator('[data-role="project-mobile-subnav-shell"]')).toBeVisible();
+  await expect(page.locator('.settings-mobile-subnav-panel')).toBeHidden();
+  await expect(page.locator('[data-role="project-detail-tabpanel-general"]')).toBeVisible();
+
+  await expectProjectSectionLoaded(
+    page,
+    "automation",
+    '[data-role="project-detail-tabpanel-automation"]',
+    '[data-role="project-automation-settings"]',
+  );
+  await expect(page.locator('[data-role="project-automation-load-error"]')).toHaveCount(0);
+
+  await expectProjectSectionLoaded(
+    page,
+    "source-control",
+    '[data-role="project-detail-tabpanel-source-control"]',
+    '[data-role="project-source-control-settings"]',
+  );
+  await expect(page.locator('[data-role="project-source-control-load-error"]')).toHaveCount(0);
+
+  await expectProjectSectionLoaded(
+    page,
+    "secrets",
+    '[data-role="project-detail-tabpanel-secrets"]',
+    '[data-role="project-secrets-status"]',
+  );
+  await expect(page.locator('[data-role="project-secrets-load-error"]')).toHaveCount(0);
+});
+
 test("hosted-web project creation makes the new project immediately selectable in the project switcher", async ({
   page,
 }) => {

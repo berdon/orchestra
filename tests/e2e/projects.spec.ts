@@ -17,7 +17,9 @@ async function expectProjectSectionLoaded(page: { locator: (selector: string) =>
   await expect(page.locator(panelSelector)).not.toContainText("Loading");
 }
 
-function createHostedWebSecretsApiMock() {
+function createHostedWebSecretsApiMock(options?: {
+  failures?: Partial<Record<"taskAutomation" | "sourceControlGlobal" | "sourceControlProject" | "secrets", number>>;
+}) {
   const now = () => new Date().toISOString();
   const project = {
     id: "project-secret-1",
@@ -37,6 +39,12 @@ function createHostedWebSecretsApiMock() {
     sourceControlGlobal: 0,
     sourceControlProject: 0,
     secrets: 0,
+  };
+  const remainingFailures = {
+    taskAutomation: options?.failures?.taskAutomation ?? 0,
+    sourceControlGlobal: options?.failures?.sourceControlGlobal ?? 0,
+    sourceControlProject: options?.failures?.sourceControlProject ?? 0,
+    secrets: options?.failures?.secrets ?? 0,
   };
 
   const bootstrap = {
@@ -182,6 +190,14 @@ function createHostedWebSecretsApiMock() {
     };
   }
 
+  function shouldFail(key: keyof typeof remainingFailures) {
+    if (remainingFailures[key] <= 0) {
+      return false;
+    }
+    remainingFailures[key] -= 1;
+    return true;
+  }
+
   return {
     secrets,
     requestCounts,
@@ -202,6 +218,9 @@ function createHostedWebSecretsApiMock() {
       }
       if (pathname === "/api/v1/project-settings/task-automation" && method === "GET") {
         requestCounts.taskAutomation += 1;
+        if (shouldFail("taskAutomation")) {
+          return fulfillJson(route, { error: "automation unavailable" }, 500);
+        }
         return fulfillJson(route, {
           projectSlug: project.slug,
           autoDispatchOnBlockerCompletion: true,
@@ -210,6 +229,9 @@ function createHostedWebSecretsApiMock() {
       }
       if (pathname === "/api/v1/settings/source-control" && method === "GET") {
         requestCounts.sourceControlGlobal += 1;
+        if (shouldFail("sourceControlGlobal")) {
+          return fulfillJson(route, { error: "source control global unavailable" }, 500);
+        }
         return fulfillJson(route, {
           gitUserNameTemplate: null,
           gitEmailTemplate: null,
@@ -218,6 +240,9 @@ function createHostedWebSecretsApiMock() {
       }
       if (pathname === "/api/v1/project-settings/source-control" && method === "GET") {
         requestCounts.sourceControlProject += 1;
+        if (shouldFail("sourceControlProject")) {
+          return fulfillJson(route, { error: "source control project unavailable" }, 500);
+        }
         return fulfillJson(route, {
           projectSlug: project.slug,
           gitUserNameTemplate: null,
@@ -227,6 +252,9 @@ function createHostedWebSecretsApiMock() {
       }
       if (pathname === "/api/v1/project-settings/secrets" && method === "GET") {
         requestCounts.secrets += 1;
+        if (shouldFail("secrets")) {
+          return fulfillJson(route, { error: "secrets unavailable" }, 500);
+        }
         return fulfillJson(route, currentSecretsState());
       }
       if (pathname === "/api/v1/project-settings/secrets" && method === "POST") {
@@ -383,13 +411,13 @@ test("project settings asynchronously prefetches tab-specific hosted-web setting
   });
   await page.route("**/api/v1/**", (route) => api.handle(route));
 
-  await page.goto("/?page=settings&settingsTab=projects");
-  await expect(page.locator('[data-role="project-detail-tabpanel-general"]')).toBeVisible();
-
   expect(api.requestCounts.taskAutomation).toBe(0);
   expect(api.requestCounts.sourceControlGlobal).toBe(0);
   expect(api.requestCounts.sourceControlProject).toBe(0);
   expect(api.requestCounts.secrets).toBe(0);
+
+  await page.goto("/?page=settings&settingsTab=projects");
+  await expect(page.locator('[data-role="project-detail-tabpanel-general"]')).toBeVisible();
 
   await expect.poll(() => api.requestCounts.taskAutomation).toBe(1);
   await expect.poll(() => api.requestCounts.sourceControlGlobal).toBe(1);
@@ -408,6 +436,67 @@ test("project settings asynchronously prefetches tab-specific hosted-web setting
   await page.locator('[data-role="project-detail-tab-secrets"]').click();
   await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toBeVisible();
   expect(api.requestCounts.secrets).toBe(1);
+});
+
+test("hosted-web mobile project settings retries failed project-scoped tab loads and shows inline retry UI", async ({ page }) => {
+  const api = createHostedWebSecretsApiMock({
+    failures: {
+      taskAutomation: 2,
+      sourceControlGlobal: 2,
+      sourceControlProject: 2,
+      secrets: 2,
+    },
+  });
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.__ORCHESTRA_HOST_MODE__ = "hosted_web";
+    window.confirm = () => true;
+  });
+  await page.route("**/api/v1/**", (route) => api.handle(route));
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?page=settings&settingsTab=projects");
+  await expect(page.locator('.settings-mobile-subnav-panel')).toBeHidden();
+  await expect(page.locator('[data-role="project-detail-tabpanel-general"]')).toBeVisible();
+
+  await expect.poll(() => api.requestCounts.taskAutomation).toBe(1);
+  await expect.poll(() => api.requestCounts.sourceControlGlobal).toBe(1);
+  await expect.poll(() => api.requestCounts.sourceControlProject).toBe(1);
+  await expect.poll(() => api.requestCounts.secrets).toBe(1);
+
+  const sectionSelectControl = page.locator('[data-role="project-detail-section-select-control"]');
+
+  await sectionSelectControl.selectOption("automation");
+  await expect(page.locator('[data-role="project-detail-tabpanel-automation"]')).toBeVisible();
+  await expect.poll(() => api.requestCounts.taskAutomation).toBe(2);
+  await expect(page.locator('[data-role="project-automation-load-error"]')).toBeVisible();
+  await page.locator('[data-role="project-automation-retry-load"]').click();
+  await expect.poll(() => api.requestCounts.taskAutomation).toBe(3);
+  await expect(page.locator('[data-role="project-automation-settings"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-automation-load-error"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="project-detail-tabpanel-automation"]')).not.toContainText("Loading automation settings…");
+
+  await sectionSelectControl.selectOption("source-control");
+  await expect(page.locator('[data-role="project-detail-tabpanel-source-control"]')).toBeVisible();
+  await expect.poll(() => api.requestCounts.sourceControlGlobal).toBe(2);
+  await expect.poll(() => api.requestCounts.sourceControlProject).toBe(2);
+  await expect(page.locator('[data-role="project-source-control-load-error"]')).toBeVisible();
+  await page.locator('[data-role="project-source-control-retry-load"]').click();
+  await expect.poll(() => api.requestCounts.sourceControlGlobal).toBe(3);
+  await expect.poll(() => api.requestCounts.sourceControlProject).toBe(3);
+  await expect(page.locator('[data-role="project-source-control-settings"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-source-control-load-error"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="project-detail-tabpanel-source-control"]')).not.toContainText("Loading source control settings…");
+
+  await sectionSelectControl.selectOption("secrets");
+  await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toBeVisible();
+  await expect.poll(() => api.requestCounts.secrets).toBe(2);
+  await expect(page.locator('[data-role="project-secrets-load-error"]')).toBeVisible();
+  await page.locator('[data-role="project-secrets-retry-load"]').click();
+  await expect.poll(() => api.requestCounts.secrets).toBe(3);
+  await expect(page.locator('[data-role="project-secrets-status"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-secrets-load-error"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).not.toContainText("Loading project secrets…");
 });
 
 test("project settings hides the floating tab dock on mobile scroll down and restores it on scroll up", async ({ page }) => {
