@@ -18,6 +18,7 @@
     "scan:artifacts": "./scripts/scan-release-artifacts.sh debug",
     "scan:artifacts:release": "./scripts/scan-release-artifacts.sh release",
     "build:adhoc:verified": "npm run scan:guardrails && ORCHESTRA_BUILD_PROFILE=release ORCHESTRA_SANITIZE_BUILD_PATHS=1 ./scripts/build-adhoc.sh && npm run scan:artifacts:release",
+    "sign:macos:release": "./scripts/sign-macos-app-and-dmg.sh --profile release",
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

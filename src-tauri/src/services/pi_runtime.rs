@@ -897,39 +897,41 @@ fn validate_bundled_runtime_root(
             ));
         }
 
-        let actual_sha256 = sha256_for_file(&resolved_path).map_err(|error| {
-            runtime_error(
-                mode,
-                "bundled",
-                "bundled_runtime_manifest_invalid",
-                format!(
-                    "Unable to hash bundled Pi runtime file {}: {error}",
-                    resolved_path.display()
-                ),
-                Some(&resolved_path),
-                Some(&manifest_path),
-                Some(agent_dir),
-                Some(mode.as_str().to_string()),
-                Some(manifest.package_version.clone()),
-            )
-        })?;
-        if !actual_sha256.eq_ignore_ascii_case(&file.sha256) {
-            return Err(runtime_error(
-                mode,
-                "bundled",
-                "bundled_runtime_checksum_mismatch",
-                format!(
-                    "Bundled Pi runtime file failed checksum verification: {} (expected {}, got {}).",
-                    resolved_path.display(),
-                    file.sha256,
-                    actual_sha256,
-                ),
-                Some(&resolved_path),
-                Some(&manifest_path),
-                Some(agent_dir),
-                Some(mode.as_str().to_string()),
-                Some(manifest.package_version.clone()),
-            ));
+        if !file.executable {
+            let actual_sha256 = sha256_for_file(&resolved_path).map_err(|error| {
+                runtime_error(
+                    mode,
+                    "bundled",
+                    "bundled_runtime_manifest_invalid",
+                    format!(
+                        "Unable to hash bundled Pi runtime file {}: {error}",
+                        resolved_path.display()
+                    ),
+                    Some(&resolved_path),
+                    Some(&manifest_path),
+                    Some(agent_dir),
+                    Some(mode.as_str().to_string()),
+                    Some(manifest.package_version.clone()),
+                )
+            })?;
+            if !actual_sha256.eq_ignore_ascii_case(&file.sha256) {
+                return Err(runtime_error(
+                    mode,
+                    "bundled",
+                    "bundled_runtime_checksum_mismatch",
+                    format!(
+                        "Bundled Pi runtime file failed checksum verification: {} (expected {}, got {}).",
+                        resolved_path.display(),
+                        file.sha256,
+                        actual_sha256,
+                    ),
+                    Some(&resolved_path),
+                    Some(&manifest_path),
+                    Some(agent_dir),
+                    Some(mode.as_str().to_string()),
+                    Some(manifest.package_version.clone()),
+                ));
+            }
         }
     }
 
@@ -1492,7 +1494,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_checksum_mismatch_with_specific_error() {
+    fn rejects_non_executable_checksum_mismatch_with_specific_error() {
         let root = make_temp_dir("bundled-checksum-mismatch");
         let executable_path = root.join(executable_relative_path());
         write_fake_executable(&executable_path);
@@ -1509,12 +1511,12 @@ mod tests {
             expected_manifest_platform(),
             expected_manifest_arch(),
             vec![
+                manifest_file_entry(&root, executable_relative_path(), true),
                 json!({
-                    "path": executable_relative_path(),
+                    "path": "THIRD_PARTY_NOTICES.txt",
                     "sha256": "deadbeef",
-                    "executable": true,
+                    "executable": false,
                 }),
-                manifest_file_entry(&root, "THIRD_PARTY_NOTICES.txt", false),
             ],
             None,
         );
@@ -1527,6 +1529,32 @@ mod tests {
             error.error_kind.as_deref(),
             Some("bundled_runtime_checksum_mismatch")
         );
+    }
+
+    #[test]
+    fn allows_executable_checksum_mismatch_after_resigning() {
+        let root = make_temp_dir("bundled-executable-checksum-mismatch");
+        let executable_path = root.join(executable_relative_path());
+        write_fake_executable(&executable_path);
+        write_notice_and_sbom(&root);
+        write_manifest(
+            &root,
+            expected_manifest_platform(),
+            expected_manifest_arch(),
+            vec![
+                json!({
+                    "path": executable_relative_path(),
+                    "sha256": "deadbeef",
+                    "executable": true,
+                }),
+                manifest_file_entry(&root, "THIRD_PARTY_NOTICES.txt", false),
+            ],
+            None,
+        );
+        let agent_dir = make_temp_dir("agent-dir-executable-checksum-mismatch");
+
+        validate_bundled_runtime_root(&root, RuntimeMode::Packaged, &agent_dir)
+            .expect("bundled runtime should allow executable checksum drift after signing");
     }
 
     #[test]
