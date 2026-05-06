@@ -21,6 +21,7 @@ import {
   waitForSelector,
   waitForText,
 } from "./driver";
+import { orchestraProjectRoot } from "./test-paths";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -45,7 +46,7 @@ describe("desktop project and workflow setup", () => {
       await waitForSelector(sessionId, '[data-role="repository-name"]');
 
       const repoPath = join(testHome!, "workspace", "desktop-automation-repo");
-      const managedRepoPath = join(testHome!, ".orchestra", "projects", "desktop-automation-project", "repositories", "desktop-automation-repo", "repository");
+      const managedRepoPath = join(orchestraProjectRoot(testHome!, "desktop-automation-project"), "repositories", "desktop-automation-repo", "repository");
       await setFieldByLabel(sessionId, 'Repository name', 'Desktop Automation Repo');
       await setFieldByLabel(sessionId, 'Repository Path', repoPath);
       await setFieldByLabel(sessionId, 'Default branch', 'main');
@@ -69,6 +70,7 @@ describe("desktop project and workflow setup", () => {
       await clickByText(sessionId, '[role="tab"]', "Workflows");
       await clickByText(sessionId, 'button', 'New workflow');
       await setFieldByLabel(sessionId, 'Workflow name', 'Development Automation');
+      await clickSelector(sessionId, '[data-role="workflow-detail-tab-lane"]');
       await setFieldByLabel(sessionId, 'Lane name', 'Plan');
       await setFieldByLabel(sessionId, 'Lane key', 'plan');
       await selectValue(sessionId, '[data-role="lane-owner-type"]', 'role');
@@ -139,7 +141,7 @@ describe("desktop project and workflow setup", () => {
   it.skipIf(!isDesktopE2E)("deletes a project through project settings UI and removes its Orchestra storage", async () => {
     expect(testHome).toBeTruthy();
 
-    const projectRoot = join(testHome!, ".orchestra", "projects", "delete-me-project");
+    const projectRoot = orchestraProjectRoot(testHome!, "delete-me-project");
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);

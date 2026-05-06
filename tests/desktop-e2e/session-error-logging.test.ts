@@ -13,6 +13,7 @@ import {
   waitForSelector,
   waitForText,
 } from "./driver";
+import { orchestraProjectSessionsRoot } from "./test-paths";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -30,7 +31,7 @@ describe("desktop session error logging", () => {
       });
       expect(createdSession.id).toBeTruthy();
 
-      const expectedSessionDir = join(testHome!, ".orchestra", "projects", "orchestra", "sessions");
+      const expectedSessionDir = orchestraProjectSessionsRoot(testHome!, "orchestra");
       expect(existsSync(expectedSessionDir)).toBe(true);
 
       const sessionFile = readdirSync(expectedSessionDir)
@@ -45,6 +46,7 @@ describe("desktop session error logging", () => {
 
       await clickByText(sessionId, "button", "Settings");
       await clickByText(sessionId, "button", "General");
+      await clickByText(sessionId, "button", "Logs");
       await waitForSelector(sessionId, '[data-role="runtime-log-list"]');
       await waitForText(sessionId, "sessions.subscribe.failed");
       await waitForText(sessionId, "sessions.model_state.failed");

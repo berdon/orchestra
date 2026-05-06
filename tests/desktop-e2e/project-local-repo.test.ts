@@ -14,6 +14,7 @@ import {
   setInputValue,
   waitForText,
 } from "./driver";
+import { orchestraProjectRoot } from "./test-paths";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -23,10 +24,7 @@ describe("desktop local repository project flow", () => {
     expect(testHome).toBeTruthy();
 
     const managedRepoPath = join(
-      testHome!,
-      ".orchestra",
-      "projects",
-      "local-repo-project",
+      orchestraProjectRoot(testHome!, "local-repo-project"),
       "repositories",
       "brand-new-repo",
       "repository",

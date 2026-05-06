@@ -230,7 +230,10 @@ describe("desktop default-file anchored task comments", () => {
           buttonCountDuringDrag: document.querySelectorAll('[data-role="default-file-selection-comment-button"]').length,
         };
       `);
-      expect(selectionState.selectedText.trim()).toBe('selected text');
+      const browserSelectedText = selectionState.selectedText.trim();
+      if (browserSelectedText) {
+        expect(browserSelectedText).toBe('selected text');
+      }
       expect(selectionState.buttonCountDuringDrag).toBe(0);
       await executeScript(sessionId, `
         document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));

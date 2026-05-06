@@ -16,6 +16,7 @@ const expectedRuntimeMode = expectPackagedMode ? "packaged" : "development";
 const expectedRuntimePathFragment = process.env.ORCHESTRA_DESKTOP_E2E_EXPECT_RUNTIME_PATH_FRAGMENT ?? "pi-runtime";
 const expectPromptSuccess = process.env.ORCHESTRA_PACKAGED_RUNTIME_EXPECT_PROMPT_SUCCESS === "1";
 const testHome = process.env.ORCHESTRA_TEST_HOME ?? "";
+const expectedAgentDirFragment = ".orchestra-dev/runtime/pi/agent";
 
 async function waitForAssistantText(webdriverSessionId: string, sessionId: string, expectedText: string, timeoutMs = 180_000) {
   const deadline = Date.now() + timeoutMs;
@@ -50,7 +51,7 @@ describe("bundled-runtime validation", () => {
       expect(appInfo?.piRuntimeDiagnostics?.runtime?.source).toBe("bundled");
       expect(appInfo?.piRuntimeDiagnostics?.runtime?.error ?? null).toBeNull();
       expect(String(appInfo?.piRuntimeDiagnostics?.runtime?.resolvedPath ?? "")).toContain(expectedRuntimePathFragment);
-      expect(String(appInfo?.piRuntimeDiagnostics?.auth?.agentDir ?? "")).toContain(".orchestra/runtime/pi/agent");
+      expect(String(appInfo?.piRuntimeDiagnostics?.auth?.agentDir ?? "")).toContain(expectedAgentDirFragment);
       expect(String(appInfo?.piRuntimeDiagnostics?.auth?.agentDir ?? "")).not.toContain("/.pi/");
       if (testHome) {
         expect(String(appInfo?.piRuntimeDiagnostics?.auth?.agentDir ?? "")).toContain(testHome);
@@ -58,7 +59,7 @@ describe("bundled-runtime validation", () => {
 
       const setupState = await invokeCommand<any>(webdriverSessionId, "get_pi_setup_state");
       expect(setupState?.status).toBe("ready");
-      expect(String(setupState?.agentDir ?? "")).toContain(".orchestra/runtime/pi/agent");
+      expect(String(setupState?.agentDir ?? "")).toContain(expectedAgentDirFragment);
       expect(setupState?.packageDiagnostics?.bun?.available).toBe(true);
       expect(String(setupState?.packageDiagnostics?.bun?.message ?? "")).toContain("Bundled Bun is available");
       expect(String(setupState?.packageDiagnostics?.bun?.path ?? "")).toContain(expectedRuntimePathFragment);

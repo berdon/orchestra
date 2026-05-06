@@ -187,8 +187,11 @@ describe("desktop task repo files tab", () => {
       }).then((tasks) => tasks.find((entry) => entry.title === 'Track worktree-only repo file'));
       expect(task).toBeTruthy();
 
-      await openRoleOperations(sessionId, 'Repo Files Developer');
-      await dispatchRoleQueueViaUi(sessionId);
+      const developerRole = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_roles', { includeArchived: false })
+        .then((roles) => roles.find((entry) => entry.name === 'Repo Files Developer'));
+      expect(developerRole).toBeTruthy();
+      await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+      await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: developerRole!.id }).catch(() => undefined);
 
       await openTaskCard(sessionId, 'Track worktree-only repo file');
       await clickByText(sessionId, '[role="tab"]', 'Runtime');
@@ -196,6 +199,8 @@ describe("desktop task repo files tab", () => {
       const deadline = Date.now() + 30_000;
       let taskWorktreePath = "";
       while (Date.now() < deadline) {
+        await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+        await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: developerRole!.id }).catch(() => undefined);
         const taskRepositories = await invokeCommand<Array<{ taskWorktreePath?: string | null }>>(sessionId, 'list_task_repositories', { taskId: task!.id });
         taskWorktreePath = taskRepositories.find((entry) => typeof entry.taskWorktreePath === 'string' && entry.taskWorktreePath.length > 0)?.taskWorktreePath ?? "";
         if (!taskWorktreePath) {

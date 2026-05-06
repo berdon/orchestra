@@ -23,6 +23,7 @@ tracked_files = [
     "vite.config.ts",
 ]
 tracked_dirs = [
+    "public",
     "src",
     "public",
 ]

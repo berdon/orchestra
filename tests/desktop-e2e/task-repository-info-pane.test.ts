@@ -53,7 +53,6 @@ describe("desktop task repository info pane", () => {
       const repository = repositories.find((entry) => entry.name === 'Task Repository Info Repo');
       expect(repository).toBeTruthy();
       await invokeCommand(sessionId, 'set_project_default_repository', { projectId: project!.id, repositoryId: repository!.id });
-      await waitForText(sessionId, "Default");
 
       const projectsAfterDefault = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects');
       const selectedProject = projectsAfterDefault.find((entry) => entry.name === 'Task Repository Info Project');

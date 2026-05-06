@@ -445,36 +445,44 @@ export async function setInputValue(sessionId: string, selector: string, value: 
 }
 
 export async function setFieldByLabel(sessionId: string, labelText: string, value: string) {
-  const updated = await executeScript<boolean>(
-    sessionId,
-    `
-      const labels = Array.from(document.querySelectorAll('label'));
-      const label = labels.find((entry) => {
-        const heading = entry.querySelector('.field-group__label');
-        return (heading?.textContent || '').trim() === arguments[0];
-      });
-      const field = label?.querySelector('input, textarea, select');
-      if (!field) {
-        return false;
-      }
-      field.focus();
-      const prototype = field instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : field instanceof HTMLSelectElement
-          ? HTMLSelectElement.prototype
-          : HTMLInputElement.prototype;
-      const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
-      descriptor?.set?.call(field, arguments[1]);
-      field.dispatchEvent(new Event('input', { bubbles: true }));
-      field.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    `,
-    [labelText, value],
-  );
+  const deadline = Date.now() + 5_000;
 
-  if (!updated) {
-    throw new Error(`Unable to set field with label ${labelText}`);
+  while (Date.now() < deadline) {
+    const updated = await executeScript<boolean>(
+      sessionId,
+      `
+        const fieldGroups = Array.from(document.querySelectorAll('.field-group'));
+        const fieldGroup = fieldGroups.find((entry) => {
+          const heading = entry.querySelector('.field-group__label');
+          return (heading?.textContent || '').trim() === arguments[0];
+        });
+        const field = fieldGroup?.querySelector('input, textarea, select');
+        if (!field) {
+          return false;
+        }
+        field.focus();
+        const prototype = field instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : field instanceof HTMLSelectElement
+            ? HTMLSelectElement.prototype
+            : HTMLInputElement.prototype;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+        descriptor?.set?.call(field, arguments[1]);
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        field.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      `,
+      [labelText, value],
+    );
+
+    if (updated) {
+      return;
+    }
+
+    await sleep(100);
   }
+
+  throw new Error(`Unable to set field with label ${labelText}`);
 }
 
 export async function setCheckbox(sessionId: string, selector: string, checked: boolean) {

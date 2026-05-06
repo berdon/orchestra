@@ -19,6 +19,7 @@ import {
   openRoleOperations,
   switchProject,
 } from "./ui-flows";
+import { orchestraProjectsRoot } from "./test-paths";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -45,7 +46,7 @@ describe("desktop single-use role runtimes", () => {
   it.skipIf(!isDesktopE2E)("creates a fresh role instance/session/worktree for each dispatched work item", async () => {
     expect(testHome).toBeTruthy();
 
-    const orchestraProjectsRoot = join(testHome!, ".orchestra", "projects");
+    const orchestraProjectsDir = orchestraProjectsRoot(testHome!);
 
     const sessionId = await createReadyWebdriverSession();
     try {
@@ -79,7 +80,7 @@ describe("desktop single-use role runtimes", () => {
       const firstInstance = firstRuntime.instance;
       const firstSession = await invokeCommand<any>(sessionId, "get_session_record", { sessionId: firstInstance.sessionId });
       expect(firstSession).toBeTruthy();
-      expect(firstInstance.worktreePath).toContain(orchestraProjectsRoot);
+      expect(firstInstance.worktreePath).toContain(orchestraProjectsDir);
       expect(existsSync(firstInstance.worktreePath ?? "")).toBe(true);
 
       await invokeCommand(sessionId, "release_role_instance", { instanceId: firstInstance.id, outcome: "success" });
@@ -105,7 +106,7 @@ describe("desktop single-use role runtimes", () => {
       const secondInstance = secondRuntime.instance;
       const secondSession = await invokeCommand<any>(sessionId, "get_session_record", { sessionId: secondInstance.sessionId });
       expect(secondSession).toBeTruthy();
-      expect(secondInstance.worktreePath).toContain(orchestraProjectsRoot);
+      expect(secondInstance.worktreePath).toContain(orchestraProjectsDir);
       expect(existsSync(secondInstance.worktreePath ?? "")).toBe(true);
 
       expect(secondInstance.sessionId).not.toBe(firstInstance.sessionId);

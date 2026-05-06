@@ -13,6 +13,7 @@ import {
   waitForSelector,
   waitForText,
 } from "./driver";
+import { orchestraProjectRoot, orchestraProjectSessionsRoot } from "./test-paths";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -30,7 +31,7 @@ describe("desktop session missing cwd recovery", () => {
       });
       expect(createdSession.id).toBeTruthy();
 
-      const expectedSessionDir = join(testHome!, ".orchestra", "projects", "orchestra", "sessions");
+      const expectedSessionDir = orchestraProjectSessionsRoot(testHome!, "orchestra");
       expect(existsSync(expectedSessionDir)).toBe(true);
 
       const sessionFile = readdirSync(expectedSessionDir)
@@ -39,7 +40,7 @@ describe("desktop session missing cwd recovery", () => {
 
       expect(sessionFile).toBeTruthy();
 
-      const missingCwd = join(testHome!, ".orchestra", "projects", "orchestra", "missing-runtime-cwd");
+      const missingCwd = join(orchestraProjectRoot(testHome!, "orchestra"), "missing-runtime-cwd");
       const lines = readFileSync(sessionFile!, "utf8").trimEnd().split("\n");
       const header = JSON.parse(lines[0]);
       header.cwd = missingCwd;
@@ -56,6 +57,7 @@ describe("desktop session missing cwd recovery", () => {
 
       await clickByText(sessionId, "button", "Settings");
       await clickByText(sessionId, "button", "General");
+      await clickByText(sessionId, "button", "Logs");
       await waitForSelector(sessionId, '[data-role="runtime-log-list"]');
       await waitForText(sessionId, "sessions.runtime.spawn.request");
 

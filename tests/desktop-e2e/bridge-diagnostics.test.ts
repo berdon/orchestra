@@ -44,6 +44,7 @@ describe("desktop bridge diagnostics", () => {
       `);
       expect(generalHarnessPanelCount).toBe(0);
 
+      await clickSelector(sessionId, '[data-role="general-detail-tab-bridge"]');
       await waitForText(sessionId, "Bridge diagnostics");
       await waitForSelector(sessionId, '[data-role="bridge-instance-id"]');
       await waitForSelector(sessionId, '[data-role="refresh-bridge-diagnostics"]');
@@ -77,9 +78,11 @@ describe("desktop bridge diagnostics", () => {
 
       await clickByText(sessionId, "button", "Settings");
       await clickByText(sessionId, '[role="tab"]', "General");
+      await clickSelector(sessionId, '[data-role="general-detail-tab-bridge"]');
       await clickSelector(sessionId, '[data-role="cleanup-stale-bridges"]');
       await waitForText(sessionId, "Recent stale-bridge cleanup events");
 
+      await clickSelector(sessionId, '[data-role="general-detail-tab-logs"]');
       await waitForSelector(sessionId, '[data-role="runtime-log-level-filter"]');
       await waitForText(sessionId, 'sessions.message.start');
       const infoLogText = await executeScript<string>(sessionId, `

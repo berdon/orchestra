@@ -514,11 +514,15 @@ fn resolve_pi_runtime_internal(
         ));
     }
 
+    let bundled_runtime_override = env::var_os("ORCHESTRA_BUNDLED_PI_RUNTIME_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+
     match resolve_bundled_runtime(mode, &agent_dir) {
         Ok(Some(runtime)) => return Ok(runtime),
         Ok(None) => {}
         Err(error) => {
-            if mode == RuntimeMode::Packaged {
+            if mode == RuntimeMode::Packaged || bundled_runtime_override.is_some() {
                 return Err(error);
             }
         }

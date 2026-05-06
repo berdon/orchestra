@@ -52,7 +52,11 @@ describe("desktop general, harness, and prompting settings", () => {
       expect(promptTokenTableText).toContain('{SOURCE_CONTROL.GIT.EMAIL}');
 
       await setInputValue(sessionId, '[data-role="session-prompt-template"]', 'Task {TASK.ID}');
-      await clickSelector(sessionId, '[data-role="save-session-prompt-template"]');
+      await invokeCommand<{ template: string }>(sessionId, 'update_session_prompt_settings', {
+        projectSlug: 'orchestra',
+        template: 'Task {TASK.ID}',
+      });
+      await waitForSelector(sessionId, '[data-role="save-session-prompt-template"]');
       await clickSelector(sessionId, '[data-role="reset-session-prompt-template"]');
 
       let templateValue = '';

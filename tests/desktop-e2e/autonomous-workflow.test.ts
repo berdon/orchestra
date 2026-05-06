@@ -115,7 +115,7 @@ describe("desktop autonomous workflow", () => {
       await waitForText(sessionId, createdAgent.name);
 
       await clickByText(sessionId, '[role="tab"]', 'Projects');
-      await waitForText(sessionId, 'Autonomous Workflow Repo');
+      await waitForText(sessionId, 'Autonomous Workflow Project');
 
       await createTaskViaTasks(sessionId, {
         title: "Autonomous desktop workflow task",

@@ -48,6 +48,8 @@ describe("desktop remote access", () => {
       expect(endpoints.localApiUrl).toContain("http://127.0.0.1:");
       expect(new URL(endpoints.browserUrl).port).toBe(new URL(endpoints.localApiUrl).port);
 
+      await clickSelector(sessionId, '[data-role="remote-detail-tab-pairing"]');
+      await waitForSelector(sessionId, '[data-role="create-remote-pairing-code"]');
       await clickSelector(sessionId, '[data-role="create-remote-pairing-code"]');
       await waitForSelector(sessionId, '[data-role="latest-remote-pairing-code"]');
       const latestCode = await executeScript<string>(sessionId, `

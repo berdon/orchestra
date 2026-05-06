@@ -17,6 +17,8 @@ const executablePath = path.join(root, executableRelativePath);
 const bundledBunPath = path.join(root, bundledBunRelativePath);
 const packageDir = path.join(root, packageDirRelativePath);
 const packageJsonPath = path.join(packageDir, "package.json");
+const packageDarkThemePath = path.join(packageDir, "theme", "dark.json");
+const packageExportTemplatePath = path.join(packageDir, "export-html", "template.html");
 const manifestPath = path.join(root, "manifest.json");
 const expectedBunDir = path.dirname(bundledBunPath);
 const expectedPackageDir = packageDir;
@@ -26,6 +28,8 @@ fs.rmSync(root, { recursive: true, force: true });
 fs.mkdirSync(path.dirname(executablePath), { recursive: true });
 fs.mkdirSync(path.dirname(bundledBunPath), { recursive: true });
 fs.mkdirSync(packageDir, { recursive: true });
+fs.mkdirSync(path.dirname(packageDarkThemePath), { recursive: true });
+fs.mkdirSync(path.dirname(packageExportTemplatePath), { recursive: true });
 
 const bundledBunScript = `#!/usr/bin/env bash
 set -euo pipefail
@@ -176,6 +180,8 @@ fs.writeFileSync(
   }, null, 2)}\n`,
   "utf8",
 );
+fs.writeFileSync(packageDarkThemePath, `${JSON.stringify({ theme: "dark" }, null, 2)}\n`, "utf8");
+fs.writeFileSync(packageExportTemplatePath, "<html><body>{{content}}</body></html>\n", "utf8");
 
 function sha256(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
@@ -219,6 +225,8 @@ const manifest = {
     { path: executableRelativePath, sha256: sha256(executablePath), executable: true },
     { path: bundledBunRelativePath, sha256: sha256(bundledBunPath), executable: true },
     { path: `${packageDirRelativePath}/package.json`, sha256: sha256(packageJsonPath), executable: false },
+    { path: `${packageDirRelativePath}/theme/dark.json`, sha256: sha256(packageDarkThemePath), executable: false },
+    { path: `${packageDirRelativePath}/export-html/template.html`, sha256: sha256(packageExportTemplatePath), executable: false },
   ],
   builtAt: new Date().toISOString(),
   notes: "Desktop E2E bundled-runtime fixture",

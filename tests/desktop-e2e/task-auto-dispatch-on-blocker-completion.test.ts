@@ -15,6 +15,7 @@ import {
 } from "./driver";
 
 import { switchProject } from "./ui-flows";
+import { orchestraProjectRoot } from "./test-paths";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -764,10 +765,7 @@ describe("desktop auto dispatch on blocker completion", () => {
         });
         writeFileSync(
           join(
-            testHome!,
-            ".orchestra",
-            "projects",
-            project.slug,
+            orchestraProjectRoot(testHome!, project.slug),
             "settings.json",
           ),
           JSON.stringify(

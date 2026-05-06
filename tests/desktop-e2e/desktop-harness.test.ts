@@ -13,6 +13,7 @@ import {
   waitForSelector,
   waitForText,
 } from "./driver";
+import { orchestraProjectSessionsRoot } from "./test-paths";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const tauriBinary = process.env.ORCHESTRA_TAURI_BINARY;
@@ -32,7 +33,7 @@ describe("desktop Tauri webdriver harness", () => {
     expect(tauriBinary).toBeTruthy();
     expect(testHome).toBeTruthy();
 
-    const expectedSessionDir = join(testHome!, ".orchestra", "projects", "orchestra", "sessions");
+    const expectedSessionDir = orchestraProjectSessionsRoot(testHome!, "orchestra");
     const debugSourcePath = join(testHome!, "desktop-source.html");
     const beforeFiles = existsSync(expectedSessionDir) ? readdirSync(expectedSessionDir).length : 0;
 

@@ -15,6 +15,7 @@ import {
   createRoleViaSettings,
   switchProject,
 } from "./ui-flows";
+import { orchestraProjectRoot } from "./test-paths";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -66,7 +67,7 @@ describe("desktop lane workspace selection", () => {
       await ensureReactReady(sessionId);
 
       const repositoryRoot = join(testHome!, "workspace", "lane-workspace-repo", "repository");
-      const projectRoot = join(testHome!, ".orchestra", "projects", "lane-workspace-project");
+      const projectRoot = orchestraProjectRoot(testHome!, "lane-workspace-project");
 
       await createProjectViaSettings(sessionId, "Lane Workspace Project", "Verify shared and separate lane workspaces.");
       await addRepositoryViaSettings(sessionId, {

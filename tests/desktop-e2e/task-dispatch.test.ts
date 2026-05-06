@@ -23,6 +23,7 @@ import {
   openTaskCard,
   switchProject,
 } from "./ui-flows";
+import { orchestraProjectSessionsRoot } from "./test-paths";
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
@@ -31,7 +32,7 @@ describe("desktop task dispatch", () => {
   it.skipIf(!isDesktopE2E)("dispatches a real task lane and creates a real session record", async () => {
     expect(testHome).toBeTruthy();
 
-    const sessionDir = join(testHome!, ".orchestra", "projects", "dispatch-project", "sessions");
+    const sessionDir = orchestraProjectSessionsRoot(testHome!, "dispatch-project");
     const beforeSessionFiles = existsSync(sessionDir) ? readdirSync(sessionDir).length : 0;
 
     const sessionId = await createReadyWebdriverSession();
