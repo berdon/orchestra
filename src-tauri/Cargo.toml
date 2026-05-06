@@ -37,6 +37,7 @@ hex = "0.4"
 keyring = "3"
 clap = { version = "4.5", features = ["derive"] }
 p256 = { version = "0.13", features = ["ecdsa"] }
+openssl = { version = "0.10", features = ["vendored"] }
 web-push = { version = "0.11", default-features = false }
 http02 = { package = "http", version = "0.2" }
 

@@ -31,6 +31,7 @@ BUN_CODESIGN_LOG="${OUTPUT_DIR}/codesign-bun.txt"
 BUN_CODESIGN_DETAILS_LOG="${OUTPUT_DIR}/codesign-bun-details.txt"
 SPCTL_LOG="${OUTPUT_DIR}/spctl.txt"
 NOTARIZATION_LOG="${OUTPUT_DIR}/notarization.txt"
+RUNTIME_SMOKE_LOG="${OUTPUT_DIR}/runtime-smoke.json"
 
 if [[ ! -d "${APP_BUNDLE}" ]]; then
   echo "App bundle is missing: ${APP_BUNDLE}" >&2
@@ -67,6 +68,8 @@ for entry in files:
     file_path = resource_root / entry["path"]
     if not file_path.exists():
         failures.append({"path": entry["path"], "reason": "missing"})
+        continue
+    if entry.get("executable"):
         continue
     digest = hashlib.sha256(file_path.read_bytes()).hexdigest()
     if digest.lower() != str(entry.get("sha256", "")).lower():
@@ -115,6 +118,84 @@ relative = manifest.get("bundledBunRelativePath")
 print(pathlib.Path(sys.argv[2]) / relative if relative else "")
 PY
 )"
+
+python3 - "${RUNTIME_EXECUTABLE}" "${RESOURCE_ROOT}/runtime" "${BUNDLED_BUN_EXECUTABLE}" "${RUNTIME_SMOKE_LOG}" <<'PY'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+runtime_executable = pathlib.Path(sys.argv[1])
+package_dir = pathlib.Path(sys.argv[2])
+bundled_bun = pathlib.Path(sys.argv[3]) if sys.argv[3] else None
+log_path = pathlib.Path(sys.argv[4])
+
+work_root = pathlib.Path(tempfile.mkdtemp(prefix="orchestra-runtime-smoke-"))
+project_root = work_root / "project"
+session_dir = work_root / "sessions"
+agent_dir = work_root / "agent"
+project_root.mkdir()
+session_dir.mkdir()
+agent_dir.mkdir()
+session_path = session_dir / "session.jsonl"
+session_path.write_text(json.dumps({
+    "id": "runtime-smoke",
+    "version": "1.0",
+    "createdAt": "2026-05-01T00:00:00Z",
+    "updatedAt": "2026-05-01T00:00:00Z",
+    "title": "Runtime smoke",
+    "cwd": str(project_root),
+}) + "\n")
+
+env = os.environ.copy()
+env["PI_CODING_AGENT_DIR"] = str(agent_dir)
+env["PI_PACKAGE_DIR"] = str(package_dir)
+if bundled_bun:
+    env["PATH"] = str(bundled_bun.parent) + os.pathsep + env.get("PATH", "")
+
+command = [
+    str(runtime_executable),
+    "--offline",
+    "--mode",
+    "rpc",
+    "--session",
+    str(session_path),
+    "--session-dir",
+    str(session_dir),
+    "--no-extensions",
+]
+
+result = subprocess.run(
+    command,
+    cwd=str(project_root),
+    env=env,
+    input='{"id":"runtime-smoke-1","type":"get_available_models"}\n',
+    text=True,
+    capture_output=True,
+    timeout=60,
+)
+
+report = {
+    "command": command,
+    "exitCode": result.returncode,
+    "stdout": result.stdout,
+    "stderr": result.stderr,
+}
+log_path.write_text(json.dumps(report, indent=2) + "\n")
+
+if result.returncode != 0:
+    raise SystemExit(
+        f"Bundled Pi runtime smoke test failed with exit code {result.returncode}; see {log_path}"
+    )
+
+payload = json.loads(result.stdout.strip() or "{}")
+if not payload.get("success"):
+    raise SystemExit(
+        f"Bundled Pi runtime smoke test did not return a successful get_available_models response; see {log_path}"
+    )
+PY
 
 codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}" >"${APP_CODESIGN_LOG}" 2>&1
 codesign -dv --verbose=4 "${APP_BUNDLE}" >"${APP_CODESIGN_DETAILS_LOG}" 2>&1 || true
@@ -210,7 +291,8 @@ python3 - \
   "${APP_SIGNATURE_KIND}" \
   "${RUNTIME_SIGNATURE_KIND}" \
   "${SPCTL_STATUS}" \
-  "${REQUIRE_SPCTL}" <<'PY'
+  "${REQUIRE_SPCTL}" \
+  "${RUNTIME_SMOKE_LOG}" <<'PY'
 import json
 import pathlib
 import sys
@@ -237,6 +319,9 @@ summary = {
         "logPath": sys.argv[13],
         "status": sys.argv[19],
         "required": sys.argv[20] == "1",
+    },
+    "runtimeSmoke": {
+        "logPath": sys.argv[21],
     },
     "notarization": {
         "logPath": sys.argv[14],

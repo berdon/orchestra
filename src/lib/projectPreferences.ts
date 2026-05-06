@@ -18,6 +18,9 @@ export function getStoredActiveProjectSlug() {
 }
 
 export function setStoredActiveProject(projectId: string | null, projectSlug?: string | null) {
+  const previousProjectId = getStoredActiveProjectId();
+  const previousProjectSlug = getStoredActiveProjectSlug();
+
   if (projectId) {
     window.localStorage.setItem(ACTIVE_PROJECT_ID_STORAGE_KEY, projectId);
     window.localStorage.setItem(LEGACY_ACTIVE_PROJECT_ID_STORAGE_KEY, projectId);
@@ -33,7 +36,9 @@ export function setStoredActiveProject(projectId: string | null, projectSlug?: s
     window.localStorage.removeItem(ACTIVE_PROJECT_SLUG_STORAGE_KEY);
   }
 
-  window.dispatchEvent(new CustomEvent(PROJECTS_CHANGED_EVENT));
+  if (previousProjectId !== projectId || previousProjectSlug !== normalizedSlug) {
+    window.dispatchEvent(new CustomEvent(PROJECTS_CHANGED_EVENT));
+  }
 }
 
 export function syncStoredActiveProjectSlug(projectId: string | null, projectSlug: string | null | undefined) {

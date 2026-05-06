@@ -267,6 +267,66 @@ fn save_setup_metadata(
     harness_settings::update_pi_setup_metadata(imported_at, dismissed_legacy_import_at)
 }
 
+fn issue_code_for_model_probe_error(
+    error: &str,
+    settings_path: &Path,
+    models_path: &Path,
+) -> &'static str {
+    let normalized = error.to_ascii_lowercase();
+    let looks_like_json_or_file_error = normalized.contains("unable to parse")
+        || normalized.contains("must contain a top-level json object")
+        || normalized.contains("unable to read");
+
+    if looks_like_json_or_file_error && error.contains(&settings_path.display().to_string()) {
+        return "settings_json_invalid";
+    }
+
+    if looks_like_json_or_file_error && error.contains(&models_path.display().to_string()) {
+        return "models_json_invalid";
+    }
+
+    "model_discovery_failed"
+}
+
+fn issue_for_model_probe_error(
+    error: String,
+    settings_path: &Path,
+    models_path: &Path,
+) -> PiSetupIssue {
+    let code = issue_code_for_model_probe_error(&error, settings_path, models_path);
+    match code {
+        "settings_json_invalid" => PiSetupIssue {
+            code: code.into(),
+            message: error,
+            provider_id: None,
+            model_id: None,
+            source_kind: None,
+            source_path: Some(settings_path.display().to_string()),
+            source_entries: None,
+        },
+        "models_json_invalid" => PiSetupIssue {
+            code: code.into(),
+            message: error,
+            provider_id: None,
+            model_id: None,
+            source_kind: None,
+            source_path: Some(models_path.display().to_string()),
+            source_entries: None,
+        },
+        _ => PiSetupIssue {
+            code: code.into(),
+            message: format!(
+                "Pi model discovery failed: {error}. Open Settings → Harness for details before running Pi-backed work."
+            ),
+            provider_id: None,
+            model_id: None,
+            source_kind: None,
+            source_path: None,
+            source_entries: None,
+        },
+    }
+}
+
 pub fn preview_legacy_import() -> Result<PiLegacyImportPreview, String> {
     let legacy_agent_dir = legacy_pi_agent_dir()?;
     let auth_path = legacy_agent_dir.join("auth.json");
@@ -451,29 +511,12 @@ pub fn get_pi_setup_state() -> Result<PiSetupState, String> {
         match pi_package_sources::resolve_available_models_with_package_diagnostics() {
             Ok(result) => Some(result),
             Err(error) => {
-                if settings_path.exists() {
-                    issues.push(PiSetupIssue {
-                        code: "settings_json_invalid".into(),
-                        message: error,
-                        provider_id: None,
-                        model_id: None,
-                        source_kind: None,
-                        source_path: Some(settings_path.display().to_string()),
-                        source_entries: None,
-                    });
-                } else if models_path.exists() {
-                    issues.push(PiSetupIssue {
-                        code: "models_json_invalid".into(),
-                        message: format!(
-                            "Pi could not load Orchestra-managed models from {}: {error}",
-                            models_path.display()
-                        ),
-                        provider_id: None,
-                        model_id: None,
-                        source_kind: None,
-                        source_path: Some(models_path.display().to_string()),
-                        source_entries: None,
-                    });
+                if settings_path.exists() || models_path.exists() {
+                    issues.push(issue_for_model_probe_error(
+                        error,
+                        &settings_path,
+                        &models_path,
+                    ));
                 } else {
                     warnings.push(PiSetupIssue {
                         code: "no_available_models".into(),
@@ -627,6 +670,9 @@ pub fn block_message_for_state(state: &PiSetupState) -> String {
                     state.settings_path
                 );
             }
+            "model_discovery_failed" => {
+                return issue.message.clone();
+            }
             "package_sources_require_bun" => {
                 return issue.message.clone();
             }
@@ -720,6 +766,42 @@ mod tests {
         assert!(message.contains("Bun is not available"));
         assert!(message.contains("settings.json"));
         assert!(message.contains("npm:pi-subagents"));
+    }
+
+    #[test]
+    fn block_message_returns_model_discovery_issue_verbatim() {
+        let mut state = setup_state_with_issue(
+            "model_discovery_failed",
+            "/tmp/orchestra/runtime/pi/agent/auth.json",
+            "/tmp/orchestra/runtime/pi/agent/models.json",
+        );
+        state.issues[0].message = "Pi model discovery failed: Ran out of executable memory while allocating 128 bytes. Open Settings → Harness for details before running Pi-backed work.".into();
+
+        let message = block_message_for_state(&state);
+        assert!(message.contains("Ran out of executable memory"));
+        assert!(message.contains("Settings → Harness"));
+    }
+
+    #[test]
+    fn runtime_probe_errors_are_not_mislabeled_as_settings_json_invalid() {
+        let code = issue_code_for_model_probe_error(
+            "Ran out of executable memory while allocating 128 bytes.",
+            Path::new("/tmp/orchestra/runtime/pi/agent/settings.json"),
+            Path::new("/tmp/orchestra/runtime/pi/agent/models.json"),
+        );
+
+        assert_eq!(code, "model_discovery_failed");
+    }
+
+    #[test]
+    fn settings_parse_errors_still_map_to_settings_json_invalid() {
+        let code = issue_code_for_model_probe_error(
+            "Unable to parse /tmp/orchestra/runtime/pi/agent/settings.json: expected value at line 1 column 1",
+            Path::new("/tmp/orchestra/runtime/pi/agent/settings.json"),
+            Path::new("/tmp/orchestra/runtime/pi/agent/models.json"),
+        );
+
+        assert_eq!(code, "settings_json_invalid");
     }
 
     #[test]

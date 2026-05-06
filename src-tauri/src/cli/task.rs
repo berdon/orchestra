@@ -1876,6 +1876,7 @@ mod tests {
                 &role.slug,
                 None,
                 false,
+                None,
                 false,
             );
             drop(connection);
