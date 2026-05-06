@@ -280,6 +280,25 @@ export function GitHubLandingPage() {
               </a>
             </div>
 
+            <div className="github-hero__showcase">
+              <figure className="github-screenshot-card github-screenshot-card--hero">
+                <img
+                  data-role="github-hero-screenshot"
+                  src="/github-landing/workflow-ticket-board.png"
+                  alt="Orchestra tasks page showing work distributed across workflow lanes."
+                />
+                <figcaption>
+                  <span>Tasks page</span>
+                  <strong>Track the workflow lane, owner, and state from the same board</strong>
+                </figcaption>
+              </figure>
+
+              <div className="github-hero__floating-note">
+                <p className="github-eyebrow">What makes it different</p>
+                <strong>Workflow definitions, lane movement, task detail, repo state, and approvals all stay connected.</strong>
+              </div>
+            </div>
+
             <div className="github-stat-strip" aria-label="Headline capabilities">
               <article>
                 <strong>Flexible lanes</strong>
@@ -297,25 +316,6 @@ export function GitHubLandingPage() {
                 <strong>Telegram + mobile</strong>
                 <span>Operate away from the desktop</span>
               </article>
-            </div>
-          </div>
-
-          <div className="github-hero__media">
-            <figure className="github-screenshot-card github-screenshot-card--hero">
-              <img
-                data-role="github-hero-screenshot"
-                src="/github-landing/workflow-ticket-board.png"
-                alt="Orchestra tasks page showing work distributed across workflow lanes."
-              />
-              <figcaption>
-                <span>Tasks page</span>
-                <strong>Track the workflow lane, owner, and state from the same board</strong>
-              </figcaption>
-            </figure>
-
-            <div className="github-hero__floating-note">
-              <p className="github-eyebrow">What makes it different</p>
-              <strong>Workflow definitions, lane movement, task detail, repo state, and approvals all stay connected.</strong>
             </div>
           </div>
         </section>

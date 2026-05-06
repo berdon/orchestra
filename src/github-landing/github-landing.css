@@ -205,11 +205,11 @@ a {
 }
 
 .github-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.03fr) minmax(0, 0.97fr);
-  gap: clamp(1.5rem, 3vw, 2.5rem);
-  align-items: center;
   padding-top: clamp(2rem, 5vw, 3.5rem);
+}
+
+.github-hero__copy {
+  min-width: 0;
 }
 
 .github-eyebrow {
@@ -233,8 +233,8 @@ a {
 }
 
 .github-hero h1 {
-  font-size: clamp(2.8rem, 6vw, 5.4rem);
-  max-width: 11ch;
+  font-size: clamp(2.5rem, 4.8vw, 4.5rem);
+  max-width: none;
 }
 
 .github-lead,
@@ -317,9 +317,12 @@ a {
   margin-bottom: 0.35rem;
 }
 
-.github-hero__media {
-  position: relative;
-  min-width: 0;
+.github-hero__showcase {
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(260px, 0.82fr);
+  gap: 1rem;
+  align-items: start;
+  margin-top: 1.4rem;
 }
 
 .github-screenshot-card,
@@ -358,10 +361,6 @@ a {
 }
 
 .github-hero__floating-note {
-  position: absolute;
-  right: -18px;
-  bottom: 20px;
-  max-width: 18rem;
   padding: 1rem 1.1rem;
   border: 1px solid var(--github-border-strong);
   border-radius: 20px;
@@ -647,6 +646,7 @@ a {
   }
 
   .github-hero,
+  .github-hero__showcase,
   .github-story,
   .github-story--reverse,
   .github-duo,
@@ -677,9 +677,7 @@ a {
   }
 
   .github-hero__floating-note {
-    position: static;
-    max-width: none;
-    margin-top: 1rem;
+    margin-top: 0;
   }
 }
 
