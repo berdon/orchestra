@@ -1,257 +1,213 @@
 # Orchestra
 
-Agent orchestration framework focused on getting project work done.
+<p align="center">
+  <a href="https://berdon.github.io/orchestra/"><strong>GitHub Page</strong></a>
+  &nbsp;•&nbsp;
+  <a href="https://hnsn.io/Orchestra_0.1.0_aarch64.dmg"><strong>Download Orchestra for macOS</strong></a>
+</p>
 
-## Docs
+Orchestra is an agent orchestration workbench for running real project work.
 
-- [Product north star](docs/north-star.md)
-- [UX north star](docs/ux-north-star.md)
-- [UX design guidelines](docs/ux-design-guidelines.md)
-- [UX first-pass implementation plan](docs/ux-first-pass-implementation-plan.md)
-- [Design draft](docs/design.md)
-- [Authorization model](docs/authorization-model.md)
-- [Frontend permission management design](docs/permission-management-fe.md)
-- [Permission management implementation plan](docs/permission-management-implementation-plan.md)
-- [Implementation plan](docs/implementation-plan.md)
-- [Session storage](docs/session-storage.md)
-- [Role runtime plan](docs/role-runtime-plan.md)
-- [Single-use role runtime plan](docs/role-runtime-single-use-plan.md)
-- [Agent runtime plan](docs/agent-runtime-plan.md)
-- [Task system plan](docs/task-system-plan.md)
-- [Bridge hardening plan](docs/bridge-hardening-plan.md)
-- [Mobile driver client design](docs/mobile-driver-client-design.md)
-- [UI coverage matrix + build-gate semantics](docs/ui-coverage-matrix.md)
+It brings together **tasks, workflows, repositories, worktrees, agents, role-based workers, sessions, permissions, and human oversight** in one system so teams can coordinate delivery instead of juggling chat threads, issue trackers, and ad hoc scripts.
 
-## App scaffold
+Orchestra is built for people who want more than a ticket board and more control than a generic chat UI.
 
-This repository now includes the first-pass Orchestra application scaffold:
-- Vite + React + TypeScript frontend
-- `src-tauri/` backend structure for Tauri commands, services, models, and shared state
-- left-nav application shell aligned with the design direction
-- Settings page log viewer for early backend/session visibility
-- a session-first UI flow for creating, resuming, subscribing to, and interacting with sessions
+<p align="center">
+  <img src="public/github-landing/workflow-ticket-board.png" alt="Orchestra task board showing work distributed across workflow lanes." />
+</p>
 
-## First-run baseline
+## Why Orchestra
 
-A fresh Orchestra install now seeds a ready-to-use baseline automatically:
+Use Orchestra when you want to:
 
-- one starter project named `Orchestra`
-- standard global roles: Architect, Senior Developer, QA, Product Owner, and Project Manager
-- ready-to-use Product Strategy, Planning, and Development workflows wired to those role slugs
+- run work through **custom workflows** instead of a fixed pipeline
+- keep **tasks, repo context, and execution state** connected
+- coordinate **persistent agents** and **disposable role-owned work**
+- keep a **human supervisor in control** through natural-language commands
+- manage orchestration across **desktop, mobile, Telegram, and CLI**
 
-These seeded records are normal user-managed data, not protected system state. You can edit, archive, duplicate, replace, or delete them as needed.
+## Screenshots
 
-## Development
+### Workflow orchestration
 
-### Frontend only
+<p>
+  <img src="public/github-landing/workflow-lanes.png" alt="Orchestra Development workflow lanes shown in the workflow settings view." width="49%" />
+  <img src="public/github-landing/workflow-controls.png" alt="Orchestra workflow lane editor showing worktree and approval controls." width="49%" />
+</p>
+
+Design lane structure, ownership, transitions, approvals, and worktree behavior directly in the workflow.
+
+### Task flow and context
+
+<p>
+  <img src="public/github-landing/workflow-ticket-board.png" alt="Orchestra tasks page showing work distributed across workflow lanes." width="49%" />
+  <img src="public/github-landing/task-detail.png" alt="Orchestra task detail page showing a task summary, description, and comments." width="49%" />
+</p>
+
+<p>
+  <img src="public/github-landing/repo-worktrees.png" alt="Orchestra repo files panel showing multiple repositories and a task worktree." width="49%" />
+  <img src="public/github-landing/supervisor-chat-desktop.png" alt="Orchestra desktop supervisor chat session." width="49%" />
+</p>
+
+Keep the board, task detail, repository state, worktrees, and live supervisor control in one place.
+
+### Permissions, chat ops, and mobile
+
+<p>
+  <img src="public/github-landing/permissions.png" alt="Orchestra permissions editor showing effective permissions and supervisor access." width="49%" />
+  <img src="public/github-landing/telegram.png" alt="Orchestra Telegram channel setup screen." width="49%" />
+</p>
+
+<p>
+  <img src="public/github-landing/mobile.png" alt="Orchestra mobile tasks view." width="49%" />
+  <img src="public/github-landing/themes.png" alt="Orchestra general settings screen showing theme selection." width="49%" />
+</p>
+
+Extend orchestration beyond the desktop with granular permissions, Telegram integration, mobile access, and theme customization.
+
+## Getting started
+
+### Current status
+
+Orchestra is a Tauri + React desktop app under active development.
+
+Today, the main way to use it is to run it locally from source.
+
+### Prerequisites
+
+- Node.js / npm
+- Rust
+- Tauri CLI
+
+```bash
+cargo install tauri-cli
+```
+
+### Install and run
 
 ```bash
 npm install
+source "$HOME/.cargo/env"
+cargo tauri dev
+```
+
+Frontend-only development is also available:
+
+```bash
 npm run dev
 ```
 
-### Tests
+### First run
 
-Fast unit/integration suite:
+A fresh Orchestra install seeds a baseline workspace with:
 
-```bash
-npm test
-```
+- one starter project: `Orchestra`
+- standard roles: Architect, Senior Developer, QA, Product Owner, Project Manager
+- starter workflows for Product Strategy, Planning, and Development
 
-Coverage and UI gating:
+## Features
 
-```bash
-npm run test:coverage
-npm run test:ui:matrix
-npm run verify
-```
+### Workflow orchestration
 
-`npm run test:coverage` writes terminal, HTML, `json-summary`, and `lcov` reports to `coverage/vitest/`.
-`npm run test:ui:matrix` validates the critical-journey UI coverage matrix in `tests/ui-coverage-matrix.json` and enforces the >=90% UI threshold.
+- Fully customizable kanban-style workflows
+- Flexible lane structures and transition paths
+- Lane ownership by user, role, or agent
+- Approval gates and human intervention states
+- Workflow-native worktree and execution rules
 
-### Release guardrails
+### Task management
 
-Before distributing an adhoc build, run the verified guardrail flow:
+- Workflow-aware task board and task detail views
+- Task comments and review loops
+- Task dependencies and subtasks
+- Attachments, file references, and task-linked context
+- Lane movement, pause/resume, approval, and needs-work flows
 
-```bash
-npm run build:adhoc:verified
-```
+### Projects, repos, and execution context
 
-That command runs:
-- `gitleaks` against the current source tree
-- `gitleaks` against all commits reachable from local refs (`git log --all`)
-- the repo-local machine-reference scanner for usernames and concrete local paths
-- a sanitized release-mode adhoc bundle build with Rust path remapping enabled
-- a post-build artifact scan that snapshots built app/resources text plus `strings`, then runs artifact-specific `gitleaks` and machine-reference classification over that snapshot
+- Multiple repositories per project
+- Task-linked repository context
+- Native task-scoped worktrees
+- Visible repo/file context while work is in flight
+- Project-scoped storage and session management
 
-If `gitleaks` is not already installed, the wrapper script will download the repo-pinned version into `.tmp/tools/gitleaks/` for repeatable local use. `npm run scan:history` now runs `gitleaks git --log-opts="--all"`, so it scans every commit currently reachable from any local branch or tag, not just the checked-out branch tip. Vetted false positives can still be suppressed at fingerprint scope through the repo `.gitleaksignore` so the history report stays actionable.
+### Agents, roles, and sessions
 
-For individual checks, use:
+- Persistent supervisor and agent sessions
+- Disposable role-owned runtime sessions for parallel work
+- Natural-language supervisor control
+- Session history, resume flows, and runtime visibility
+- Agent-to-agent coordination across related work
 
-```bash
-npm run scan:secrets
-npm run scan:history
-npm run scan:machine-refs
-npm run scan:artifacts
-npm run scan:artifacts:release
-```
+### Permissions and governance
 
-`npm run scan:artifacts:release` is the canonical built-app leak scan. It fails on:
-- any unsuppressed `gitleaks` hit in the extracted artifact snapshot
-- any unsuppressed first-party machine/path finding in Orchestra-owned bundle files
+- Granular permission model
+- Protected actions for sensitive operations
+- Supervisor-level access when explicitly granted
+- Auditable, visible control surfaces instead of hidden automation
 
-It may also print documented third-party findings separately for bundled upstream runtime payloads under `Contents/Resources/pi-runtime/runtime/**` and `Contents/Resources/pi-runtime/bun/**` when those assets still embed upstream build paths.
+### Operator surfaces
 
-To audit specific local usernames without committing them, set `ORCHESTRA_MACHINE_REFERENCE_SEED_USERNAMES` for the scan invocation, for example:
+- Desktop workbench
+- Mobile client support
+- Telegram orchestration and notifications
+- Hosted web / remote access support
+- `orc` CLI for task and chat operations
 
-```bash
-ORCHESTRA_MACHINE_REFERENCE_SEED_USERNAMES=alice,bob npm run scan:machine-refs
-```
+### Customization and platform foundations
 
-### Desktop E2E policy
+- Built on Pi
+- Support for local or cloud models
+- Themes and workbench customization
+- Extension and skill-oriented architecture
+- Secure project secret support
 
-Desktop end-to-end tests must use the desktop runner scripts only. Do not run desktop specs directly with generic `npx playwright test` invocations or ad hoc Tauri/cargo commands.
+## Development
 
-Use:
+### Quick commands
 
-```bash
-./scripts/run-desktop-e2e.sh tests/desktop-e2e/<spec>.test.ts
-./scripts/run-desktop-e2e-suite.sh
-```
-
-The suite runner now derives its required spec list from `tests/desktop-e2e-suite.json`, so `npm run test:desktop-e2e:host` and `npm run test:desktop-e2e` stay aligned with the authored desktop specs by default.
-
-You can still pass an explicit subset when needed:
+Install dependencies:
 
 ```bash
-./scripts/run-desktop-e2e-suite.sh tests/desktop-e2e/<spec-a>.test.ts tests/desktop-e2e/<spec-b>.test.ts
+npm install
 ```
 
-For containerized runs, use the Podman wrappers:
+Run the frontend:
 
 ```bash
-./scripts/run-desktop-e2e-podman.sh tests/desktop-e2e/<spec>.test.ts
-./scripts/run-desktop-e2e-suite-podman.sh
+npm run dev
 ```
 
-You can also pass an explicit subset to the suite wrapper when needed:
-
-```bash
-./scripts/run-desktop-e2e-suite-podman.sh tests/desktop-e2e/<spec-a>.test.ts tests/desktop-e2e/<spec-b>.test.ts
-```
-
-To fan the Podman suite out in parallel batches, set `DESKTOP_E2E_JOBS`:
-
-```bash
-DESKTOP_E2E_JOBS=2 ./scripts/run-desktop-e2e-suite-podman.sh tests/desktop-e2e/*.test.ts
-```
-
-On macOS, first-time Podman setup may also require:
-
-```bash
-brew install podman
-/usr/sbin/softwareupdate --install-rosetta --agree-to-license
-podman machine init
-podman machine set --memory 8192 podman-machine-default
-podman machine start
-```
-
-The paired mobile-client web harness still has its own browser E2E coverage:
-
-```bash
-npm run test:web-driver:e2e
-```
-
-### Tauri desktop app
-
-The repository includes a `src-tauri/` scaffold and matching session command surface, but building/running the desktop app requires a Rust toolchain and Tauri system prerequisites to be installed locally.
-
-### `orc` CLI
-
-The Rust backend also ships an `orc` CLI under `src-tauri/src/bin/orc.rs`.
-
-Current command surface:
-
-```bash
-orc [--orchestra-home <path>] chat [--agent <agent>]
-orc [--orchestra-home <path>] msg [--agent <agent>] <message...>
-orc [--orchestra-home <path>] [--project <project>] task list [--json]
-orc [--orchestra-home <path>] [--project <project>] task show <task> [--json]
-orc [--orchestra-home <path>] [--project <project>] task create --title <title> [...flags] [--json]
-orc [--orchestra-home <path>] [--project <project>] task update <task> [...flags] [--json]
-orc [--orchestra-home <path>] [--project <project>] task comment <task> <message...> [--reply-to <comment-id>] [--interrupt] [--json]
-orc [--orchestra-home <path>] [--project <project>] task comments <task> [--json]
-orc [--orchestra-home <path>] [--project <project>] task approve <task> [--json]
-orc [--orchestra-home <path>] [--project <project>] task needs-work <task> [--notes <text>] [--json]
-orc [--orchestra-home <path>] [--project <project>] task pause <task> [--notes <text>] [--json]
-orc [--orchestra-home <path>] [--project <project>] task resume <task> [--notes <text>] [--json]
-orc [--orchestra-home <path>] [--project <project>] task stop <task> [--notes <text>] [--json]
-orc [--orchestra-home <path>] [--project <project>] task dispatch <task> [--json]
-orc [--orchestra-home <path>] [--project <project>] task move <task> --lane <lane-id> [--notes <text>] [--json]
-```
-
-Task selectors accept canonical ids, task numbers like `ORC-67`, and numeric shorthand like `67` when a selected/default project makes the reference unambiguous. Human-readable text is the default output mode; pass `--json` for structured scripting output. Use `--orchestra-home <path>` when you want the CLI to read/write a different Orchestra storage root than the default `~/.orchestra`; the value should be the final storage root itself (for example `~/.orchestra-dev`).
-
-#### Prerequisites
-
-- Rust toolchain (`cargo install tauri-cli`)
-- macOS: Xcode Command Line Tools (`xcode-select --install`)
-
-#### Running the dev app
+Run the desktop app:
 
 ```bash
 source "$HOME/.cargo/env"
 cargo tauri dev
 ```
 
-Tauri dev runs now default to `~/.orchestra-dev` so local development does not mutate the normal `~/.orchestra` state. Set `ORCHESTRA_STORAGE_ROOT` or run `cargo tauri dev -- --orchestra-home "$HOME/.orchestra"` if you intentionally want a different storage root.
-
-`src-tauri/Cargo.toml` sets `default-run = "orchestra"`, so this works even though the crate also includes helper binaries under `src-tauri/src/bin/`.
-
-#### Building with adhoc signing (notifications enabled)
-
-Orchestra is configured to build with adhoc signing, which enables system notifications without requiring a paid Apple Developer account.
+Run tests:
 
 ```bash
-# Quick build with adhoc signing
-./scripts/build-adhoc.sh
-
-# Verified pre-release build with source/history/artifact guardrails
-npm run build:adhoc:verified
-
-# Or manually build a sanitized release bundle
-source "$HOME/.cargo/env"
-ORCHESTRA_BUILD_PROFILE=release ORCHESTRA_SANITIZE_BUILD_PATHS=1 ./scripts/build-adhoc.sh
+npm test
+npm run verify
 ```
 
-The quick local build lands at `src-tauri/target/debug/bundle/macos/Orchestra.app`.
-The verified pre-release build lands at `src-tauri/target/release/bundle/macos/Orchestra.app`.
+### Developer docs
 
-See [QUICK_START_ADHOC.md](QUICK_START_ADHOC.md) for more details, or [docs/adhoc-signing.md](docs/adhoc-signing.md) for complete documentation on adhoc signing.
+The previous README has been moved to [dev-readme.md](dev-readme.md) and contains the more detailed development guide, including:
 
-Until then, the frontend can be exercised in browser mode with the built-in mock session adapter.
+- coverage and verification commands
+- desktop E2E policy
+- adhoc signing and release guardrails
+- mobile harness details
+- remote access notes
+- deeper CLI and build information
 
-### Mobile remote client + paired web harness
+## Documentation
 
-The shared cross-platform paired client lives under `mobile/` and can run as Android, iOS, or as an explicit browser harness for paired-client development/QA.
-
-```bash
-cd mobile
-npm install
-npm run start   # native Expo dev
-npm run web     # shared web frontend
-```
-
-### Remote access + Tailscale Serve
-
-In **Settings → Remote**, Orchestra can now optionally manage Tailscale Serve for the hosted Orchestra web app:
-
-- the browser app, `/api/v1/frontend/bootstrap`, `/api/v1/*`, and `/api/v1/ws` all share the configured remote API HTTPS port (default `49500`)
-- Orchestra does not query or manage Tailscale unless remote access is enabled and **Use Tailscale Serve** is turned on
-- when **Use Tailscale Serve** is enabled, Orchestra binds the backend to `127.0.0.1` and keeps one HTTPS Serve route pointed at that same-origin hosted-web/API surface automatically
-
-For packaged builds, the Tauri bundle now includes the hosted-web `dist/` assets built from the main shared frontend:
-
-```bash
-npm run build:hosted-web
-```
+- [dev-readme.md](dev-readme.md)
+- [docs/implementation-plan.md](docs/implementation-plan.md)
+- [docs/ux-north-star.md](docs/ux-north-star.md)
+- [docs/authorization-model.md](docs/authorization-model.md)
+- [docs/session-storage.md](docs/session-storage.md)
+- [docs/adhoc-signing.md](docs/adhoc-signing.md)
