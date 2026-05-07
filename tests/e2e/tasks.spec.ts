@@ -2947,6 +2947,57 @@ test("task comment composer autocompletes tasks, agents, and roles and renders t
   await expect(page.getByRole("heading", { name: "Mention target task" })).toBeVisible();
 });
 
+test("task comment composer autocompletes canonical project tags", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Project tag source");
+  await page.locator('[data-role="task-tags-input"]').fill("BackEnd");
+  await page.locator('[data-role="task-tags-input"]').press("Enter");
+  await page.locator('[data-role="task-tags-input"]').fill("ops");
+  await page.locator('[data-role="task-tags-input"]').press("Enter");
+  await page.locator('[data-role="save-task"]').click();
+
+  await page.locator('[data-role="nav-item-tasks"]').click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Comment tag source");
+  await page.locator('[data-role="task-tags-input"]').fill("Urgent");
+  await page.locator('[data-role="task-tags-input"]').press("Enter");
+  await page.locator('[data-role="save-task"]').click();
+  await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
+
+  const taskCommentMessage = page.locator('[data-role="task-comment-message"]');
+
+  await taskCommentMessage.fill("");
+  await taskCommentMessage.click();
+  await page.keyboard.type("#");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("#urgent");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("#backend");
+  await expect(page.locator('[data-role="task-comment-mention-option"]').first()).toContainText("#urgent");
+
+  await taskCommentMessage.fill("");
+  await taskCommentMessage.click();
+  await page.keyboard.type("Reuse #backend and add #bac");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("#backend");
+  await page.locator('[data-role="task-comment-mention-option"]').filter({ hasText: "#backend" }).click();
+  await expect(taskCommentMessage).toHaveValue("Reuse #backend and add #backend ");
+
+  await taskCommentMessage.fill("");
+  await taskCommentMessage.click();
+  await page.keyboard.type("#backend");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toHaveCount(0);
+
+  await taskCommentMessage.fill("");
+  await taskCommentMessage.click();
+  await page.keyboard.type("#zzz");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toHaveCount(0);
+});
+
 test("task comments show newest threads first", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

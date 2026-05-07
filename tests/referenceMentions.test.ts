@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildProjectMentionLookup, buildTaskFileMentionLookup, searchProjectReferenceAutocompleteCandidates } from "../src/lib/referenceMentions";
+import { buildProjectMentionLookup, buildTaskFileMentionLookup, searchProjectReferenceAutocompleteCandidates, searchProjectTagAutocompleteCandidates } from "../src/lib/referenceMentions";
 import type { AgentSummary, RoleSummary, TaskFileReference, TaskSummary } from "../src/types";
 
 const timestamp = new Date().toISOString();
@@ -169,6 +169,24 @@ describe("referenceMentions", () => {
         .map((task) => `${task.number} ${task.title}`)
         .sort((left, right) => left.localeCompare(right)),
     );
+  });
+
+  it("canonicalizes, deduplicates, and prioritizes project tag autocomplete candidates", () => {
+    const candidates = searchProjectTagAutocompleteCandidates("", [
+      makeTask({ id: "task-1", tags: ["BackEnd", "frontend"] }),
+      makeTask({ id: "task-2", tags: ["backend", "ops"] }),
+    ], ["Urgent", "backend"], 10);
+
+    expect(candidates.map((candidate) => candidate.insertText)).toEqual(["#backend", "#urgent", "#frontend", "#ops"]);
+  });
+
+  it("matches partial tag queries and boosts current-task tags ahead of other project tags", () => {
+    const candidates = searchProjectTagAutocompleteCandidates("op", [
+      makeTask({ id: "task-1", tags: ["ops"] }),
+      makeTask({ id: "task-2", tags: ["openapi"] }),
+    ], ["ops"], 10);
+
+    expect(candidates.map((candidate) => candidate.insertText)).toEqual(["#ops", "#openapi"]);
   });
 
   it("builds rich lookup labels for project mentions", () => {

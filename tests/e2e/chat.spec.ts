@@ -293,6 +293,57 @@ test("chat composer autocompletes project tasks, agents, and roles and renders t
   await expect(page.locator('[data-role="session-transcript"]').getByRole("button", { name: /Autocomplete navigation task/ }).last()).toBeVisible({ timeout: 10_000 });
 });
 
+test("chat composer autocompletes canonical project tags", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.locator('[data-role="nav-item-tasks"]').click();
+
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Backend tag source");
+  await page.locator('[data-role="task-tags-input"]').fill("BackEnd");
+  await page.locator('[data-role="task-tags-input"]').press("Enter");
+  await page.locator('[data-role="save-task"]').click();
+
+  await page.locator('[data-role="nav-item-tasks"]').click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Ops tag source");
+  await page.locator('[data-role="task-tags-input"]').fill("ops");
+  await page.locator('[data-role="task-tags-input"]').press("Enter");
+  await page.locator('[data-role="save-task"]').click();
+
+  await page.getByRole("button", { name: "Chat" }).click();
+  await page.locator('[data-role="chat-agent-nav-data"]').click();
+
+  const composerInput = page.locator('[data-role="composer-input"]');
+
+  await composerInput.fill("");
+  await composerInput.click();
+  await page.keyboard.type("#");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("#backend");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("#ops");
+  await expect(page.locator('[data-role="composer-mention-option"]').first()).toContainText("#backend");
+
+  await composerInput.fill("");
+  await composerInput.click();
+  await page.keyboard.type("Need #bac");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("#backend");
+  await page.locator('[data-role="composer-mention-option"]').filter({ hasText: "#backend" }).click();
+  await expect(composerInput).toHaveValue("Need #backend ");
+
+  await composerInput.fill("");
+  await composerInput.click();
+  await page.keyboard.type("#backend");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toHaveCount(0);
+
+  await composerInput.fill("");
+  await composerInput.click();
+  await page.keyboard.type("#zzz");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toHaveCount(0);
+});
+
 test("chat page opens an agent main session with focused chat controls while Sessions stays available", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

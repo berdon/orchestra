@@ -1,7 +1,7 @@
 import type { MutableRefObject } from "react";
 
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
-import { mapTaskFileMentionAutocompleteCandidates, searchProjectReferenceAutocompleteCandidates } from "../lib/referenceMentions";
+import { mapTaskFileMentionAutocompleteCandidates, searchProjectReferenceAutocompleteCandidates, searchProjectTagAutocompleteCandidates } from "../lib/referenceMentions";
 import { useTaskCommentFileMentions } from "../lib/orchestraData/tasks";
 import type { AgentSummary, RoleSummary, TaskSummary } from "../types";
 
@@ -11,6 +11,7 @@ interface TaskCommentMentionsTextareaProps {
   agents: AgentSummary[];
   roles: RoleSummary[];
   value: string;
+  currentTaskTags?: string[];
   rows?: number;
   dataRole: string;
   textareaRef?: MutableRefObject<HTMLTextAreaElement | null>;
@@ -26,6 +27,7 @@ export function TaskCommentMentionsTextarea({
   agents,
   roles,
   value,
+  currentTaskTags = [],
   rows = 4,
   dataRole,
   textareaRef,
@@ -49,6 +51,11 @@ export function TaskCommentMentionsTextarea({
         {
           trigger: "@",
           search: async (query) => searchProjectReferenceAutocompleteCandidates(query, { tasks, agents, roles }, 12),
+        },
+        {
+          trigger: "#",
+          allowEmptyQuery: true,
+          search: async (query) => searchProjectTagAutocompleteCandidates(query, tasks, currentTaskTags, 12),
         },
         {
           trigger: "$",

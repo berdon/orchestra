@@ -1,4 +1,5 @@
 import { fuzzyScore, fuzzySearch, type FuzzySearchCandidate } from "./fuzzy";
+import { normalizeTaskTags } from "./taskTags";
 import type { AgentSummary, RoleSummary, TaskCommentFileMentionCandidate, TaskFileReference, TaskSummary } from "../types";
 
 export interface ComposerAutocompleteCandidate {
@@ -34,6 +35,10 @@ interface TaskAutocompleteCandidate extends SearchableAutocompleteCandidate {
   taskNumberSuffixKey: string | null;
   taskTitleKey: string;
   taskSlugKey: string;
+}
+
+interface SearchableTagAutocompleteCandidate extends SearchableAutocompleteCandidate {
+  normalizedTag: string;
 }
 
 function normalizeToken(token: string) {
@@ -91,6 +96,25 @@ function buildNonTaskAutocompleteItems({ agents, roles }: Omit<ProjectReferenceC
       keywords: [role.slug, role.name],
     })),
   ];
+}
+
+function buildProjectTagAutocompleteItems(tasks: TaskSummary[], prioritizedTags: Iterable<string | null | undefined> = []): SearchableTagAutocompleteCandidate[] {
+  const normalizedPrioritizedTags = normalizeTaskTags(prioritizedTags);
+  const prioritizedTagSet = new Set(normalizedPrioritizedTags);
+  const normalizedProjectTags = normalizeTaskTags(tasks.flatMap((task) => task.tags ?? []));
+  const orderedTags = [
+    ...normalizedPrioritizedTags,
+    ...normalizedProjectTags.filter((tag) => !prioritizedTagSet.has(tag)),
+  ];
+
+  return orderedTags.map((tag) => ({
+    id: `tag:${tag}`,
+    normalizedTag: tag,
+    label: `#${tag}`,
+    detail: "Tag",
+    insertText: `#${tag}`,
+    keywords: [tag, `#${tag}`],
+  }));
 }
 
 function mapAutocompleteCandidate(item: SearchableAutocompleteCandidate): ComposerAutocompleteCandidate {
@@ -217,6 +241,39 @@ export function searchProjectReferenceAutocompleteCandidates(
   const taskMatches = searchTaskAutocompleteCandidates(normalizedQuery, context.tasks, limit);
   const otherMatches = fuzzySearch(normalizedQuery, buildNonTaskAutocompleteItems(context), limit).map(({ item }) => mapAutocompleteCandidate(item));
   return [...taskMatches, ...otherMatches];
+}
+
+export function searchProjectTagAutocompleteCandidates(
+  query: string,
+  tasks: TaskSummary[],
+  prioritizedTags: Iterable<string | null | undefined> = [],
+  limit = 12,
+): ComposerAutocompleteCandidate[] {
+  const items = buildProjectTagAutocompleteItems(tasks, prioritizedTags);
+  if (!query.trim()) {
+    return items.slice(0, limit).map(({ id, insertText, label, detail }) => ({ id, insertText, label, detail }));
+  }
+
+  const prioritizedTagSet = new Set(normalizeTaskTags(prioritizedTags));
+  return fuzzySearch(query, items, items.length || limit)
+    .sort((left, right) => {
+      const leftPriority = prioritizedTagSet.has(left.item.normalizedTag) ? 0 : 1;
+      const rightPriority = prioritizedTagSet.has(right.item.normalizedTag) ? 0 : 1;
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority;
+      }
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      return left.item.label.localeCompare(right.item.label);
+    })
+    .slice(0, limit)
+    .map(({ item }) => ({
+      id: item.id,
+      insertText: item.insertText,
+      label: item.label,
+      detail: item.detail,
+    }));
 }
 
 export function buildProjectMentionLookup({ tasks, agents, roles }: ProjectReferenceContext) {

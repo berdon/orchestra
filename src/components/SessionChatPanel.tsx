@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type RefObj
 
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { TranscriptEventCard } from "./TranscriptEventCard";
-import { buildProjectMentionLookup, mapTaskFileMentionAutocompleteCandidates, searchProjectReferenceAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
+import { buildProjectMentionLookup, mapTaskFileMentionAutocompleteCandidates, searchProjectReferenceAutocompleteCandidates, searchProjectTagAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
 import { useTaskCommentFileMentions } from "../lib/orchestraData/tasks";
 import { recordInputPerfRender } from "../lib/testInputPerformance";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
@@ -397,13 +397,19 @@ function SessionComposer({
         roles: referenceRoles,
       }, 12),
     };
+    const projectTagSource = {
+      trigger: "#",
+      allowEmptyQuery: true,
+      search: async (query: string) => searchProjectTagAutocompleteCandidates(query, referenceTasks, [], 12),
+    };
 
     if (!activeTaskId) {
-      return [projectReferenceSource];
+      return [projectReferenceSource, projectTagSource];
     }
 
     return [
       projectReferenceSource,
+      projectTagSource,
       {
         trigger: "$",
         allowEmptyQuery: true,

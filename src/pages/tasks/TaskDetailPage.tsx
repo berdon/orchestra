@@ -2425,6 +2425,7 @@ export function TaskDetailPage({
                     ) : (
                       <CommentableFileViewer
                         taskId={task.id}
+                        currentTaskTags={task.tags}
                         tasks={tasks}
                         agents={agents}
                         roles={roles}
@@ -2507,6 +2508,7 @@ export function TaskDetailPage({
                 tasks={tasks}
                 agents={agents}
                 roles={roles}
+                currentTaskTags={task.tags}
                 message={commentDraft.message}
                 messageDataRole="task-comment-message"
                 messageLabel="Add comment"
@@ -2604,6 +2606,7 @@ export function TaskDetailPage({
                           tasks={tasks}
                           agents={agents}
                           roles={roles}
+                          currentTaskTags={task.tags}
                           interruptChecked={replyDraft.interruptAgent}
                           interruptDataRole="task-reply-interrupt"
                           message={replyDraft.message}

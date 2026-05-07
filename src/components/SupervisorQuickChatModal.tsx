@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { TranscriptEventCard } from "./TranscriptEventCard";
-import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
+import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, searchProjectTagAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
 import type { AgentSummary, RoleSummary, SessionEvent, SessionRecord, TaskSummary } from "../types";
 
 function resolveMentionAction(
@@ -178,6 +178,11 @@ export function SupervisorQuickChatModal({
                     agents: referenceAgents,
                     roles: referenceRoles,
                   }, 12),
+                },
+                {
+                  trigger: "#",
+                  allowEmptyQuery: true,
+                  search: async (query) => searchProjectTagAutocompleteCandidates(query, referenceTasks, [], 12),
                 },
               ]}
               textareaRef={inputRef}

@@ -2732,6 +2732,40 @@ test("ctrl+t opens a persistent supervisor quick chat modal", async ({ page }) =
   await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Acknowledged: Check the current project status");
 });
 
+test("ctrl+t quick supervisor chat autocompletes canonical project tags", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.locator('[data-role="nav-item-tasks"]').click();
+
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Supervisor backend tag source");
+  await page.locator('[data-role="task-tags-input"]').fill("BackEnd");
+  await page.locator('[data-role="task-tags-input"]').press("Enter");
+  await page.locator('[data-role="save-task"]').click();
+
+  await page.locator('[data-role="nav-item-tasks"]').click();
+  await page.getByRole("button", { name: "New task" }).click();
+  await page.locator('[data-role="task-title"]').fill("Supervisor ops tag source");
+  await page.locator('[data-role="task-tags-input"]').fill("ops");
+  await page.locator('[data-role="task-tags-input"]').press("Enter");
+  await page.locator('[data-role="save-task"]').click();
+
+  await triggerShortcut(page, "t");
+  await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
+
+  const supervisorComposerInput = page.locator('[data-role="supervisor-composer-input"]');
+
+  await supervisorComposerInput.fill("");
+  await supervisorComposerInput.click();
+  await page.keyboard.type("Need #bac");
+  await expect(page.locator('[data-role="supervisor-mention-list"]')).toContainText("#backend");
+  await supervisorComposerInput.press("Enter");
+  await expect(supervisorComposerInput).toHaveValue("Need #backend ");
+});
+
 test("quick supervisor chat keeps the same session and draft during a refresh miss outside the sessions pages", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

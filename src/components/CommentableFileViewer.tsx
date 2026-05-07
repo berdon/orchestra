@@ -47,6 +47,7 @@ interface ThreadPopoverState {
 
 interface CommentableFileViewerProps {
   taskId: string;
+  currentTaskTags: string[];
   tasks: TaskSummary[];
   agents: AgentSummary[];
   roles: RoleSummary[];
@@ -222,6 +223,7 @@ function buildThreadsByLine(threads: TaskCommentThread[]) {
 
 export const CommentableFileViewer = memo(function CommentableFileViewer({
   taskId,
+  currentTaskTags,
   tasks,
   agents,
   roles,
@@ -765,6 +767,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
               tasks={tasks}
               agents={agents}
               roles={roles}
+              currentTaskTags={currentTaskTags}
               className="task-comment-composer"
               interruptChecked={commentInterruptAgent}
               interruptDataRole="default-file-comment-interrupt"
@@ -910,6 +913,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                       tasks={tasks}
                       agents={agents}
                       roles={roles}
+                      currentTaskTags={currentTaskTags}
                       className="file-content-viewer__reply-composer"
                       message={replyMessage}
                       messageDataRole="default-file-reply-message"

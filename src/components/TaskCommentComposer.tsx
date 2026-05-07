@@ -8,6 +8,7 @@ interface TaskCommentComposerProps {
   tasks: TaskSummary[];
   agents: AgentSummary[];
   roles: RoleSummary[];
+  currentTaskTags?: string[];
   message: string;
   onMessageChange: (message: string) => void;
   onSubmit: () => void;
@@ -40,6 +41,7 @@ export function TaskCommentComposer({
   tasks,
   agents,
   roles,
+  currentTaskTags = [],
   message,
   onMessageChange,
   onSubmit,
@@ -94,6 +96,7 @@ export function TaskCommentComposer({
           tasks={tasks}
           agents={agents}
           roles={roles}
+          currentTaskTags={currentTaskTags}
           value={message}
           rows={rows}
           dataRole={messageDataRole}
