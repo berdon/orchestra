@@ -59,6 +59,7 @@ pub mod task_pull_requests;
 pub mod task_repositories;
 pub mod task_runtime;
 pub mod task_schedules;
+pub mod task_worktree_cleanup;
 pub mod tasks;
 pub mod tool_bridge;
 pub mod web_push;

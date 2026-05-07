@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rusqlite::{params, Connection};
 
 use crate::services::orchestra_paths::{
@@ -648,6 +649,10 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 archived INTEGER NOT NULL DEFAULT 0,
                 source_schedule_id TEXT,
                 source_schedule_occurrence_id TEXT,
+                completed_at TEXT,
+                worktree_cleanup_due_at TEXT,
+                worktree_cleanup_completed_at TEXT,
+                worktree_cleanup_last_error TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(workflow_id) REFERENCES workflows(id) ON DELETE SET NULL,
@@ -1886,6 +1891,49 @@ fn ensure_tasks_table_columns(connection: &Connection) -> Result<(), String> {
             })?;
     }
 
+    if !columns.contains("completed_at") {
+        connection
+            .execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT", [])
+            .map_err(|error| {
+                format!("Unable to add completed_at column to tasks table: {error}")
+            })?;
+    }
+
+    if !columns.contains("worktree_cleanup_due_at") {
+        connection
+            .execute(
+                "ALTER TABLE tasks ADD COLUMN worktree_cleanup_due_at TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add worktree_cleanup_due_at column to tasks table: {error}")
+            })?;
+    }
+
+    if !columns.contains("worktree_cleanup_completed_at") {
+        connection
+            .execute(
+                "ALTER TABLE tasks ADD COLUMN worktree_cleanup_completed_at TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to add worktree_cleanup_completed_at column to tasks table: {error}"
+                )
+            })?;
+    }
+
+    if !columns.contains("worktree_cleanup_last_error") {
+        connection
+            .execute(
+                "ALTER TABLE tasks ADD COLUMN worktree_cleanup_last_error TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add worktree_cleanup_last_error column to tasks table: {error}")
+            })?;
+    }
+
     connection
         .execute(
             "CREATE INDEX IF NOT EXISTS idx_tasks_source_schedule_id ON tasks(source_schedule_id, created_at DESC)",
@@ -1895,7 +1943,101 @@ fn ensure_tasks_table_columns(connection: &Connection) -> Result<(), String> {
             format!("Unable to create tasks source_schedule_id index: {error}")
         })?;
 
+    connection
+        .execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_worktree_cleanup_due ON tasks(status, worktree_cleanup_completed_at, worktree_cleanup_due_at)",
+            [],
+        )
+        .map_err(|error| {
+            format!("Unable to create tasks worktree cleanup index: {error}")
+        })?;
+
+    connection
+        .execute(
+            "UPDATE tasks SET completed_at = NULL, worktree_cleanup_due_at = NULL, worktree_cleanup_completed_at = NULL, worktree_cleanup_last_error = NULL WHERE status != 'completed'",
+            [],
+        )
+        .map_err(|error| {
+            format!("Unable to clear stale worktree cleanup state for non-completed tasks: {error}")
+        })?;
+
+    backfill_completed_task_worktree_cleanup_state(connection)?;
+
     Ok(())
+}
+
+fn backfill_completed_task_worktree_cleanup_state(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT
+                id,
+                COALESCE(
+                    completed_at,
+                    (
+                        SELECT MAX(completed_at)
+                        FROM task_lane_assignments
+                        WHERE task_id = tasks.id AND completed_at IS NOT NULL
+                    ),
+                    (
+                        SELECT MAX(completed_at)
+                        FROM task_lane_runs
+                        WHERE task_id = tasks.id AND completed_at IS NOT NULL
+                    ),
+                    updated_at
+                ) AS resolved_completed_at
+            FROM tasks
+            WHERE status = 'completed'
+              AND (
+                completed_at IS NULL
+                OR worktree_cleanup_due_at IS NULL
+              )
+            "#,
+        )
+        .map_err(|error| {
+            format!("Unable to prepare completed task worktree cleanup backfill query: {error}")
+        })?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| {
+            format!("Unable to query completed task worktree cleanup backfill rows: {error}")
+        })?;
+
+    for row in rows {
+        let (task_id, completed_at) = row.map_err(|error| {
+            format!("Unable to read completed task worktree cleanup backfill row: {error}")
+        })?;
+        let due_at = shift_rfc3339_timestamp(&completed_at, ChronoDuration::hours(24))?;
+        connection
+            .execute(
+                r#"
+                UPDATE tasks
+                SET completed_at = COALESCE(completed_at, ?2),
+                    worktree_cleanup_due_at = COALESCE(worktree_cleanup_due_at, ?3),
+                    worktree_cleanup_completed_at = NULL,
+                    worktree_cleanup_last_error = NULL
+                WHERE id = ?1
+                "#,
+                params![task_id, completed_at, due_at],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to backfill completed task worktree cleanup state for task {}: {error}",
+                    task_id
+                )
+            })?;
+    }
+
+    Ok(())
+}
+
+fn shift_rfc3339_timestamp(value: &str, delta: ChronoDuration) -> Result<String, String> {
+    let parsed = DateTime::parse_from_rfc3339(value)
+        .map_err(|error| format!("Unable to parse RFC3339 timestamp {value}: {error}"))?;
+    Ok((parsed.with_timezone(&Utc) + delta).to_rfc3339())
 }
 
 fn ensure_task_dependencies_table_columns(connection: &Connection) -> Result<(), String> {

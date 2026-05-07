@@ -103,6 +103,48 @@ pub fn dispose_worktree(project_root: &Path, worktree_path: &Path) -> Result<(),
     })
 }
 
+pub fn list_worktree_paths(project_root: &Path) -> Result<Vec<PathBuf>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .map_err(|error| {
+            format!(
+                "Unable to list git worktrees in {}: {error}",
+                project_root.display()
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(PathBuf::from)
+        .collect())
+}
+
+pub fn prune_worktrees(project_root: &Path) -> Result<(), String> {
+    git(
+        project_root,
+        vec![
+            OsStr::new("worktree"),
+            OsStr::new("prune"),
+            OsStr::new("--expire"),
+            OsStr::new("now"),
+        ],
+    )
+    .map_err(|error| {
+        format!(
+            "Unable to prune git worktrees in {}: {error}",
+            project_root.display()
+        )
+    })
+}
+
 fn role_runtime_path(session_dir: &Path, role_slug: &str, instance_id: &str) -> PathBuf {
     let suffix = instance_id
         .rsplit('-')

@@ -9,7 +9,7 @@ use tauri::{AppHandle, Manager};
 use crate::{
     services::{
         agent_dispatch, app_events, database, model_limits, pi_sessions, reminders, role_dispatch,
-        role_runtime, task_runtime, task_schedules,
+        role_runtime, task_runtime, task_schedules, task_worktree_cleanup,
     },
     state::AppState,
 };
@@ -154,6 +154,13 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, 
     let auto_dispatched_tasks = auto_dispatch_work_ready_tasks(app.clone(), state)?;
     let whip_results = process_task_whips(app.clone(), state)?;
     let reminder_results = reminders::process_due_reminders(app.clone(), state)?;
+    let cleanup_results = {
+        let connection = database::open_connection()?;
+        task_worktree_cleanup::process_due_task_worktree_cleanups(
+            &connection,
+            &crate::state::now_iso(),
+        )?
+    };
 
     let total_actions = stale_assignment_recoveries
         + model_limit_actions
@@ -162,14 +169,15 @@ fn run_dispatcher_tick_inner(app: AppHandle, state: &AppState) -> Result<usize, 
         + schedule_results
         + auto_dispatched_tasks
         + whip_results
-        + reminder_results;
+        + reminder_results
+        + cleanup_results;
 
     state.log(
         "info",
         "dispatcher.tick.completed",
         &format!(
-            "Completed dispatcher tick with {} stale assignment recoveries, {} model-limit actions, {} agent dispatches, {} activated role assignments, {} schedule actions, {} auto-dispatched tasks, {} whip actions, {} reminder actions ({} total actions)",
-            stale_assignment_recoveries, model_limit_actions, agent_dispatches, activated_roles, schedule_results, auto_dispatched_tasks, whip_results, reminder_results, total_actions
+            "Completed dispatcher tick with {} stale assignment recoveries, {} model-limit actions, {} agent dispatches, {} activated role assignments, {} schedule actions, {} auto-dispatched tasks, {} whip actions, {} reminder actions, {} completed-task worktree cleanup actions ({} total actions)",
+            stale_assignment_recoveries, model_limit_actions, agent_dispatches, activated_roles, schedule_results, auto_dispatched_tasks, whip_results, reminder_results, cleanup_results, total_actions
         ),
     );
     Ok(total_actions)

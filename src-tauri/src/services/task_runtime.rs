@@ -12,7 +12,7 @@ use crate::{
     services::{
         agent_dispatch, agent_runtime, agents, live_sessions, messages, notifications, pi_sessions,
         project_settings, projects, role_dispatch, role_runtime, roles, session_list,
-        session_records, task_repositories, tasks, workflows,
+        session_records, task_repositories, task_worktree_cleanup, tasks, workflows,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -4501,6 +4501,13 @@ fn move_task_to_specific_lane(
                 task.id, lane.id
             )
         })?;
+    task_worktree_cleanup::sync_task_worktree_cleanup_state(
+        connection,
+        &task.id,
+        Some(task.status.as_str()),
+        status,
+        now,
+    )?;
     Ok(())
 }
 
@@ -4810,6 +4817,13 @@ fn transition_task_after_completion(
                 task.id
             )
         })?;
+    task_worktree_cleanup::sync_task_worktree_cleanup_state(
+        connection,
+        &task.id,
+        Some(task.status.as_str()),
+        &resolved_status,
+        now,
+    )?;
     tasks::reconcile_dependency_statuses(
         connection,
         tasks::collect_task_refresh_ids(connection, &task.id)?,

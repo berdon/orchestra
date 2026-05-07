@@ -21,7 +21,7 @@ use crate::{
     services::{
         orchestra_paths::{default_orchestra_root, task_attachments_dir},
         projects, task_attachments, task_browser, task_file_references, task_pull_requests,
-        task_repositories, task_runtime, workflows,
+        task_repositories, task_runtime, task_worktree_cleanup, workflows,
     },
 };
 
@@ -723,6 +723,13 @@ pub fn create_task_from_blueprint(
     )
     .map_err(|error| format!("Unable to create task: {error}"))?;
 
+    task_worktree_cleanup::sync_task_worktree_cleanup_state(
+        &tx,
+        &task_id,
+        None,
+        &normalized.status,
+        &now,
+    )?;
     sync_task_repository_links(&tx, &task_id, project_id, &normalized.repository_ids, &now)?;
     sync_task_tags(&tx, &task_id, &normalized.tags, &now)?;
     reconcile_dependency_statuses(
@@ -841,6 +848,14 @@ pub fn update_task(
             format!("Unable to clear dependency auto-block provenance for task {task_id}: {error}")
         })?;
     }
+
+    task_worktree_cleanup::sync_task_worktree_cleanup_state(
+        &tx,
+        task_id,
+        Some(existing.status.as_str()),
+        &normalized.status,
+        &now,
+    )?;
 
     sync_task_repository_links(
         &tx,
