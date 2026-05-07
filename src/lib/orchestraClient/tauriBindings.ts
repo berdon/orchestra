@@ -129,6 +129,7 @@ import type {
   TaskDetail,
   TaskFileReference,
   TaskFileReferenceInput,
+  TaskPullRequestDetail,
   TaskListOptions,
   TaskScheduleDetail,
   TaskScheduleSummary,
@@ -386,6 +387,7 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
       invokeTauri<TaskFileReference>("set_default_task_file_reference", { referenceId }),
     removeFileReference: (referenceId) => invokeTauri<TaskFileReference>("remove_task_file_reference", { referenceId }),
     getFileContent: (path) => invokeTauri<string>("get_task_file_content", { path }),
+    getPullRequest: (taskId) => invokeTauri<TaskPullRequestDetail>("get_task_pull_request", { taskId }),
     addAttachment: async (taskId, input: TaskAttachmentUploadInput) => {
       const normalizedInput = await normalizeTaskAttachmentUploadInput(input);
       return invokeTauri<TaskAttachment>("add_task_attachment", { taskId, input: normalizedInput });

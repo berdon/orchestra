@@ -174,6 +174,7 @@ function createServices(overrides?: Partial<OrchestraClientServiceBindings>): Or
       setDefaultFileReference: vi.fn(async () => { throw new Error("unused"); }),
       removeFileReference: vi.fn(async () => { throw new Error("unused"); }),
       getFileContent: vi.fn(async () => ""),
+      getPullRequest: vi.fn(async () => ({ taskId: "task-1", generatedAt: new Date().toISOString(), repositories: [] })),
       addAttachment: vi.fn(async () => { throw new Error("unused"); }),
       downloadAttachment: vi.fn(async () => undefined),
       removeAttachment: vi.fn(async () => { throw new Error("unused"); }),

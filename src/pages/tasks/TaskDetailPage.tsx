@@ -17,6 +17,7 @@ import { MarkdownContent } from "../../components/MarkdownContent";
 import { TaskCommentComposer } from "../../components/TaskCommentComposer";
 import { TaskCommentMessage } from "../../components/TaskCommentMessage";
 import { TaskEditorForm } from "./TaskEditorForm";
+import { TaskPullRequestTab } from "./TaskPullRequestTab";
 import { getTaskTags } from "../../lib/taskListQuery";
 import { formatTaskAttachmentSize, getTaskAttachmentFallbackCopy, getTaskAttachmentKind } from "../../lib/taskAttachments";
 import { getEffectiveTaskDetailAssignmentStatus } from "./taskDetailActionState";
@@ -60,6 +61,7 @@ type TaskDetailTab =
   | "hierarchy"
   | "dependencies"
   | "browser"
+  | "pr"
   | "repo-files"
   | "attachments"
   | "todos"
@@ -590,6 +592,7 @@ const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
   { id: "hierarchy", label: "Hierarchy" },
   { id: "dependencies", label: "Dependencies" },
   { id: "browser", label: "Browser" },
+  { id: "pr", label: "PR" },
   { id: "repo-files", label: "Repo files" },
   { id: "todos", label: "Todos" },
   { id: "attachments", label: "Attachments" },
@@ -1666,6 +1669,21 @@ export function TaskDetailPage({
               onAddComment={onAddComment}
             />
           </section>
+        );
+      case "pr":
+        return (
+          <TaskPullRequestTab
+            task={task}
+            tasks={tasks}
+            agents={agents}
+            roles={roles}
+            commentAuthor={commentDraft.author}
+            onAddComment={onAddComment}
+            onOpenFileReference={handleOpenCommentFileReference}
+            onOpenTask={onOpenTask}
+            onOpenAgent={onOpenAgent}
+            onOpenRole={onOpenRole}
+          />
         );
       case "repo-files":
         return (

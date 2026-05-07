@@ -80,6 +80,7 @@ import type {
   TaskDependency,
   TaskDetail,
   TaskLaneAssignment,
+  TaskPullRequestDetail,
   TaskLaneRun,
   TaskLaneSummary,
   TaskListOptions,
@@ -7556,6 +7557,7 @@ export async function commentOnTask(
       selectedText: input.selectedText?.trim() || null,
       anchorCommitHash: null,
       anchorHasUncommittedChanges: null,
+      diffAnchor: input.diffAnchor ?? null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -8178,6 +8180,36 @@ export async function getTaskFileContent(path: string): Promise<string> {
   }
 
   return invoke<string>("get_task_file_content", { path });
+}
+
+export async function getTaskPullRequest(taskId: string): Promise<TaskPullRequestDetail> {
+  if (!isTauriAvailable()) {
+    const task = await getTask(taskId);
+    return {
+      taskId,
+      generatedAt: nowIso(),
+      repositories: task.taskRepositories.map((repository) => ({
+        repositoryId: repository.repositoryId,
+        repositoryName: repository.repositoryName,
+        repositorySlug: repository.repositorySlug,
+        status: "clean",
+        reviewRootPath: repository.taskWorktreePath ?? repository.managedRepositoryPath ?? null,
+        reviewRootKind: repository.taskWorktreePath ? "task_worktree" : repository.managedRepositoryPath ? "managed_repository" : null,
+        unavailableReason: null,
+        defaultBranch: null,
+        baseCommitHash: null,
+        headCommitHash: null,
+        worktreeOnly: false,
+        hasUncommittedChanges: false,
+        committedFileCount: 0,
+        uncommittedFileCount: 0,
+        mixedFileCount: 0,
+        files: [],
+      })),
+    };
+  }
+
+  return invoke<TaskPullRequestDetail>("get_task_pull_request", { taskId });
 }
 
 export async function removeTaskFileReference(

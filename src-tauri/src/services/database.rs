@@ -695,6 +695,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 selected_text TEXT,
                 anchor_commit_hash TEXT,
                 anchor_has_uncommitted_changes INTEGER,
+                diff_anchor_json TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
@@ -2302,6 +2303,17 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
             )
             .map_err(|error| {
                 format!("Unable to add anchor_payload_json column to task_comments: {error}")
+            })?;
+    }
+
+    if !columns.contains("diff_anchor_json") {
+        connection
+            .execute(
+                "ALTER TABLE task_comments ADD COLUMN diff_anchor_json TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add diff_anchor_json column to task_comments: {error}")
             })?;
     }
 

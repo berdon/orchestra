@@ -1944,6 +1944,10 @@ fn build_remote_api_context(app: AppHandle) -> Router {
             get(get_task_file_references).post(post_task_file_reference_create),
         )
         .route(
+            "/api/v1/tasks/:task_id/pull-request",
+            get(get_task_pull_request),
+        )
+        .route(
             "/api/v1/task-file-references/:reference_id/default",
             post(post_default_task_file_reference),
         )
@@ -3797,6 +3801,7 @@ fn build_frontend_feature_flags(authenticated: bool) -> OrchestraClientFeatureFl
         task_comments: authenticated,
         task_files: authenticated,
         task_browser: false,
+        task_pull_requests: authenticated,
         desktop_windows: false,
         agent_terminal: false,
     }
@@ -3914,6 +3919,7 @@ fn build_frontend_capabilities(authenticated: bool) -> OrchestraClientCapabiliti
             attachments: auth_guarded_capability(authenticated, true, "Remote task attachment endpoints are unavailable."),
             file_references: auth_guarded_capability(authenticated, true, "Remote task file-reference endpoints are unavailable."),
             file_contents: auth_guarded_capability(authenticated, true, "Remote task file-content endpoints are unavailable."),
+            pull_requests: auth_guarded_capability(authenticated, true, "Remote task pull-request endpoints are unavailable."),
             schedules: auth_guarded_capability(authenticated, true, "Remote task schedule endpoints are unavailable."),
             browser: Some(unavailable_capability("This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.")),
         },
@@ -6080,6 +6086,17 @@ async fn get_task_file_references(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     task_commands::list_task_file_references(task_id)
+        .map(Json)
+        .map_err(command_api_error)
+}
+
+async fn get_task_pull_request(
+    AxumState(context): AxumState<RemoteApiContext>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
+    require_remote_auth_only(&context.app, &headers)?;
+    task_commands::get_task_pull_request(task_id)
         .map(Json)
         .map_err(command_api_error)
 }

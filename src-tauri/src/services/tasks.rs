@@ -15,13 +15,13 @@ use crate::{
     models::{
         AuthorizationContext, TaskComment, TaskCommentAnchor, TaskCommentDeleteImpact,
         TaskCommentDomAnchor, TaskCommentFileAnchor, TaskCommentInput, TaskCommentReceipt,
-        TaskDependency, TaskDetail, TaskLaneAssignment, TaskLaneRun, TaskLaneSummary,
-        TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
+        TaskDependency, TaskDetail, TaskDiffCommentAnchor, TaskLaneAssignment, TaskLaneRun,
+        TaskLaneSummary, TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
     },
     services::{
         orchestra_paths::{default_orchestra_root, task_attachments_dir},
-        projects, task_attachments, task_browser, task_file_references, task_repositories,
-        task_runtime, workflows,
+        projects, task_attachments, task_browser, task_file_references, task_pull_requests,
+        task_repositories, task_runtime, workflows,
     },
 };
 
@@ -116,6 +116,7 @@ fn read_task_comment_from_row(row: &Row<'_>) -> rusqlite::Result<TaskComment> {
     let anchor_commit_hash: Option<String> = row.get(15)?;
     let anchor_has_uncommitted_changes = row.get::<_, Option<i64>>(16)?.map(|value| value != 0);
     let anchor_payload_json: Option<String> = row.get(18)?;
+    let diff_anchor = diff_anchor_from_row(row, 19)?;
     let anchor = if let Some(raw) = anchor_payload_json {
         Some(
             serde_json::from_str::<TaskCommentAnchor>(&raw).map_err(|error| {
@@ -163,8 +164,9 @@ fn read_task_comment_from_row(row: &Row<'_>) -> rusqlite::Result<TaskComment> {
         anchor_commit_hash,
         anchor_has_uncommitted_changes,
         anchor,
-        created_at: row.get(19)?,
-        updated_at: row.get(20)?,
+        diff_anchor,
+        created_at: row.get(20)?,
+        updated_at: row.get(21)?,
     })
 }
 
@@ -1252,6 +1254,7 @@ pub fn add_task_comment(
         column_end,
         selected_text,
         anchor,
+        diff_anchor,
     } = input;
 
     let author = author.trim();
@@ -1272,7 +1275,7 @@ pub fn add_task_comment(
     }
     validate_task_comment_parent(connection, task_id, parent_comment_id.as_deref())?;
 
-    let (anchor_input, anchor_metadata) = resolve_comment_anchor(
+    let (anchor_input, anchor_metadata, resolved_diff_anchor) = resolve_comment_anchor(
         connection,
         task_id,
         anchor,
@@ -1284,6 +1287,7 @@ pub fn add_task_comment(
         column_start,
         column_end,
         normalized_optional_string(selected_text),
+        diff_anchor,
     )?;
 
     let now = now_iso();
@@ -1342,6 +1346,7 @@ pub fn add_task_comment(
             }),
             CommentAnchorInput::Dom(anchor) => TaskCommentAnchor::Dom(anchor.clone()),
         }),
+        diff_anchor: resolved_diff_anchor.clone(),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -1350,7 +1355,7 @@ pub fn add_task_comment(
         .transaction()
         .map_err(|error| format!("Unable to start task comment transaction: {error}"))?;
     tx.execute(
-        "INSERT INTO task_comments (id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+        "INSERT INTO task_comments (id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, diff_anchor_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
         params![
             comment.id,
             comment.task_id,
@@ -1374,6 +1379,7 @@ pub fn add_task_comment(
                 TaskCommentAnchor::Dom(_) => "dom",
             }),
             comment.anchor.as_ref().map(serde_json::to_string).transpose().map_err(|error| format!("Unable to serialize task comment anchor: {error}"))?,
+            diff_anchor_to_json(comment.diff_anchor.as_ref())?,
             comment.created_at,
             comment.updated_at,
         ],
@@ -1546,7 +1552,16 @@ fn resolve_comment_anchor(
     column_start: Option<i64>,
     column_end: Option<i64>,
     selected_text: Option<String>,
-) -> Result<(Option<CommentAnchorInput>, CommentAnchorMetadata), String> {
+    diff_anchor: Option<TaskDiffCommentAnchor>,
+) -> Result<(
+    Option<CommentAnchorInput>,
+    CommentAnchorMetadata,
+    Option<TaskDiffCommentAnchor>,
+), String> {
+    if anchor.is_some() && diff_anchor.is_some() {
+        return Err("anchor/diffAnchor: Comments must target either a standard anchor or a PR diff anchor, not both.".into());
+    }
+
     if let Some(anchor) = anchor {
         return match anchor {
             TaskCommentAnchor::File(anchor) => resolve_file_comment_anchor(
@@ -1567,6 +1582,17 @@ fn resolve_comment_anchor(
         };
     }
 
+    if let Some(diff_anchor) = diff_anchor {
+        return resolve_pr_comment_anchor(
+            connection,
+            task_id,
+            column_start,
+            column_end,
+            selected_text,
+            diff_anchor,
+        );
+    }
+
     let has_anchor_input = repository_id.is_some()
         || relative_path.is_some()
         || line_start.is_some()
@@ -1576,7 +1602,7 @@ fn resolve_comment_anchor(
         || selected_text.is_some();
 
     if !has_anchor_input {
-        return Ok((None, CommentAnchorMetadata::default()));
+        return Ok((None, CommentAnchorMetadata::default(), None));
     }
 
     resolve_file_comment_anchor(
@@ -1597,7 +1623,11 @@ fn resolve_dom_comment_anchor(
     connection: &Connection,
     task_id: &str,
     anchor: TaskCommentDomAnchor,
-) -> Result<(Option<CommentAnchorInput>, CommentAnchorMetadata), String> {
+) -> Result<(
+    Option<CommentAnchorInput>,
+    CommentAnchorMetadata,
+    Option<TaskDiffCommentAnchor>,
+), String> {
     if anchor.browser_session_id.trim().is_empty() {
         return Err(
             "anchor.browserSessionId: DOM-anchored comments require a browser session id.".into(),
@@ -1621,6 +1651,7 @@ fn resolve_dom_comment_anchor(
     Ok((
         Some(CommentAnchorInput::Dom(anchor)),
         CommentAnchorMetadata::default(),
+        None,
     ))
 }
 
@@ -1635,7 +1666,11 @@ fn resolve_file_comment_anchor(
     column_start: Option<i64>,
     column_end: Option<i64>,
     selected_text: Option<String>,
-) -> Result<(Option<CommentAnchorInput>, CommentAnchorMetadata), String> {
+) -> Result<(
+    Option<CommentAnchorInput>,
+    CommentAnchorMetadata,
+    Option<TaskDiffCommentAnchor>,
+), String> {
     let repository_id = repository_id.ok_or_else(|| {
         "repositoryId: File-anchored comments require a repository id.".to_string()
     })?;
@@ -1734,7 +1769,176 @@ fn resolve_file_comment_anchor(
             has_uncommitted_changes: metadata.has_uncommitted_changes,
         })),
         metadata,
+        None,
     ))
+}
+
+fn resolve_pr_comment_anchor(
+    connection: &Connection,
+    task_id: &str,
+    column_start: Option<i64>,
+    column_end: Option<i64>,
+    selected_text: Option<String>,
+    diff_anchor: TaskDiffCommentAnchor,
+) -> Result<(
+    Option<CommentAnchorInput>,
+    CommentAnchorMetadata,
+    Option<TaskDiffCommentAnchor>,
+), String> {
+    if diff_anchor.kind.trim() != "task_pr" {
+        return Err("diffAnchor.kind: PR comments currently support only `task_pr`.".into());
+    }
+    if diff_anchor.side != "old" && diff_anchor.side != "new" {
+        return Err("diffAnchor.side: PR comments must target the `old` or `new` side.".into());
+    }
+    if column_start.is_some() ^ column_end.is_some() {
+        return Err(
+            "columnStart/columnEnd: Column anchors must provide both start and end values.".into(),
+        );
+    }
+    if let Some(column_start) = column_start {
+        if column_start < 1 {
+            return Err("columnStart: Column anchors must be positive.".into());
+        }
+    }
+    if let Some(column_end) = column_end {
+        if column_end < 1 {
+            return Err("columnEnd: Column anchors must be positive.".into());
+        }
+    }
+
+    let pr_detail = task_pull_requests::get_task_pull_request(connection, task_id)?;
+    let repository = pr_detail
+        .repositories
+        .iter()
+        .find(|repository| repository.repository_id == diff_anchor.repository_id)
+        .ok_or_else(|| {
+            format!(
+                "diffAnchor.repositoryId: Repository {} is not associated with task {}.",
+                diff_anchor.repository_id, task_id
+            )
+        })?;
+    let file = repository
+        .files
+        .iter()
+        .find(|file| {
+            file.old_path == diff_anchor.old_path
+                && file.new_path == diff_anchor.new_path
+                && (file.old_path.is_some() || file.new_path.is_some())
+        })
+        .or_else(|| {
+            repository.files.iter().find(|file| {
+                file.display_path
+                    == diff_anchor
+                        .new_path
+                        .as_deref()
+                        .or(diff_anchor.old_path.as_deref())
+                        .unwrap_or_default()
+            })
+        })
+        .ok_or_else(|| {
+            format!(
+                "diffAnchor: No current PR diff file matched {:?} / {:?} in repository {}.",
+                diff_anchor.old_path, diff_anchor.new_path, diff_anchor.repository_id
+            )
+        })?;
+
+    let (line_start, line_end) = if diff_anchor.side == "old" {
+        let start = diff_anchor.old_line_start.ok_or_else(|| {
+            "diffAnchor.oldLineStart: PR comments on the old side require a starting line."
+                .to_string()
+        })?;
+        let end = diff_anchor.old_line_end.unwrap_or(start);
+        (start, end)
+    } else {
+        let start = diff_anchor.new_line_start.ok_or_else(|| {
+            "diffAnchor.newLineStart: PR comments on the new side require a starting line."
+                .to_string()
+        })?;
+        let end = diff_anchor.new_line_end.unwrap_or(start);
+        (start, end)
+    };
+    if line_start < 1 {
+        return Err("diffAnchor: PR comment line anchors must be positive.".into());
+    }
+    if line_end < line_start {
+        return Err("diffAnchor: PR comment line ranges must end on or after the start.".into());
+    }
+    if line_start == line_end {
+        if let (Some(column_start), Some(column_end)) = (column_start, column_end) {
+            if column_end < column_start {
+                return Err(
+                    "columnEnd: Column end must be on or after the starting column.".into(),
+                );
+            }
+        }
+    }
+
+    Ok((
+        Some(CommentAnchorInput::File(TaskCommentFileAnchor {
+            repository_id: diff_anchor.repository_id.clone(),
+            relative_path: file
+                .new_path
+                .clone()
+                .or_else(|| file.old_path.clone())
+                .unwrap_or_else(|| file.display_path.clone()),
+            line_start,
+            line_end,
+            column_start,
+            column_end,
+            selected_text,
+            commit_hash: diff_anchor
+                .head_commit_hash
+                .clone()
+                .or_else(|| repository.head_commit_hash.clone()),
+            has_uncommitted_changes: Some(repository.has_uncommitted_changes),
+        })),
+        CommentAnchorMetadata {
+            commit_hash: diff_anchor
+                .head_commit_hash
+                .clone()
+                .or_else(|| repository.head_commit_hash.clone()),
+            has_uncommitted_changes: Some(repository.has_uncommitted_changes),
+        },
+        Some(diff_anchor),
+    ))
+}
+
+fn diff_anchor_to_json(
+    diff_anchor: Option<&TaskDiffCommentAnchor>,
+) -> Result<Option<String>, String> {
+    diff_anchor
+        .map(|value| {
+            serde_json::to_string(value)
+                .map_err(|error| format!("Unable to serialize diff anchor metadata: {error}"))
+        })
+        .transpose()
+}
+
+fn diff_anchor_from_json(
+    diff_anchor_json: Option<String>,
+) -> Result<Option<TaskDiffCommentAnchor>, String> {
+    diff_anchor_json
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| {
+            serde_json::from_str::<TaskDiffCommentAnchor>(&value)
+                .map_err(|error| format!("Unable to deserialize diff anchor metadata: {error}"))
+        })
+        .transpose()
+}
+
+fn diff_anchor_from_row(
+    row: &Row<'_>,
+    index: usize,
+) -> rusqlite::Result<Option<TaskDiffCommentAnchor>> {
+    let raw_value = row.get::<_, Option<String>>(index)?;
+    diff_anchor_from_json(raw_value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
+        )
+    })
 }
 
 fn resolve_comment_anchor_metadata(path: &str) -> Result<CommentAnchorMetadata, String> {
@@ -1832,7 +2036,7 @@ pub fn list_unread_task_comments(
     let mut statement = connection
         .prepare(
             r#"
-            SELECT c.id, c.task_id, c.parent_comment_id, c.author, c.origin_type, c.origin_id, c.message, c.interrupt_agent, c.repository_id, c.relative_path, c.line_start, c.line_end, c.column_start, c.column_end, c.selected_text, c.anchor_commit_hash, c.anchor_has_uncommitted_changes, c.anchor_kind, c.anchor_payload_json, c.created_at, c.updated_at
+            SELECT c.id, c.task_id, c.parent_comment_id, c.author, c.origin_type, c.origin_id, c.message, c.interrupt_agent, c.repository_id, c.relative_path, c.line_start, c.line_end, c.column_start, c.column_end, c.selected_text, c.anchor_commit_hash, c.anchor_has_uncommitted_changes, c.anchor_kind, c.anchor_payload_json, c.diff_anchor_json, c.created_at, c.updated_at
             FROM task_comments c
             WHERE c.task_id = ?1
               AND NOT EXISTS (
@@ -2265,7 +2469,7 @@ fn load_task_comment(connection: &Connection, comment_id: &str) -> Result<TaskCo
     connection
         .query_row(
             r#"
-            SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, created_at, updated_at
+            SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, diff_anchor_json, created_at, updated_at
             FROM task_comments
             WHERE id = ?1
             "#,
@@ -2281,7 +2485,7 @@ fn load_task_comments(connection: &Connection, task_id: &str) -> Result<Vec<Task
     let mut statement = connection
         .prepare(
             r#"
-            SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, created_at, updated_at
+            SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, diff_anchor_json, created_at, updated_at
             FROM task_comments
             WHERE task_id = ?1
             ORDER BY created_at ASC, id ASC
@@ -4986,6 +5190,7 @@ mod tests {
                 column_end: None,
                 selected_text: None,
                 anchor: None,
+                diff_anchor: None,
             },
         )
         .expect("add task comment");
@@ -5125,6 +5330,7 @@ mod tests {
                 column_end: Some(18),
                 selected_text: Some("Beta selected text".into()),
                 anchor: None,
+                diff_anchor: None,
             },
         )
         .expect("anchored comment should add");
@@ -5198,6 +5404,7 @@ mod tests {
                         outer_html_snippet: Some("<button id=\"submit-order\" class=\"cta cta-primary\">Submit order</button>".into()),
                     },
                 })),
+                diff_anchor: None,
             },
         )
         .expect("DOM anchored comment should add");
@@ -5212,6 +5419,124 @@ mod tests {
             }
             TaskCommentAnchor::File(_) => panic!("expected DOM anchor"),
         }
+    }
+
+    #[test]
+    fn stores_and_loads_pr_diff_anchor_comments() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let task = create_named_task(&mut connection, "PR comment target", "in_progress", None);
+        let now = now_iso();
+        let root = std::env::temp_dir().join(format!(
+            "task-pr-comment-anchor-{}",
+            Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(root.join("src")).expect("repo src dir should create");
+        std::fs::write(root.join("src").join("example.ts"), "line one\nline two\n")
+            .expect("repo file should write");
+        assert!(Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&root)
+            .status()
+            .expect("git init should run")
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.email", "tests@example.invalid"])
+            .current_dir(&root)
+            .status()
+            .expect("git email config should run")
+            .success());
+        assert!(Command::new("git")
+            .args(["config", "user.name", "Tests"])
+            .current_dir(&root)
+            .status()
+            .expect("git name config should run")
+            .success());
+        assert!(Command::new("git")
+            .args(["add", "."])
+            .current_dir(&root)
+            .status()
+            .expect("git add should run")
+            .success());
+        assert!(Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&root)
+            .status()
+            .expect("git commit should run")
+            .success());
+        std::fs::write(
+            root.join("src").join("example.ts"),
+            "line one\nline two changed\n",
+        )
+        .expect("repo file should update");
+
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, NULL, 'main', ?6, ?6)",
+                params![
+                    "repo-pr-anchor",
+                    DEFAULT_PROJECT_ID,
+                    "repo-pr-anchor",
+                    "PR Anchor Repo",
+                    root.display().to_string(),
+                    now.as_str(),
+                ],
+            )
+            .expect("repository should insert");
+        connection
+            .execute(
+                "INSERT INTO task_repositories (task_id, repository_id, created_at) VALUES (?1, ?2, ?3)",
+                params![task.id.as_str(), "repo-pr-anchor", now.as_str()],
+            )
+            .expect("task repository link should insert");
+
+        let comment = add_task_comment(
+            &mut connection,
+            &task.id,
+            TaskCommentInput {
+                author: "Reviewer".into(),
+                origin_type: None,
+                origin_id: None,
+                message: "Please revisit this change.".into(),
+                interrupt_agent: false,
+                parent_comment_id: None,
+                repository_id: None,
+                relative_path: None,
+                absolute_path: None,
+                line_start: None,
+                line_end: None,
+                column_start: None,
+                column_end: None,
+                selected_text: Some("line two changed".into()),
+                anchor: None,
+                diff_anchor: Some(TaskDiffCommentAnchor {
+                    kind: "task_pr".into(),
+                    repository_id: "repo-pr-anchor".into(),
+                    old_path: Some("src/example.ts".into()),
+                    new_path: Some("src/example.ts".into()),
+                    side: "new".into(),
+                    old_line_start: None,
+                    old_line_end: None,
+                    new_line_start: Some(2),
+                    new_line_end: Some(2),
+                    base_commit_hash: None,
+                    head_commit_hash: None,
+                }),
+            },
+        )
+        .expect("PR diff comment should add");
+
+        assert_eq!(comment.repository_id.as_deref(), Some("repo-pr-anchor"));
+        assert_eq!(comment.relative_path.as_deref(), Some("src/example.ts"));
+        assert_eq!(comment.line_start, Some(2));
+        assert!(comment.diff_anchor.is_some());
+        assert_eq!(comment.anchor_has_uncommitted_changes, Some(true));
+
+        let comments =
+            list_task_comments(&connection, &task.id).expect("task comments should load");
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].diff_anchor, comment.diff_anchor);
     }
 
     #[test]
@@ -5239,6 +5564,7 @@ mod tests {
                 column_end: None,
                 selected_text: None,
                 anchor: None,
+                diff_anchor: None,
             },
         )
         .expect("parent comment should add");
@@ -5261,6 +5587,7 @@ mod tests {
                 column_end: None,
                 selected_text: None,
                 anchor: None,
+                diff_anchor: None,
             },
         )
         .expect("reply should add");
@@ -5300,6 +5627,7 @@ mod tests {
                 column_end: None,
                 selected_text: None,
                 anchor: None,
+                diff_anchor: None,
             },
         )
         .expect("parent comment should add");
@@ -5322,6 +5650,7 @@ mod tests {
                 column_end: None,
                 selected_text: None,
                 anchor: None,
+                diff_anchor: None,
             },
         )
         .expect("reply should add");
@@ -5345,6 +5674,7 @@ mod tests {
                 column_end: None,
                 selected_text: None,
                 anchor: None,
+                diff_anchor: None,
             },
         )
         .expect_err("nested reply should be rejected");
@@ -5419,6 +5749,7 @@ mod tests {
                 column_end: None,
                 selected_text: None,
                 anchor: None,
+                diff_anchor: None,
             },
         )
         .expect("first comment should add");
@@ -5441,6 +5772,7 @@ mod tests {
                 column_end: None,
                 selected_text: None,
                 anchor: None,
+                diff_anchor: None,
             },
         )
         .expect("second comment should add");
@@ -5544,6 +5876,7 @@ mod tests {
                 column_end: None,
                 selected_text: None,
                 anchor: None,
+                diff_anchor: None,
             },
         )
         .expect("worker comment should add");
@@ -5566,6 +5899,7 @@ mod tests {
                 column_end: None,
                 selected_text: None,
                 anchor: None,
+                diff_anchor: None,
             },
         )
         .expect("user comment should add");

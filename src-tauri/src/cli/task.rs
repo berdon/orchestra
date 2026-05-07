@@ -575,6 +575,7 @@ fn run_comment(
             column_end: None,
             selected_text: None,
             anchor: None,
+            diff_anchor: None,
         },
     )?;
 
@@ -2473,6 +2474,7 @@ mod tests {
                 column_end: None,
                 selected_text: None,
                 anchor: None,
+                diff_anchor: None,
             },
         )
         .expect("comment should save");

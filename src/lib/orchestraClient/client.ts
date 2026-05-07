@@ -72,6 +72,7 @@ import type {
   TaskDetail,
   TaskFileReference,
   TaskFileReferenceInput,
+  TaskPullRequestDetail,
   TaskListOptions,
   TaskScheduleDetail,
   TaskScheduleSummary,
@@ -171,6 +172,7 @@ export type {
   TaskDetail,
   TaskFileReference,
   TaskFileReferenceInput,
+  TaskPullRequestDetail,
   TaskListOptions,
   TaskScheduleDetail,
   TaskScheduleSummary,
@@ -370,6 +372,7 @@ export interface OrchestraTaskService {
   setDefaultFileReference(referenceId: string): Promise<TaskFileReference>;
   removeFileReference(referenceId: string): Promise<TaskFileReference>;
   getFileContent(path: string): Promise<string>;
+  getPullRequest(taskId: string): Promise<TaskPullRequestDetail>;
   addAttachment(taskId: string, input: TaskAttachmentUploadInput): Promise<TaskAttachment>;
   downloadAttachment(attachmentId: string): Promise<void>;
   removeAttachment(attachmentId: string): Promise<TaskAttachment>;

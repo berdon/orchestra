@@ -55,6 +55,7 @@ pub mod task_attachments;
 pub mod task_browser;
 pub mod task_comment_file_mentions;
 pub mod task_file_references;
+pub mod task_pull_requests;
 pub mod task_repositories;
 pub mod task_runtime;
 pub mod task_schedules;

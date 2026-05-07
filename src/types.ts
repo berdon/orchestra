@@ -1484,6 +1484,20 @@ export interface TaskCommentDomAnchor {
 
 export type TaskCommentAnchor = TaskCommentFileAnchor | TaskCommentDomAnchor;
 
+export interface TaskDiffCommentAnchor {
+  kind: "task_pr";
+  repositoryId: string;
+  oldPath?: string | null;
+  newPath?: string | null;
+  side: "old" | "new";
+  oldLineStart?: number | null;
+  oldLineEnd?: number | null;
+  newLineStart?: number | null;
+  newLineEnd?: number | null;
+  baseCommitHash?: string | null;
+  headCommitHash?: string | null;
+}
+
 export interface TaskComment {
   id: string;
   taskId: string;
@@ -1503,6 +1517,7 @@ export interface TaskComment {
   anchorCommitHash?: string | null;
   anchorHasUncommittedChanges?: boolean | null;
   anchor?: TaskCommentAnchor | null;
+  diffAnchor?: TaskDiffCommentAnchor | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1523,6 +1538,7 @@ export interface TaskCommentInput {
   columnEnd?: number | null;
   selectedText?: string | null;
   anchor?: TaskCommentAnchor | null;
+  diffAnchor?: TaskDiffCommentAnchor | null;
 }
 
 export interface TaskCommentUpdateInput {
@@ -1665,6 +1681,46 @@ export interface TaskRepository {
   sourceKind?: "local" | "remote" | null;
   taskWorktreePath?: string | null;
   createdAt: string;
+}
+
+export interface TaskPullRequestFile {
+  repositoryId: string;
+  repositoryName: string;
+  repositorySlug: string;
+  changeType: "added" | "modified" | "deleted" | "renamed";
+  oldPath?: string | null;
+  newPath?: string | null;
+  displayPath: string;
+  origin: "committed" | "uncommitted" | "mixed";
+  additions: number;
+  deletions: number;
+  isBinary: boolean;
+  patch?: string | null;
+}
+
+export interface TaskPullRequestRepository {
+  repositoryId: string;
+  repositoryName: string;
+  repositorySlug: string;
+  status: "changed" | "clean" | "unavailable";
+  reviewRootPath?: string | null;
+  reviewRootKind?: "task_worktree" | "managed_repository" | null;
+  unavailableReason?: string | null;
+  defaultBranch?: string | null;
+  baseCommitHash?: string | null;
+  headCommitHash?: string | null;
+  worktreeOnly: boolean;
+  hasUncommittedChanges: boolean;
+  committedFileCount: number;
+  uncommittedFileCount: number;
+  mixedFileCount: number;
+  files: TaskPullRequestFile[];
+}
+
+export interface TaskPullRequestDetail {
+  taskId: string;
+  generatedAt: string;
+  repositories: TaskPullRequestRepository[];
 }
 
 export interface TaskLaneRun {

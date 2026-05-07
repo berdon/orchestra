@@ -10,12 +10,13 @@ use crate::{
     models::{
         TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentDeleteImpact,
         TaskCommentFileMentionCandidate, TaskCommentInput, TaskCommentUpdateInput, TaskDependency,
-        TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskRepository, TaskSummary,
-        TaskTodo, TaskTodoInput, TaskUpsertInput,
+        TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskPullRequestDetail,
+        TaskRepository, TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
     },
     services::{
         app_events, database, dispatcher, domain_events, pi_sessions, pi_setup, task_attachments,
-        task_comment_file_mentions, task_file_references, task_repositories, task_runtime, tasks,
+        task_comment_file_mentions, task_file_references, task_pull_requests, task_repositories,
+        task_runtime, tasks,
     },
     state::AppState,
 };
@@ -440,6 +441,12 @@ pub fn get_task_file_content(path: String) -> Result<String, String> {
     }
 
     fs::read_to_string(&path).map_err(|error| format!("Unable to read file: {error}"))
+}
+
+#[tauri::command]
+pub fn get_task_pull_request(task_id: String) -> Result<TaskPullRequestDetail, String> {
+    let connection = database::open_connection()?;
+    task_pull_requests::get_task_pull_request(&connection, &task_id)
 }
 
 #[tauri::command]

@@ -247,6 +247,7 @@ pub struct OrchestraClientFeatureFlags {
     pub task_comments: bool,
     pub task_files: bool,
     pub task_browser: bool,
+    pub task_pull_requests: bool,
     pub desktop_windows: bool,
     pub agent_terminal: bool,
 }
@@ -312,6 +313,7 @@ pub struct OrchestraClientTaskCapabilities {
     pub attachments: OrchestraCapabilityDescriptor,
     pub file_references: OrchestraCapabilityDescriptor,
     pub file_contents: OrchestraCapabilityDescriptor,
+    pub pull_requests: OrchestraCapabilityDescriptor,
     pub schedules: OrchestraCapabilityDescriptor,
     pub browser: Option<OrchestraCapabilityDescriptor>,
 }
@@ -1974,6 +1976,22 @@ pub struct RoleOperationsDetail {
     pub instances: Vec<RoleInstance>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDiffCommentAnchor {
+    pub kind: String,
+    pub repository_id: String,
+    pub old_path: Option<String>,
+    pub new_path: Option<String>,
+    pub side: String,
+    pub old_line_start: Option<i64>,
+    pub old_line_end: Option<i64>,
+    pub new_line_start: Option<i64>,
+    pub new_line_end: Option<i64>,
+    pub base_commit_hash: Option<String>,
+    pub head_commit_hash: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskCommentFileAnchor {
@@ -2060,6 +2078,7 @@ pub struct TaskComment {
     pub anchor_commit_hash: Option<String>,
     pub anchor_has_uncommitted_changes: Option<bool>,
     pub anchor: Option<TaskCommentAnchor>,
+    pub diff_anchor: Option<TaskDiffCommentAnchor>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -2177,12 +2196,60 @@ pub struct TaskCommentInput {
     pub selected_text: Option<String>,
     #[serde(default)]
     pub anchor: Option<TaskCommentAnchor>,
+    #[serde(default)]
+    pub diff_anchor: Option<TaskDiffCommentAnchor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskCommentUpdateInput {
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPullRequestFile {
+    pub repository_id: String,
+    pub repository_name: String,
+    pub repository_slug: String,
+    pub change_type: String,
+    pub old_path: Option<String>,
+    pub new_path: Option<String>,
+    pub display_path: String,
+    pub origin: String,
+    pub additions: i64,
+    pub deletions: i64,
+    pub is_binary: bool,
+    pub patch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPullRequestRepository {
+    pub repository_id: String,
+    pub repository_name: String,
+    pub repository_slug: String,
+    pub status: String,
+    pub review_root_path: Option<String>,
+    pub review_root_kind: Option<String>,
+    pub unavailable_reason: Option<String>,
+    pub default_branch: Option<String>,
+    pub base_commit_hash: Option<String>,
+    pub head_commit_hash: Option<String>,
+    pub worktree_only: bool,
+    pub has_uncommitted_changes: bool,
+    pub committed_file_count: i64,
+    pub uncommitted_file_count: i64,
+    pub mixed_file_count: i64,
+    pub files: Vec<TaskPullRequestFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPullRequestDetail {
+    pub task_id: String,
+    pub generated_at: String,
+    pub repositories: Vec<TaskPullRequestRepository>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

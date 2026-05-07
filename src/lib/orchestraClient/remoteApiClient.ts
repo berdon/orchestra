@@ -74,6 +74,7 @@ import type {
   TaskDetail,
   TaskFileReference,
   TaskFileReferenceInput,
+  TaskPullRequestDetail,
   TaskListOptions,
   TaskScheduleDetail,
   TaskScheduleSummary,
@@ -1345,6 +1346,12 @@ export function createRemoteApiOrchestraClientBinding(
           query: {
             path,
           },
+        });
+      },
+      getPullRequest: (taskId) => {
+        transport.assertCapability("tasks.getPullRequest", bootstrap.capabilities.tasks.pullRequests ?? { availability: "available" });
+        return transport.requestJson<TaskPullRequestDetail>("tasks.getPullRequest", {
+          path: `/api/v1/tasks/${encodeURIComponent(taskId)}/pull-request`,
         });
       },
       addAttachment: (taskId, input: TaskAttachmentUploadInput) => {
