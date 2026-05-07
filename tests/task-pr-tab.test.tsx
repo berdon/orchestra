@@ -138,7 +138,7 @@ describe("task PR tab", () => {
     expect(html).toContain("task-pr-refresh");
   });
 
-  it("renders diff review comments and outdated markers", () => {
+  it("renders diff review comments and only exposes inline comment affordances on changed lines", () => {
     const file: TaskPullRequestFile = {
       repositoryId: "repo-1",
       repositoryName: "Repo 1",
@@ -184,6 +184,8 @@ describe("task PR tab", () => {
     expect(html).toContain("Looks good");
     expect(html).toContain("Outdated comments");
     expect(html).toContain("Outdated now");
-    expect(html).toContain("task-pr-comment-line");
+    expect(html.match(/data-role="task-pr-comment-line"/g)).toHaveLength(3);
+    expect(html).toContain("task-pr-diff-line__comment-button");
+    expect(html).not.toContain(">Comment<");
   });
 });

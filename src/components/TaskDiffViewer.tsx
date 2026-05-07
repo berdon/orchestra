@@ -45,10 +45,21 @@ interface TaskDiffViewerProps {
 interface DraftState {
   anchor: TaskCommentInput;
   side: "old" | "new";
+  lineKey: string;
 }
 
 function lineKey(side: "old" | "new", lineNumber: number | null) {
   return lineNumber == null ? null : `${side}:${lineNumber}`;
+}
+
+function resolveLineThreadKey(line: ParsedDiffLine) {
+  return line.kind === "del"
+    ? lineKey("old", line.oldLineNumber)
+    : lineKey("new", line.newLineNumber) ?? lineKey("old", line.oldLineNumber);
+}
+
+function isCommentableDiffLine(line: ParsedDiffLine) {
+  return line.kind === "add" || line.kind === "del";
 }
 
 export function parseUnifiedDiff(patch?: string | null): ParsedDiffHunk[] {
@@ -285,34 +296,44 @@ export function TaskDiffViewer({
   }
 
   function openDraft(line: ParsedDiffLine) {
-    const side = line.kind === "del" || line.newLineNumber == null ? "old" : "new";
-    const lineStart = side === "old" ? line.oldLineNumber : line.newLineNumber;
-    if (!lineStart) {
+    if (!isCommentableDiffLine(line)) {
       return;
     }
-    setDraftState({
-      side,
-      anchor: {
-        author: commentAuthor,
-        message: "",
-        interruptAgent: false,
-        repositoryId: file.repositoryId,
-        relativePath: file.newPath ?? file.oldPath ?? file.displayPath,
-        lineStart,
-        lineEnd: lineStart,
-        selectedText: line.content,
-        diffAnchor: {
-          kind: "task_pr",
+    const side = line.kind === "del" || line.newLineNumber == null ? "old" : "new";
+    const lineStart = side === "old" ? line.oldLineNumber : line.newLineNumber;
+    const nextLineKey = resolveLineThreadKey(line);
+    if (!lineStart || !nextLineKey) {
+      return;
+    }
+    setDraftState((current) => {
+      if (current?.lineKey === nextLineKey) {
+        return null;
+      }
+      return {
+        side,
+        lineKey: nextLineKey,
+        anchor: {
+          author: commentAuthor,
+          message: "",
+          interruptAgent: false,
           repositoryId: file.repositoryId,
-          oldPath: file.oldPath ?? null,
-          newPath: file.newPath ?? null,
-          side,
-          oldLineStart: side === "old" ? line.oldLineNumber : null,
-          oldLineEnd: side === "old" ? line.oldLineNumber : null,
-          newLineStart: side === "new" ? line.newLineNumber : null,
-          newLineEnd: side === "new" ? line.newLineNumber : null,
+          relativePath: file.newPath ?? file.oldPath ?? file.displayPath,
+          lineStart,
+          lineEnd: lineStart,
+          selectedText: line.content,
+          diffAnchor: {
+            kind: "task_pr",
+            repositoryId: file.repositoryId,
+            oldPath: file.oldPath ?? null,
+            newPath: file.newPath ?? null,
+            side,
+            oldLineStart: side === "old" ? line.oldLineNumber : null,
+            oldLineEnd: side === "old" ? line.oldLineNumber : null,
+            newLineStart: side === "new" ? line.newLineNumber : null,
+            newLineEnd: side === "new" ? line.newLineNumber : null,
+          },
         },
-      },
+      };
     });
   }
 
@@ -342,20 +363,39 @@ export function TaskDiffViewer({
               </div>
               <div className="task-section-list">
                 {hunk.lines.map((line) => {
-                  const key = line.kind === "del"
-                    ? lineKey("old", line.oldLineNumber)
-                    : lineKey("new", line.newLineNumber) ?? lineKey("old", line.oldLineNumber);
+                  const key = resolveLineThreadKey(line);
                   const lineThreads = key ? (threadsByLine.get(key) ?? []) : [];
+                  const commentable = isCommentableDiffLine(line);
+                  const isDraftOpen = draftState?.lineKey === key;
                   return (
-                    <div className="task-history-card" data-role="task-pr-diff-line" key={`${hunk.header}-${line.key}`}>
-                      <div className="workflow-section__header">
-                        <div className="muted-copy">
+                    <div
+                      className={[
+                        "task-history-card",
+                        "task-pr-diff-line",
+                        `task-pr-diff-line--${line.kind}`,
+                        lineThreads.length ? "task-pr-diff-line--commented" : null,
+                        isDraftOpen ? "task-pr-diff-line--draft-open" : null,
+                      ].filter(Boolean).join(" ")}
+                      data-role="task-pr-diff-line"
+                      key={`${hunk.header}-${line.key}`}
+                    >
+                      <div className="task-pr-diff-line__header">
+                        <div className="task-pr-diff-line__numbers muted-copy">
                           <span>{line.oldLineNumber ?? ""}</span>
-                          <span className="ml-2">{line.newLineNumber ?? ""}</span>
+                          <span>{line.newLineNumber ?? ""}</span>
                         </div>
-                        {line.kind !== "meta" ? (
-                          <button className="secondary-button" data-role="task-pr-comment-line" type="button" onClick={() => openDraft(line)}>
-                            Comment
+                        {commentable ? (
+                          <button
+                            aria-label={`Add review comment on ${line.kind === "del" ? "old" : "new"} line ${line.kind === "del" ? line.oldLineNumber : line.newLineNumber}`}
+                            className={lineThreads.length || isDraftOpen
+                              ? "task-pr-diff-line__comment-button task-pr-diff-line__comment-button--active"
+                              : "task-pr-diff-line__comment-button"}
+                            data-role="task-pr-comment-line"
+                            type="button"
+                            onClick={() => openDraft(line)}
+                          >
+                            💬
+                            {lineThreads.length ? <span className="task-pr-diff-line__comment-count">{lineThreads.length}</span> : null}
                           </button>
                         ) : null}
                       </div>
@@ -412,6 +452,34 @@ export function TaskDiffViewer({
                           ))}
                         </div>
                       ) : null}
+                      {isDraftOpen ? (
+                        <TaskCommentComposer
+                          author={draftState.anchor.author}
+                          authorDataRole="task-pr-comment-author"
+                          className="task-comment-reply-composer task-pr-diff-line__composer"
+                          tasks={tasks}
+                          agents={agents}
+                          roles={roles}
+                          message={draftState.anchor.message}
+                          messageDataRole="task-pr-comment-message"
+                          messageLabel={`Comment on ${draftState.side} line ${draftState.anchor.lineStart}`}
+                          mentionListDataRole="task-pr-comment-mention-list"
+                          mentionOptionDataRole="task-pr-comment-mention-option"
+                          onAuthorChange={(author) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, author } } : current)}
+                          onInterruptChange={(interruptAgent) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, interruptAgent } } : current)}
+                          onMessageChange={(message) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, message } } : current)}
+                          onSubmit={() => void submitDraft()}
+                          rows={3}
+                          submitDataRole="add-task-pr-comment"
+                          submitLabel="Add review comment"
+                          cancelDataRole="cancel-task-pr-comment"
+                          cancelLabel="Cancel"
+                          onCancel={() => setDraftState(null)}
+                          taskId={taskId}
+                          interruptChecked={draftState.anchor.interruptAgent}
+                          interruptDataRole="task-pr-comment-interrupt"
+                        />
+                      ) : null}
                     </div>
                   );
                 })}
@@ -420,32 +488,6 @@ export function TaskDiffViewer({
           ))}
         </div>
       )}
-
-      {draftState ? (
-        <TaskCommentComposer
-          author={draftState.anchor.author}
-          authorDataRole="task-pr-comment-author"
-          className="task-comment-reply-composer"
-          tasks={tasks}
-          agents={agents}
-          roles={roles}
-          message={draftState.anchor.message}
-          messageDataRole="task-pr-comment-message"
-          messageLabel={`Comment on ${draftState.side} side`}
-          mentionListDataRole="task-pr-comment-mention-list"
-          mentionOptionDataRole="task-pr-comment-mention-option"
-          onAuthorChange={(author) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, author } } : current)}
-          onInterruptChange={(interruptAgent) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, interruptAgent } } : current)}
-          onMessageChange={(message) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, message } } : current)}
-          onSubmit={() => void submitDraft()}
-          rows={3}
-          submitDataRole="add-task-pr-comment"
-          submitLabel="Add review comment"
-          taskId={taskId}
-          interruptChecked={draftState.anchor.interruptAgent}
-          interruptDataRole="task-pr-comment-interrupt"
-        />
-      ) : null}
 
       {outdatedThreads.length ? (
         <div className="task-section-list" data-role="task-pr-outdated-comments">
