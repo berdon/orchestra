@@ -2790,18 +2790,57 @@ pub async fn stop_session_runtime(
     session_id: String,
     notes: Option<String>,
 ) -> Result<SessionRecord, String> {
-    let had_runtime = if let Some(runtime) = state.remove_session_runtime(&session_id)? {
-        runtime.abort_active_run();
-        true
-    } else {
-        false
-    };
+    let removed_runtime = state.remove_session_runtime(&session_id)?;
+    let had_runtime = removed_runtime.is_some();
+    let interrupted_prompt_message = removed_runtime
+        .as_ref()
+        .and_then(|runtime| runtime.current_prompt_message());
+    let interrupted_active_run = had_runtime;
+    if let Some(runtime) = removed_runtime {
+        if interrupted_active_run {
+            runtime.abort_active_run();
+        } else {
+            runtime.shutdown();
+        }
+    }
     state.clear_active_session_run(&session_id)?;
 
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let session_id_for_task = session_id.clone();
+    let stop_message = notes
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("Session run stopped by operator. {value}"))
+        .unwrap_or_else(|| "Session run stopped by operator.".to_string());
+    let stop_message_for_task = stop_message.clone();
+    let interrupted_prompt_message_for_task = interrupted_prompt_message.clone();
     let mut record = spawn_blocking(move || {
         let (_, session_dir) = resolve_session_paths(&session_id_for_task)?;
+        if interrupted_active_run {
+            let existing_record = crate::services::pi_sessions::get_session(
+                &session_dir,
+                &session_id_for_task,
+                true,
+            )?;
+            if let Some(prompt_message) = interrupted_prompt_message_for_task.as_deref() {
+                let prompt_already_persisted = existing_record.events.iter().any(|event| {
+                    event.kind == "user" && event.message.trim() == prompt_message.trim()
+                });
+                if !prompt_already_persisted {
+                    crate::services::pi_sessions::append_session_user_message(
+                        &session_dir,
+                        &session_id_for_task,
+                        prompt_message,
+                    )?;
+                }
+            }
+            crate::services::pi_sessions::append_session_system_message(
+                &session_dir,
+                &session_id_for_task,
+                &stop_message_for_task,
+            )?;
+        }
         load_decorated_session_record(
             &session_dir,
             &session_id_for_task,
@@ -2813,14 +2852,17 @@ pub async fn stop_session_runtime(
     .await
     .map_err(|error| format!("Unable to join stop_session_runtime task: {error}"))??;
 
-    if had_runtime {
+    if interrupted_active_run {
         record.status = "paused".into();
     }
 
     state.log(
         "info",
         "sessions.stop",
-        &format!("Stopped session runtime {}", session_id),
+        &format!(
+            "Stopped session runtime {} (runtime_present={} interrupted_active_run={})",
+            session_id, had_runtime, interrupted_active_run
+        ),
     );
     if let Ok(connection) = database::open_connection() {
         let project_id = session_project_id(&connection, &session_id);

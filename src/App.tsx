@@ -5067,27 +5067,13 @@ export function App() {
         return;
       }
 
-      const timestamp = nowIso();
       setSessionActionError(null);
 
       void orchestraClient.sessions
         .stopRuntime(sessionId)
         .then((record: SessionRecord) => {
           removePendingRun(sessionId);
-          mergeSessionRecord({
-            ...record,
-            status: "paused",
-            updatedAt: timestamp,
-            events: [
-              ...record.events,
-              {
-                id: `client-stop-${sessionId}-${timestamp}`,
-                kind: "system",
-                message: "Session run stopped by operator.",
-                timestamp,
-              },
-            ],
-          });
+          mergeSessionRecord(record);
         })
         .catch(async (error: unknown) => {
           setSessionActionError(

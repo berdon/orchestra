@@ -1097,6 +1097,27 @@ fn create_session_file_internal(
         })?;
     }
 
+    writeln!(
+        file,
+        "{}",
+        json!({
+            "type": "message",
+            "id": random_entry_id(),
+            "timestamp": now_iso(),
+            "message": {
+                "role": "system",
+                "content": [{ "type": "text", "text": DEFAULT_EMPTY_SESSION_MESSAGE }],
+                "timestamp": Utc::now().timestamp_millis(),
+            }
+        })
+    )
+    .map_err(|error| {
+        format!(
+            "Unable to write initial session message {}: {error}",
+            session_path.display()
+        )
+    })?;
+
     file.sync_all().map_err(|error| {
         format!(
             "Unable to flush session file {}: {error}",
@@ -1182,6 +1203,52 @@ pub fn delete_session_file(session_dir: &Path, session_id: &str) -> Result<(), S
     let path = get_session_path(session_dir, session_id)?;
     fs::remove_file(&path)
         .map_err(|error| format!("Unable to delete session file {}: {error}", path.display()))?;
+    Ok(())
+}
+
+pub fn append_session_user_message(
+    session_dir: &Path,
+    session_id: &str,
+    text: &str,
+) -> Result<(), String> {
+    let path = get_session_path(session_dir, session_id)?;
+    let timestamp = now_iso();
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .map_err(|error| {
+            format!(
+                "Unable to open session file {} for append: {error}",
+                path.display()
+            )
+        })?;
+
+    writeln!(
+        file,
+        "{}",
+        json!({
+            "type": "message",
+            "id": random_entry_id(),
+            "timestamp": timestamp,
+            "message": {
+                "role": "user",
+                "content": [{ "type": "text", "text": text }],
+                "timestamp": DateTime::parse_from_rfc3339(&timestamp)
+                    .map(|value| value.timestamp_millis())
+                    .unwrap_or_else(|_| Utc::now().timestamp_millis()),
+            }
+        })
+    )
+    .map_err(|error| {
+        format!(
+            "Unable to append user message to {}: {error}",
+            path.display()
+        )
+    })?;
+
+    file.sync_all()
+        .map_err(|error| format!("Unable to flush session file {}: {error}", path.display()))?;
+
     Ok(())
 }
 
@@ -1680,7 +1747,6 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
     let (session_id, created_at, mut title, mut updated_at, mut updated_sort_key) =
         parse_session_header_metadata(path, header)?;
     let mut first_user_message = None;
-    let mut last_visible_role = None;
     let mut events = Vec::new();
 
     for line in lines.iter().skip(1) {
@@ -1740,12 +1806,26 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
                 maybe_update_timestamp(&message_timestamp, &mut updated_at, &mut updated_sort_key);
 
                 match role {
+                    "system" => {
+                        if let Some(text) = non_empty_trimmed(&message_text) {
+                            events.push(SessionEvent {
+                                id: line
+                                    .get("id")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("system-message")
+                                    .to_string(),
+                                kind: "system".into(),
+                                message: text.to_string(),
+                                timestamp: message_timestamp,
+                                thinking_text: None,
+                            });
+                        }
+                    }
                     "user" => {
                         if let Some(text) = non_empty_trimmed(&message_text) {
                             if first_user_message.is_none() {
                                 first_user_message = Some(text.to_string());
                             }
-                            last_visible_role = Some("user");
                             events.push(SessionEvent {
                                 id: line
                                     .get("id")
@@ -1775,7 +1855,6 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
                         if non_empty_trimmed(&message_text).is_some()
                             || non_empty_trimmed(&message_thinking).is_some()
                         {
-                            last_visible_role = Some("assistant");
                             events.push(SessionEvent {
                                 id: message_id,
                                 kind: "assistant".into(),
@@ -1845,8 +1924,16 @@ fn parse_session_file(path: &Path, subscribed: bool) -> Result<StoredSession, St
     let title = title
         .or_else(|| first_user_message.map(|message| truncate_for_title(&message)))
         .unwrap_or_else(|| format!("Session {}", &session_id[..session_id.len().min(8)]));
-    let status = match last_visible_role {
-        Some("user") => "active",
+    let status = match events.last() {
+        Some(event) if event.kind == "user" => "active",
+        Some(event)
+            if event.kind == "system"
+                && event
+                    .message
+                    .starts_with("Session run stopped by operator.") =>
+        {
+            "paused"
+        }
         _ => "idle",
     }
     .to_string();
@@ -1913,6 +2000,7 @@ fn parse_session_file_summary(path: &Path, subscribed: bool) -> Result<StoredSes
         parse_session_header_metadata(path, &header)?;
     let mut first_user_message = None;
     let mut last_visible_role = None;
+    let mut last_system_message = None::<String>;
 
     for (index, line) in non_empty_lines.into_iter().skip(1) {
         let value = match serde_json::from_str::<Value>(line) {
@@ -1980,11 +2068,19 @@ fn parse_session_file_summary(path: &Path, subscribed: bool) -> Result<StoredSes
                                 first_user_message = Some(text.to_string());
                             }
                             last_visible_role = Some("user");
+                            last_system_message = None;
                         }
                     }
                     "assistant" => {
                         if non_empty_trimmed(&message_text).is_some() {
                             last_visible_role = Some("assistant");
+                            last_system_message = None;
+                        }
+                    }
+                    "system" => {
+                        if let Some(text) = non_empty_trimmed(&message_text) {
+                            last_visible_role = Some("system");
+                            last_system_message = Some(text.to_string());
                         }
                     }
                     _ => {}
@@ -1999,6 +2095,13 @@ fn parse_session_file_summary(path: &Path, subscribed: bool) -> Result<StoredSes
         .unwrap_or_else(|| format!("Session {}", &session_id[..session_id.len().min(8)]));
     let status = match last_visible_role {
         Some("user") => "active",
+        Some("system")
+            if last_system_message
+                .as_deref()
+                .is_some_and(|message| message.starts_with("Session run stopped by operator.")) =>
+        {
+            "paused"
+        }
         _ => "idle",
     }
     .to_string();

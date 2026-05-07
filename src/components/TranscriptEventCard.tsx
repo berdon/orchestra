@@ -103,7 +103,7 @@ export const TranscriptEventCard = memo(function TranscriptEventCard({
   const articleClassName = `transcript-event transcript-event--${tone}${event.pending ? " transcript-event--pending" : ""}${foldable ? " transcript-event--foldable" : ""}${foldable && expanded ? " transcript-event--expanded" : " transcript-event--collapsed"}`;
 
   return (
-    <article className={articleClassName} data-role="transcript-event" data-event-id={event.id} data-event-kind={event.kind} data-event-collapsed={foldable && !expanded ? "true" : "false"}>
+    <article className={articleClassName} data-role="transcript-event" data-event-id={event.id} data-event-kind={event.kind} data-event-run-id={event.runId ?? ""} data-event-pending={event.pending ? "true" : "false"} data-event-thinking={event.thinking ? "true" : "false"} data-event-collapsed={foldable && !expanded ? "true" : "false"}>
       <div className="transcript-event__controls">
         {foldable ? (
           <button

@@ -183,6 +183,7 @@ pub struct SessionRuntime {
     pending: Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>,
     subscribed: Mutex<bool>,
     current_run_id: Mutex<Option<String>>,
+    current_prompt_message: Mutex<Option<String>>,
     closed: Mutex<bool>,
     last_non_prompt_delivery_at: Mutex<Option<Instant>>,
     reload_capability: Mutex<SessionControlCapability>,
@@ -360,6 +361,7 @@ impl SessionRuntime {
             pending: Mutex::new(HashMap::new()),
             subscribed: Mutex::new(false),
             current_run_id: Mutex::new(None),
+            current_prompt_message: Mutex::new(None),
             closed: Mutex::new(false),
             last_non_prompt_delivery_at: Mutex::new(None),
             reload_capability: Mutex::new(unknown_control_capability()),
@@ -570,6 +572,7 @@ impl SessionRuntime {
 
         if event_type == "agent_end" {
             if let Some(run_id) = self.take_current_run_id() {
+                let _ = self.take_current_prompt_message();
                 self.app.state::<crate::state::AppState>().log(
                     "info",
                     "sessions.run.agent_end",
@@ -610,6 +613,7 @@ impl SessionRuntime {
         }
 
         if let Some(run_id) = self.take_current_run_id() {
+            let _ = self.take_current_prompt_message();
             self.app.state::<crate::state::AppState>().log(
                 "error",
                 "sessions.run.process_end",
@@ -948,6 +952,7 @@ impl SessionRuntime {
 
     pub fn abort_active_run(&self) {
         let _ = self.take_current_run_id();
+        let _ = self.take_current_prompt_message();
         self.mark_closed();
         if let Ok(mut stdin) = self.stdin.lock() {
             *stdin = None;
@@ -993,6 +998,9 @@ impl SessionRuntime {
                     return Err("This session is already processing a message".into());
                 }
                 *current_run_id = Some(run_id.to_string());
+                if let Ok(mut current_prompt_message) = self.current_prompt_message.lock() {
+                    *current_prompt_message = Some(message.to_string());
+                }
                 json!({ "id": command_id, "type": "prompt", "message": message })
             }
             "steer" => json!({ "id": command_id, "type": "steer", "message": message }),
@@ -1172,8 +1180,22 @@ impl SessionRuntime {
             .and_then(|value| value.clone())
     }
 
+    pub fn current_prompt_message(&self) -> Option<String> {
+        self.current_prompt_message
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
+    }
+
     fn take_current_run_id(&self) -> Option<String> {
         self.current_run_id
+            .lock()
+            .ok()
+            .and_then(|mut value| value.take())
+    }
+
+    fn take_current_prompt_message(&self) -> Option<String> {
+        self.current_prompt_message
             .lock()
             .ok()
             .and_then(|mut value| value.take())
