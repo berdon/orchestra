@@ -628,9 +628,10 @@ fn session_messageability(
     }
 }
 
-pub(crate) fn decorate_session_record_with_connection(
+fn decorate_session_record_with_runtime_state(
     connection: &rusqlite::Connection,
     terminal_attached_session_ids: &std::collections::HashSet<String>,
+    active_runtime_session_ids: &std::collections::HashSet<String>,
     mut record: SessionRecord,
     include_debug_info: bool,
     surface: SessionDecorationSurface,
@@ -641,8 +642,17 @@ pub(crate) fn decorate_session_record_with_connection(
     record.terminal_attached = terminal_attached_session_ids.contains(record.id.as_str());
 
     let decoration = session_list::load_session_list_decoration(connection, &record.id)?;
-    let visibility = decoration.visibility.clone();
     let persistent_agent_session = decoration.persistent_agent_session;
+    let mut visibility = decoration.visibility.clone();
+    if active_runtime_session_ids.contains(record.id.as_str())
+        && decoration.task_id.is_some()
+        && matches!(
+            visibility,
+            Some(session_list::SessionListVisibility::Closed)
+        )
+    {
+        visibility = Some(session_list::SessionListVisibility::Active);
+    }
     record.task_id = decoration.task_id;
     record.task_project_id = decoration.task_project_id;
     record.task_number = decoration.task_number;
@@ -684,6 +694,24 @@ pub(crate) fn decorate_session_record_with_connection(
     Ok(record)
 }
 
+pub(crate) fn decorate_session_record_with_connection(
+    connection: &rusqlite::Connection,
+    terminal_attached_session_ids: &std::collections::HashSet<String>,
+    record: SessionRecord,
+    include_debug_info: bool,
+    surface: SessionDecorationSurface,
+) -> Result<SessionRecord, String> {
+    let active_runtime_session_ids = std::collections::HashSet::new();
+    decorate_session_record_with_runtime_state(
+        connection,
+        terminal_attached_session_ids,
+        &active_runtime_session_ids,
+        record,
+        include_debug_info,
+        surface,
+    )
+}
+
 fn decorate_session_record(
     terminal_attached_session_ids: &std::collections::HashSet<String>,
     record: SessionRecord,
@@ -700,11 +728,12 @@ fn decorate_session_record(
     )
 }
 
-fn load_decorated_session_record(
+fn load_decorated_session_record_with_runtime_state(
     session_dir: &std::path::Path,
     session_id: &str,
     subscribed: bool,
     terminal_attached_session_ids: &std::collections::HashSet<String>,
+    active_runtime_session_ids: &std::collections::HashSet<String>,
     surface: SessionDecorationSurface,
 ) -> Result<SessionRecord, String> {
     let connection = database::open_connection()?;
@@ -716,11 +745,30 @@ fn load_decorated_session_record(
     record.events = detail_record.events;
     record.status = detail_record.status;
 
-    decorate_session_record_with_connection(
+    decorate_session_record_with_runtime_state(
         &connection,
         terminal_attached_session_ids,
+        active_runtime_session_ids,
         record,
         true,
+        surface,
+    )
+}
+
+fn load_decorated_session_record(
+    session_dir: &std::path::Path,
+    session_id: &str,
+    subscribed: bool,
+    terminal_attached_session_ids: &std::collections::HashSet<String>,
+    surface: SessionDecorationSurface,
+) -> Result<SessionRecord, String> {
+    let active_runtime_session_ids = std::collections::HashSet::new();
+    load_decorated_session_record_with_runtime_state(
+        session_dir,
+        session_id,
+        subscribed,
+        terminal_attached_session_ids,
+        &active_runtime_session_ids,
         surface,
     )
 }
@@ -743,11 +791,13 @@ pub(crate) fn load_detail_session_record_for_state(
     subscribed: bool,
 ) -> Result<SessionRecord, String> {
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
-    let record = load_decorated_session_record(
+    let active_runtime_session_ids = state.active_runtime_session_ids()?;
+    let record = load_decorated_session_record_with_runtime_state(
         session_dir,
         session_id,
         subscribed,
         &terminal_attached_session_ids,
+        &active_runtime_session_ids,
         SessionDecorationSurface::Detail,
     )?;
     attach_session_control_metadata(state, record)
@@ -825,11 +875,12 @@ fn restore_session_entry(
     session_list::restore_user_dismissed_session(connection, session_id)
 }
 
-fn collect_listed_session_records_from_rows(
+fn collect_listed_session_records_from_rows_with_runtime_state(
     connection: &rusqlite::Connection,
     rows: Vec<session_records::CanonicalSessionRow>,
     subscribed: &HashSet<String>,
     terminal_attached_session_ids: &HashSet<String>,
+    active_runtime_session_ids: &HashSet<String>,
 ) -> Result<Vec<SessionRecord>, String> {
     let mut seen_session_ids = HashSet::new();
     let mut sessions = Vec::new();
@@ -839,9 +890,10 @@ fn collect_listed_session_records_from_rows(
             continue;
         }
         let base_record = row.to_record(subscribed.contains(&row.id));
-        let decorated = decorate_session_record_with_connection(
+        let decorated = decorate_session_record_with_runtime_state(
             connection,
             terminal_attached_session_ids,
+            active_runtime_session_ids,
             base_record,
             false,
             SessionDecorationSurface::List,
@@ -868,6 +920,23 @@ pub(crate) fn list_command_sessions_with_connection(
     subscribed: &HashSet<String>,
     terminal_attached_session_ids: &HashSet<String>,
 ) -> Result<Vec<SessionRecord>, String> {
+    let active_runtime_session_ids = HashSet::new();
+    list_command_sessions_with_runtime_state(
+        connection,
+        contexts,
+        subscribed,
+        terminal_attached_session_ids,
+        &active_runtime_session_ids,
+    )
+}
+
+fn list_command_sessions_with_runtime_state(
+    connection: &rusqlite::Connection,
+    contexts: &[crate::services::pi_sessions::SessionContext],
+    subscribed: &HashSet<String>,
+    terminal_attached_session_ids: &HashSet<String>,
+    active_runtime_session_ids: &HashSet<String>,
+) -> Result<Vec<SessionRecord>, String> {
     let mut all_rows = Vec::new();
     for context in contexts {
         let project_id = project_id_for_slug(connection, &context.project_slug);
@@ -877,11 +946,12 @@ pub(crate) fn list_command_sessions_with_connection(
             Some(&context.session_dir),
         )?);
     }
-    collect_listed_session_records_from_rows(
+    collect_listed_session_records_from_rows_with_runtime_state(
         connection,
         all_rows,
         subscribed,
         terminal_attached_session_ids,
+        active_runtime_session_ids,
     )
 }
 
@@ -890,11 +960,27 @@ fn list_all_command_sessions_with_connection(
     subscribed: &HashSet<String>,
     terminal_attached_session_ids: &HashSet<String>,
 ) -> Result<Vec<SessionRecord>, String> {
-    collect_listed_session_records_from_rows(
+    let active_runtime_session_ids = HashSet::new();
+    list_all_command_sessions_with_runtime_state(
+        connection,
+        subscribed,
+        terminal_attached_session_ids,
+        &active_runtime_session_ids,
+    )
+}
+
+fn list_all_command_sessions_with_runtime_state(
+    connection: &rusqlite::Connection,
+    subscribed: &HashSet<String>,
+    terminal_attached_session_ids: &HashSet<String>,
+    active_runtime_session_ids: &HashSet<String>,
+) -> Result<Vec<SessionRecord>, String> {
+    collect_listed_session_records_from_rows_with_runtime_state(
         connection,
         session_records::list_session_rows(connection, None, None)?,
         subscribed,
         terminal_attached_session_ids,
+        active_runtime_session_ids,
     )
 }
 
@@ -906,23 +992,26 @@ pub async fn list_sessions(
     let started_at = Instant::now();
     let subscribed = state.subscribed_session_ids()?;
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
+    let active_runtime_session_ids = state.active_runtime_session_ids()?;
     let project_id_for_log = project_id.clone();
     let sessions = spawn_blocking(move || {
         let connection = database::open_connection()?;
         match project_id.as_deref() {
             Some(project_id) => {
                 let contexts = vec![session_context_for_project_id(project_id)?];
-                list_command_sessions_with_connection(
+                list_command_sessions_with_runtime_state(
                     &connection,
                     &contexts,
                     &subscribed,
                     &terminal_attached_session_ids,
+                    &active_runtime_session_ids,
                 )
             }
-            None => list_all_command_sessions_with_connection(
+            None => list_all_command_sessions_with_runtime_state(
                 &connection,
                 &subscribed,
                 &terminal_attached_session_ids,
+                &active_runtime_session_ids,
             ),
         }
     })
@@ -952,14 +1041,16 @@ pub async fn get_session_record(
 ) -> Result<SessionRecord, String> {
     let subscribed = state.subscribed_session_ids()?.contains(&session_id);
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
+    let active_runtime_session_ids = state.active_runtime_session_ids()?;
     let session_id_for_task = session_id.clone();
     let record = spawn_blocking(move || {
         let context = find_session_context_for_session(&session_id_for_task)?;
-        load_decorated_session_record(
+        load_decorated_session_record_with_runtime_state(
             &context.session_dir,
             &session_id_for_task,
             subscribed,
             &terminal_attached_session_ids,
+            &active_runtime_session_ids,
             SessionDecorationSurface::Detail,
         )
     })
@@ -2226,13 +2317,15 @@ pub async fn resume_session(
     )?;
 
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
+    let active_runtime_session_ids = state.active_runtime_session_ids()?;
     let session_id_for_task = session_id.clone();
     let record = spawn_blocking(move || {
-        load_decorated_session_record(
+        load_decorated_session_record_with_runtime_state(
             &session_dir,
             &session_id_for_task,
             true,
             &terminal_attached_session_ids,
+            &active_runtime_session_ids,
             SessionDecorationSurface::Detail,
         )
     })
@@ -2288,13 +2381,15 @@ pub async fn subscribe_session(
         runtime.set_subscribed(true);
 
         let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
+        let active_runtime_session_ids = state.active_runtime_session_ids()?;
         let session_id_for_task = session_id.clone();
         let record = spawn_blocking(move || {
-            load_decorated_session_record(
+            load_decorated_session_record_with_runtime_state(
                 &session_dir,
                 &session_id_for_task,
                 true,
                 &terminal_attached_session_ids,
+                &active_runtime_session_ids,
                 SessionDecorationSurface::Detail,
             )
         })
@@ -3257,11 +3352,7 @@ mod tests {
         assert_eq!(rebound.5.as_deref(), Some("agent-1"));
     }
 
-    #[test]
-    fn decorates_completed_task_sessions_as_closed() {
-        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
-        database::apply_migrations(&connection).expect("migrations should succeed");
-
+    fn insert_completed_task_session_fixture(connection: &rusqlite::Connection, session_id: &str) {
         connection
             .execute(
                 r#"
@@ -3298,7 +3389,7 @@ mod tests {
                     "lane-run-1",
                     "task-1",
                     "lane-1",
-                    "session-1",
+                    session_id,
                     "success",
                     "2026-03-21T00:00:00Z",
                     "2026-03-21T00:01:00Z",
@@ -3308,9 +3399,16 @@ mod tests {
         connection
             .execute(
                 "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, first_seen_at, last_seen_at, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, NULL, ?2, ?2, 'Completed task session', 'task_assignment', 'closed', 'closed', ?3, ?3, 0, 'closed', ?3, ?3)",
-                rusqlite::params!["session-1", "/tmp/session-1.jsonl", "2026-03-21T00:00:00Z"],
+                rusqlite::params![session_id, format!("/tmp/{session_id}.jsonl"), "2026-03-21T00:00:00Z"],
             )
             .expect("canonical session row should insert");
+    }
+
+    #[test]
+    fn decorates_completed_task_sessions_as_closed() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+        insert_completed_task_session_fixture(&connection, "session-1");
 
         let decorated = decorate_session_record_with_connection(
             &connection,
@@ -3322,6 +3420,35 @@ mod tests {
         .expect("session decoration should succeed");
 
         assert_eq!(decorated.status, "closed");
+    }
+
+    #[test]
+    fn reactivated_completed_task_sessions_become_messageable_when_runtime_is_active() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+        insert_completed_task_session_fixture(&connection, "session-reopened");
+
+        let mut active_runtime_session_ids = std::collections::HashSet::new();
+        active_runtime_session_ids.insert("session-reopened".to_string());
+        let decorated = decorate_session_record_with_runtime_state(
+            &connection,
+            &std::collections::HashSet::new(),
+            &active_runtime_session_ids,
+            make_session_record("session-reopened"),
+            false,
+            SessionDecorationSurface::Detail,
+        )
+        .expect("session decoration should succeed");
+
+        assert_eq!(decorated.status, "active");
+        assert_eq!(
+            decorated.list_visibility,
+            Some(SessionListVisibilityState::Active)
+        );
+        assert_eq!(
+            decorated.messageability,
+            Some(SessionMessageability::Messageable)
+        );
     }
 
     #[test]

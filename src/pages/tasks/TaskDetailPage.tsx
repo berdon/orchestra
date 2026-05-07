@@ -20,6 +20,7 @@ import { TaskEditorForm } from "./TaskEditorForm";
 import { TaskPullRequestTab } from "./TaskPullRequestTab";
 import { getTaskTags } from "../../lib/taskListQuery";
 import { formatTaskAttachmentSize, getTaskAttachmentFallbackCopy, getTaskAttachmentKind } from "../../lib/taskAttachments";
+import { getTaskOpenSessionTarget } from "../../lib/taskOpenSession";
 import { getEffectiveTaskDetailAssignmentStatus } from "./taskDetailActionState";
 import { buildTaskDetailHeaderActions } from "./taskDetailHeaderActions";
 import { resolveTaskAssigneeLabel } from "./taskBoardModel";
@@ -109,6 +110,7 @@ interface TaskDetailPageProps {
   onOpenTask: (taskId: string) => void;
   onOpenTag: (tag: string) => void;
   onOpenSession: (sessionId: string, projectId?: string | null) => void;
+  onOpenTaskSession: (sessionId: string, projectId?: string | null) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
   onDispatch: () => void;
@@ -659,6 +661,7 @@ export function TaskDetailPage({
   onOpenTask,
   onOpenTag,
   onOpenSession,
+  onOpenTaskSession,
   onOpenAgent,
   onOpenRole,
   onDispatch,
@@ -761,7 +764,7 @@ export function TaskDetailPage({
   const canRelane = Boolean(task.currentLaneId) && availableRelaneTargets.length > 0 && !["draft", "completed", "canceled"].includes(task.status);
   const canClose = !["completed", "canceled"].includes(task.status);
   const activeNavItem: TaskDetailNavItem = activeNavAnchor ?? activeTab;
-  const activeSessionId = task.activeLaneAssignment?.sessionId ?? null;
+  const taskOpenSessionTarget = getTaskOpenSessionTarget(task);
   const effectiveActiveLaneAssignmentStatus = getEffectiveTaskDetailAssignmentStatus(task);
   const currentLaneTodos = task.currentLaneId ? task.todos.filter((todo) => todo.laneId === task.currentLaneId) : [];
   const unfinishedCurrentLaneTodos = currentLaneTodos.filter((todo) => !todo.completed);
@@ -2146,29 +2149,38 @@ export function TaskDetailPage({
     return [...actionEntries, ...(actionEntries.length ? [dividerBefore] : []), relaneEntry];
   }
 
-  const compactHeaderMobileActionMenuEntries = buildMobileHeaderActionMenuEntries(compactHeaderActionMenuActions);
+  const openSessionMobileActionMenuEntries = taskOpenSessionTarget
+    ? [
+        {
+          kind: "action",
+          id: "open-session",
+          label: "Open session",
+          onClick: () => onOpenTaskSession(taskOpenSessionTarget.sessionId, taskOpenSessionTarget.projectId),
+          variant: "secondary" as const,
+          dataRole: "task-open-session",
+        } satisfies TaskDetailMobileActionMenuEntry,
+      ]
+    : [];
+  const compactHeaderMobileActionMenuEntries = [
+    ...buildMobileHeaderActionMenuEntries(compactHeaderActionMenuActions),
+    ...(compactHeaderActionMenuActions.length && openSessionMobileActionMenuEntries.length
+      ? [{ kind: "divider", id: "compact-mobile-open-session-divider" } satisfies TaskDetailMobileActionMenuEntry]
+      : []),
+    ...openSessionMobileActionMenuEntries,
+  ];
   const primaryHeaderMobileActionMenuEntries = [
     ...buildMobileHeaderActionMenuEntries(headerActionMenuActions),
-    ...(activeSessionId
-      ? [
-          ...(headerActionMenuActions.length ? [{ kind: "divider", id: "mobile-open-session-divider" } satisfies TaskDetailMobileActionMenuEntry] : []),
-          {
-            kind: "action",
-            id: "open-session",
-            label: "Open session",
-            onClick: () => onOpenSession(activeSessionId, task.projectId),
-            variant: "secondary" as const,
-            dataRole: "task-open-session",
-          } satisfies TaskDetailMobileActionMenuEntry,
-        ]
+    ...(headerActionMenuActions.length && openSessionMobileActionMenuEntries.length
+      ? [{ kind: "divider", id: "mobile-open-session-divider" } satisfies TaskDetailMobileActionMenuEntry]
       : []),
+    ...openSessionMobileActionMenuEntries,
   ];
 
   function renderHeaderActions(compact = false) {
     const desktopActionMenuActions = compact ? compactHeaderActionMenuActions : headerActionMenuActions;
     const mobileActionMenuEntries = compact ? compactHeaderMobileActionMenuEntries : primaryHeaderMobileActionMenuEntries;
     const showDesktopActionRow = canRelane || desktopActionMenuActions.length > 0;
-    const showDesktopHeaderActions = Boolean((!compact && activeSessionId) || showDesktopActionRow);
+    const showDesktopHeaderActions = Boolean((!compact && taskOpenSessionTarget) || showDesktopActionRow);
 
     if (!showDesktopHeaderActions && mobileActionMenuEntries.length === 0) {
       return null;
@@ -2178,12 +2190,12 @@ export function TaskDetailPage({
       <div className="task-detail-header-actions">
         {showDesktopHeaderActions ? (
           <div className="task-detail-header-actions__desktop">
-            {!compact && activeSessionId ? (
+            {!compact && taskOpenSessionTarget ? (
               <button
                 className="secondary-button"
                 data-role="task-open-session"
                 type="button"
-                onClick={() => onOpenSession(activeSessionId, task.projectId)}
+                onClick={() => onOpenTaskSession(taskOpenSessionTarget.sessionId, taskOpenSessionTarget.projectId)}
               >
                 Open session
               </button>

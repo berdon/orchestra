@@ -629,6 +629,13 @@ impl AppState {
             .map(|windows| windows.keys().cloned().collect())
     }
 
+    pub fn active_runtime_session_ids(&self) -> Result<HashSet<String>, String> {
+        self.session_runtimes
+            .lock()
+            .map_err(|_| "Unable to access session runtime state".to_string())
+            .map(|runtimes| runtimes.keys().cloned().collect())
+    }
+
     pub fn insert_terminal_session(
         &self,
         session_id: &str,

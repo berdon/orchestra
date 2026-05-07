@@ -2207,6 +2207,47 @@ export function App() {
     [mergeSessionRecord],
   );
 
+  const openTaskSession = useCallback(
+    async (sessionId: string, projectId?: string | null) => {
+      setSessionActionError(null);
+      try {
+        const targetProjectId = projectId ?? activeProjectIdRef.current;
+        const knownSession =
+          targetProjectId === activeProjectIdRef.current
+            ? (sessionsRef.current.find((session) => session.id === sessionId) ?? null)
+            : null;
+        const initialRecord = knownSession ?? (await orchestraClient.sessions.get(sessionId));
+        const sessionToOpen =
+          getSessionMessageability(initialRecord) === "closed"
+            ? await orchestraClient.sessions.resume(sessionId)
+            : initialRecord;
+
+        mergeSessionRecord(sessionToOpen, { select: false });
+        if (targetProjectId && targetProjectId !== activeProjectIdRef.current) {
+          setActiveProjectIdState(targetProjectId);
+        }
+        setActivePage("sessions");
+        setSessionFilter("active");
+        setSelectedSessionId(sessionId);
+        setPendingSessionOpenRequest((current) => ({
+          sessionId,
+          token: (current?.token ?? 0) + 1,
+          projectId: targetProjectId,
+        }));
+      } catch (error) {
+        setSessionActionError(
+          await reportUiError(
+            orchestraClient,
+            "ui.sessions.open_task_session",
+            error,
+            "Unable to open task session.",
+          ),
+        );
+      }
+    },
+    [mergeSessionRecord, orchestraClient],
+  );
+
   useEffect(() => {
     if (
       !pendingSelectedSessionId ||
@@ -3469,9 +3510,10 @@ export function App() {
     replaceSessions([]);
     replacePendingRuns({});
     pendingSessionRecordRequestKeyRef.current = null;
+    const pendingProjectSession = pendingSessionOpenRequestRef.current;
     setSelectedSessionId(
-      pendingSessionOpenRequest?.projectId === activeProjectId
-        ? pendingSessionOpenRequest.sessionId
+      pendingProjectSession?.projectId === activeProjectId
+        ? pendingProjectSession.sessionId
         : null,
     );
     setChatSessionId(null);
@@ -3483,7 +3525,6 @@ export function App() {
   }, [
     activeProject?.slug,
     activeProjectId,
-    pendingSessionOpenRequest,
     replacePendingRuns,
     replaceSessions,
   ]);
@@ -6512,6 +6553,9 @@ export function App() {
                   onOpenAgent={navigateToChatAgent}
                   onOpenRole={navigateToRole}
                   onOpenSession={navigateToSession}
+                  onOpenTaskSession={(sessionId, projectId) => {
+                    void openTaskSession(sessionId, projectId);
+                  }}
                   onMobileHeaderContextChange={
                     handleTasksMobileHeaderContextChange
                   }

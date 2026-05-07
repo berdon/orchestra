@@ -8,6 +8,7 @@ import { reportUiError, toUiErrorState, type UiErrorState } from "../lib/orchest
 import { useTaskAutoRefresh } from "../lib/orchestraData/tasks";
 import { formatTaskCommentAnchorLabel } from "../lib/taskComments";
 import { applyTaskListQuery } from "../lib/taskListQuery";
+import { getTaskOpenSessionTarget } from "../lib/taskOpenSession";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type {
   AgentSummary,
@@ -172,6 +173,7 @@ interface TasksPageProps {
   onOpenAgent?: (agentId: string) => void;
   onOpenRole?: (roleId: string) => void;
   onOpenSession?: (sessionId: string, projectId?: string | null) => void;
+  onOpenTaskSession?: (sessionId: string, projectId?: string | null) => void;
   referenceSessions?: SessionRecord[];
   onMobileHeaderContextChange?: (context: TasksMobileHeaderContext | null) => void;
   showCreateFab?: boolean;
@@ -198,6 +200,7 @@ export function TasksPage({
   onOpenAgent,
   onOpenRole,
   onOpenSession,
+  onOpenTaskSession,
   referenceSessions = [],
   onMobileHeaderContextChange,
   showCreateFab = true,
@@ -264,6 +267,7 @@ export function TasksPage({
 
   const openTaskTagHandler = onOpenTaskTag ?? noopOpenTaskTag;
   const openSessionHandler = onOpenSession ?? noopOpenSession;
+  const openTaskSessionHandler = onOpenTaskSession ?? onOpenSession ?? noopOpenSession;
   const openAgentHandler = onOpenAgent ?? noopOpenAgent;
   const openRoleHandler = onOpenRole ?? noopOpenRole;
 
@@ -1421,6 +1425,21 @@ export function TasksPage({
         onWhipTask: () => void handleWhipTask(),
       })
     : [];
+  const taskDetailOpenSessionTarget = taskDetail
+    ? getTaskOpenSessionTarget(taskDetail)
+    : null;
+  const taskDetailMobileHeaderActions = taskDetailOpenSessionTarget
+    ? [
+        ...detailHeaderActions,
+        {
+          id: "open-session",
+          label: "Open session",
+          onClick: () => (onOpenTaskSession ?? onOpenSession ?? (() => {}))(taskDetailOpenSessionTarget.sessionId, taskDetailOpenSessionTarget.projectId),
+          variant: "secondary" as const,
+          dataRole: "task-open-session",
+        },
+      ]
+    : detailHeaderActions;
 
   const mobileHeaderContextBase = (() => {
     switch (route.kind) {
@@ -1479,7 +1498,7 @@ export function TasksPage({
             onBack: () => setRoute({ kind: "overview" as const }),
           };
         }
-        if (taskDetailEditing || detailHeaderActions.length === 0) {
+        if (taskDetailEditing || taskDetailMobileHeaderActions.length === 0) {
           return {
             title: taskDetailEditing ? "Edit task" : (taskDraft.title.trim() || taskDetail.title),
             backLabel: "Back to tasks",
@@ -1491,9 +1510,9 @@ export function TasksPage({
           backLabel: "Back to tasks",
           onBack: () => setRoute({ kind: "overview" as const }),
           actionMenuLabel: "Task actions",
-          actions: stripMobileHeaderActionData(detailHeaderActions),
+          actions: stripMobileHeaderActionData(taskDetailMobileHeaderActions),
           onAction: (actionId: string) => {
-            detailHeaderActions.find((action) => action.id === actionId)?.onClick();
+            taskDetailMobileHeaderActions.find((action) => action.id === actionId)?.onClick();
           },
         };
       }
@@ -1653,6 +1672,7 @@ export function TasksPage({
             onOpenTask={openTaskDetail}
             onOpenTag={openTaskTagHandler}
             onOpenSession={openSessionHandler}
+            onOpenTaskSession={openTaskSessionHandler}
             onOpenAgent={openAgentHandler}
             onOpenRole={openRoleHandler}
             entityLookup={entityLookup}

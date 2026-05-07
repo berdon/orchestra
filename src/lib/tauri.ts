@@ -4007,8 +4007,10 @@ export async function resumeSession(sessionId: string): Promise<SessionRecord> {
     saveDismissedMockSessionIds(dismissed);
     const session = updateMockSession(sessionId, (current) => ({
       ...current,
-      status: current.status === "closed" ? "closed" : "active",
+      status: "active",
       subscribed: true,
+      listVisibility: "active",
+      messageability: "messageable",
       updatedAt: nowIso(),
       events: [
         ...current.events,
