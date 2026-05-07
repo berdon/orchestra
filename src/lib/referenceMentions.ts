@@ -1,5 +1,5 @@
 import { fuzzyScore, fuzzySearch, type FuzzySearchCandidate } from "./fuzzy";
-import type { AgentSummary, RoleSummary, TaskFileReference, TaskSummary } from "../types";
+import type { AgentSummary, RoleSummary, TaskCommentFileMentionCandidate, TaskFileReference, TaskSummary } from "../types";
 
 export interface ComposerAutocompleteCandidate {
   id: string;
@@ -247,6 +247,15 @@ export function buildProjectMentionLookup({ tasks, agents, roles }: ProjectRefer
   }
 
   return lookup;
+}
+
+export function mapTaskFileMentionAutocompleteCandidates(candidates: TaskCommentFileMentionCandidate[]): ComposerAutocompleteCandidate[] {
+  return candidates.map((candidate) => ({
+    id: `${candidate.repositoryId}:${candidate.relativePath}`,
+    insertText: candidate.insertText,
+    label: candidate.relativePath,
+    detail: candidate.repositoryName,
+  }));
 }
 
 export function buildTaskFileMentionLookup(fileReferences: TaskFileReference[]) {

@@ -72,9 +72,6 @@ pub fn search_task_comment_file_mentions(
 
     let (repository_slug_filter, needle) = parse_query(query);
     let normalized_needle = normalize_relative_query(&needle);
-    if normalized_needle.is_empty() {
-        return Ok(Vec::new());
-    }
 
     let result_limit = limit.unwrap_or(MAX_RESULTS).min(MAX_RESULTS.max(1));
     let mut candidates = Vec::new();
@@ -605,6 +602,44 @@ mod tests {
         assert!(!results
             .iter()
             .any(|entry| entry.relative_path == "ignored.txt"));
+    }
+
+    #[test]
+    fn empty_queries_return_initial_suggestions() {
+        let repo_root = temp_repo_dir("comment-mention-empty-query");
+        fs::create_dir_all(repo_root.join("docs")).expect("create docs");
+        fs::create_dir_all(repo_root.join("src")).expect("create src");
+        fs::write(repo_root.join("docs/design.md"), "design\n").expect("write docs file");
+        fs::write(repo_root.join("src/main.ts"), "console.log('hello');\n")
+            .expect("write src file");
+        git_init(&repo_root);
+
+        let mut connection = in_memory_connection();
+        let task_id = seed_project_repo_task(&mut connection, &repo_root);
+
+        let empty_results = search_task_comment_file_mentions(&connection, &task_id, "", Some(10))
+            .expect("empty-query mentions should succeed");
+        assert!(!empty_results.is_empty());
+        assert!(empty_results
+            .iter()
+            .any(|entry| entry.relative_path == "docs/design.md"));
+        assert!(empty_results
+            .iter()
+            .any(|entry| entry.relative_path == "src/main.ts"));
+
+        let bare_trigger_results =
+            search_task_comment_file_mentions(&connection, &task_id, "$", Some(10))
+                .expect("bare-trigger mentions should succeed");
+        assert_eq!(
+            empty_results
+                .iter()
+                .map(|entry| entry.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            bare_trigger_results
+                .iter()
+                .map(|entry| entry.relative_path.as_str())
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

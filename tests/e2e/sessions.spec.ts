@@ -248,6 +248,148 @@ test("sessions UI creates a session and streams a mock reply", async ({ page }) 
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Acknowledged: Hello from Playwright", { timeout: 20_000 });
 });
 
+test("task-bound sessions autocomplete $file mentions from the active task", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-file-autocomplete",
+          projectId: "orchestra",
+          number: "ORC-401",
+          title: "Session file autocomplete task",
+          description: null,
+          type: "task",
+          status: "in_progress",
+          priority: "P2",
+          workflowId: null,
+          currentLaneId: null,
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: "repo-1",
+          repositoryIds: ["repo-1"],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          unreadCommentCount: 0,
+          laneRunCount: 1,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [
+            {
+              id: "task-file-ref-design",
+              taskId: "task-file-autocomplete",
+              repositoryId: "repo-1",
+              repositoryName: "Docs",
+              repositorySlug: "docs",
+              relativePath: "docs/design.md",
+              isDefault: false,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            },
+            {
+              id: "task-file-ref-plan",
+              taskId: "task-file-autocomplete",
+              repositoryId: "repo-1",
+              repositoryName: "Docs",
+              repositorySlug: "docs",
+              relativePath: "docs/plan.md",
+              isDefault: false,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            },
+          ],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          activeLaneAssignment: {
+            id: "assignment-file-autocomplete",
+            taskId: "task-file-autocomplete",
+            workflowId: "workflow-dev",
+            laneId: "lane-implementation",
+            workerType: "role",
+            workerId: "developer",
+            status: "active",
+            sessionId: "session-file-autocomplete",
+            runtimeCwd: "/tmp/orchestra/task-file-autocomplete",
+            roleQueueEntryId: null,
+            roleInstanceId: null,
+            prompt: "Review task-linked file references.",
+            pendingOutcome: null,
+            completionNotes: null,
+            whipCount: 0,
+            lastWhipAt: null,
+            startedAt: timestamp,
+            completedAt: null,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ]),
+    );
+
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-file-autocomplete",
+          title: "Task-linked session",
+          status: "active",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          subscribed: false,
+          events: [{ id: "event-ready", kind: "assistant", message: "Ready to review files.", timestamp }],
+          taskId: "task-file-autocomplete",
+          taskNumber: "ORC-401",
+          taskTitle: "Session file autocomplete task",
+          activeTaskId: "task-file-autocomplete",
+          activeTaskNumber: "ORC-401",
+          activeTaskTitle: "Session file autocomplete task",
+          workerType: "role",
+          workerName: "Developer",
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sessions" }).click();
+  await expect(page.locator('[data-role="session-link"][data-session-id="session-file-autocomplete"]')).toContainText("ORC-401");
+  await expect(page.locator('[data-role="session-link"][data-session-id="session-file-autocomplete"]')).toContainText("Session file autocomplete task");
+  await page.locator('[data-role="session-link"][data-session-id="session-file-autocomplete"]').click();
+
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Task-linked session");
+  await expect(page.locator('[data-role="session-open-task"]')).toBeVisible();
+
+  await page.locator('[data-role="composer-input"]').fill("$");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("docs/design.md");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("docs/plan.md");
+
+  await page.locator('[data-role="composer-input"]').fill("Check $pla");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("docs/plan.md");
+  await page.locator('[data-role="composer-mention-option"]').filter({ hasText: "docs/plan.md" }).click();
+  await expect(page.locator('[data-role="composer-input"]')).toHaveValue("Check $docs/plan.md ");
+});
+
 test("sessions page hides shared header controls on mobile while keeping session creation available", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

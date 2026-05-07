@@ -7339,9 +7339,6 @@ export async function searchTaskCommentFileMentions(
     }
 
     const normalizedQuery = query.trim().replace(/^[@$]/, "").toLowerCase();
-    if (!normalizedQuery) {
-      return [];
-    }
 
     const repositoryCount = new Set(
       task.fileReferences.map((reference) => reference.repositoryId),

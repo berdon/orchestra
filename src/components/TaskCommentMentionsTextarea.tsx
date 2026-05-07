@@ -1,7 +1,7 @@
 import type { MutableRefObject } from "react";
 
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
-import { searchProjectReferenceAutocompleteCandidates } from "../lib/referenceMentions";
+import { mapTaskFileMentionAutocompleteCandidates, searchProjectReferenceAutocompleteCandidates } from "../lib/referenceMentions";
 import { useTaskCommentFileMentions } from "../lib/orchestraData/tasks";
 import type { AgentSummary, RoleSummary, TaskSummary } from "../types";
 
@@ -52,15 +52,8 @@ export function TaskCommentMentionsTextarea({
         },
         {
           trigger: "$",
-          search: async (query) => {
-            const results = await searchFileMentions(query, 12);
-            return results.map((candidate) => ({
-              id: `${candidate.repositoryId}:${candidate.relativePath}`,
-              insertText: candidate.insertText,
-              label: candidate.relativePath,
-              detail: candidate.repositoryName,
-            }));
-          },
+          allowEmptyQuery: true,
+          search: async (query) => mapTaskFileMentionAutocompleteCandidates(await searchFileMentions(query, 12)),
         },
       ]}
       value={value}

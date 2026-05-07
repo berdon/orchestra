@@ -62,7 +62,7 @@ export function useTaskAutoRefresh({
   }, [disabled, refresh]);
 }
 
-export function useTaskCommentFileMentions(taskId: string) {
+export function useTaskCommentFileMentions(taskId?: string | null) {
   const orchestraClient = useOrchestraClient();
 
   return useCallback(async (query: string, limit = 12) => {

@@ -2,7 +2,8 @@ import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type RefObj
 
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { TranscriptEventCard } from "./TranscriptEventCard";
-import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
+import { buildProjectMentionLookup, mapTaskFileMentionAutocompleteCandidates, searchProjectReferenceAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
+import { useTaskCommentFileMentions } from "../lib/orchestraData/tasks";
 import { recordInputPerfRender } from "../lib/testInputPerformance";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
@@ -385,6 +386,32 @@ function SessionComposer({
     setShowSessionActions(false);
   }, [session.id, sessionPending, sessionReadOnly, sessionMessageable]);
 
+  const activeTaskId = session.activeTaskId ?? null;
+  const searchFileMentions = useTaskCommentFileMentions(activeTaskId);
+  const composerSources = useMemo(() => {
+    const projectReferenceSource = {
+      trigger: "@",
+      search: async (query: string) => searchProjectReferenceAutocompleteCandidates(query, {
+        tasks: referenceTasks,
+        agents: referenceAgents,
+        roles: referenceRoles,
+      }, 12),
+    };
+
+    if (!activeTaskId) {
+      return [projectReferenceSource];
+    }
+
+    return [
+      projectReferenceSource,
+      {
+        trigger: "$",
+        allowEmptyQuery: true,
+        search: async (query: string) => mapTaskFileMentionAutocompleteCandidates(await searchFileMentions(query, 12)),
+      },
+    ];
+  }, [activeTaskId, referenceAgents, referenceRoles, referenceTasks, searchFileMentions]);
+
   function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     onSendMessage();
@@ -429,16 +456,7 @@ function SessionComposer({
             optionDataRole="composer-mention-option"
             placeholder="Tell the session what to do next…"
             rows={4}
-            sources={[
-              {
-                trigger: "@",
-                search: async (query) => searchProjectReferenceAutocompleteCandidates(query, {
-                  tasks: referenceTasks,
-                  agents: referenceAgents,
-                  roles: referenceRoles,
-                }, 12),
-              },
-            ]}
+            sources={composerSources}
             value={draftMessage}
           />
         </div>

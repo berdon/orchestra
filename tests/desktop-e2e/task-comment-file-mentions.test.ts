@@ -84,6 +84,18 @@ describe("desktop task comment file mentions", () => {
       await waitForText(sessionId, 'Task conversation');
 
       await setInputValue(sessionId, '[data-role="task-comment-author"]', 'Reviewer');
+      await setInputValue(sessionId, '[data-role="task-comment-message"]', '$');
+      await executeScript(sessionId, `
+        const message = document.querySelector('[data-role="task-comment-message"]');
+        if (!(message instanceof HTMLTextAreaElement)) return false;
+        message.focus();
+        message.setSelectionRange(message.value.length, message.value.length);
+        message.dispatchEvent(new KeyboardEvent('keyup', { key: '$', bubbles: true }));
+        return true;
+      `);
+      await waitForText(sessionId, 'docs/design.md');
+      await waitForText(sessionId, 'docs/plan.md');
+
       await setInputValue(sessionId, '[data-role="task-comment-message"]', 'Please review $docs/des');
       await executeScript(sessionId, `
         const message = document.querySelector('[data-role="task-comment-message"]');
