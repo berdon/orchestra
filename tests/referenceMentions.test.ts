@@ -118,6 +118,59 @@ describe("referenceMentions", () => {
     expect(roleCandidates[0]?.insertText).toBe("@reviewer");
   });
 
+  it("matches exact slug queries while keeping inserted mentions canonical", () => {
+    const candidates = searchProjectReferenceAutocompleteCandidates("fix-task-slug-autocomplete", {
+      tasks: [
+        makeTask({ id: "task-253", number: "ORC-253", title: "Fix task slug autocomplete" }),
+        makeTask({ id: "task-254", number: "ORC-254", title: "Different task" }),
+      ],
+      agents: [],
+      roles: [],
+    });
+
+    expect(candidates[0]).toMatchObject({
+      id: "task:task-253",
+      insertText: "@ORC-253",
+      label: "ORC-253 Fix task slug autocomplete",
+      detail: "Task",
+    });
+  });
+
+  it("prefers exact and prefix task-number matches before broader suffix matches", () => {
+    const candidates = searchProjectReferenceAutocompleteCandidates("253", {
+      tasks: [
+        makeTask({ id: "task-253", number: "ORC-253", title: "Exact number task" }),
+        makeTask({ id: "task-2530", number: "ORC-2530", title: "Prefix number task" }),
+      ],
+      agents: [],
+      roles: [],
+    });
+
+    expect(candidates.map((candidate) => candidate.insertText)).toEqual(["@ORC-253", "@ORC-2530"]);
+  });
+
+  it("returns all precise slug-prefix task matches even when they exceed the fallback limit", () => {
+    const tasks = Array.from({ length: 13 }, (_, index) => makeTask({
+      id: `task-${index + 1}`,
+      number: `ORC-${index + 1}`,
+      title: `Fix task slug autocomplete case ${index + 1}`,
+    }));
+
+    const candidates = searchProjectReferenceAutocompleteCandidates("fix-task-slug-autocomplete", {
+      tasks,
+      agents: [],
+      roles: [],
+    }, 12);
+
+    expect(candidates).toHaveLength(13);
+    expect(candidates.every((candidate) => candidate.insertText.startsWith("@ORC-"))).toBe(true);
+    expect(candidates.map((candidate) => candidate.label)).toEqual(
+      tasks
+        .map((task) => `${task.number} ${task.title}`)
+        .sort((left, right) => left.localeCompare(right)),
+    );
+  });
+
   it("builds rich lookup labels for project mentions", () => {
     const lookup = buildProjectMentionLookup({
       tasks: [makeTask({ id: "task-2", number: "ORC-2", title: "Link task mentions" })],

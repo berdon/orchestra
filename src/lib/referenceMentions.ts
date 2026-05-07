@@ -1,4 +1,4 @@
-import { fuzzySearch, type FuzzySearchCandidate } from "./fuzzy";
+import { fuzzyScore, fuzzySearch, type FuzzySearchCandidate } from "./fuzzy";
 import type { AgentSummary, RoleSummary, TaskFileReference, TaskSummary } from "../types";
 
 export interface ComposerAutocompleteCandidate {
@@ -29,23 +29,53 @@ export interface FileMentionLink {
 
 interface SearchableAutocompleteCandidate extends ComposerAutocompleteCandidate, FuzzySearchCandidate {}
 
+interface TaskAutocompleteCandidate extends SearchableAutocompleteCandidate {
+  taskNumberKey: string;
+  taskNumberSuffixKey: string | null;
+  taskTitleKey: string;
+  taskSlugKey: string;
+}
+
 function normalizeToken(token: string) {
   return token.trim().toLowerCase();
+}
+
+function slugifyTaskTitle(title: string) {
+  return normalizeToken(title)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function getTaskNumberSuffix(taskNumber: string) {
+  const segments = normalizeToken(taskNumber).split("-").filter(Boolean);
+  return segments.length > 1 ? segments[segments.length - 1] : null;
 }
 
 function buildTaskMentionLabel(task: TaskSummary) {
   return `${task.number} ${task.title}`.trim();
 }
 
-function buildAutocompleteItems({ tasks, agents, roles }: ProjectReferenceContext): SearchableAutocompleteCandidate[] {
+function buildTaskAutocompleteItem(task: TaskSummary): TaskAutocompleteCandidate {
+  const taskNumberKey = normalizeToken(task.number);
+  const taskNumberSuffixKey = getTaskNumberSuffix(task.number);
+  const taskTitleKey = normalizeToken(task.title);
+  const taskSlugKey = slugifyTaskTitle(task.title);
+
+  return {
+    id: `task:${task.id}`,
+    label: buildTaskMentionLabel(task),
+    detail: "Task",
+    insertText: `@${task.number}`,
+    keywords: [task.number, taskNumberSuffixKey ?? "", task.title, taskSlugKey, task.status, task.priority, task.type],
+    taskNumberKey,
+    taskNumberSuffixKey,
+    taskTitleKey,
+    taskSlugKey,
+  };
+}
+
+function buildNonTaskAutocompleteItems({ agents, roles }: Omit<ProjectReferenceContext, "tasks">): SearchableAutocompleteCandidate[] {
   return [
-    ...tasks.map((task) => ({
-      id: `task:${task.id}`,
-      label: buildTaskMentionLabel(task),
-      detail: "Task",
-      insertText: `@${task.number}`,
-      keywords: [task.number, task.title, task.status, task.priority, task.type],
-    })),
     ...agents.map((agent) => ({
       id: `agent:${agent.id}`,
       label: agent.name,
@@ -63,18 +93,130 @@ function buildAutocompleteItems({ tasks, agents, roles }: ProjectReferenceContex
   ];
 }
 
+function mapAutocompleteCandidate(item: SearchableAutocompleteCandidate): ComposerAutocompleteCandidate {
+  return {
+    id: item.id,
+    insertText: item.insertText,
+    label: item.label,
+    detail: item.detail,
+  };
+}
+
+function getTitleMatchRank(query: string, title: string) {
+  if (title === query) {
+    return 0;
+  }
+
+  if (title.startsWith(query)) {
+    return 1;
+  }
+
+  if (title.includes(` ${query}`)) {
+    return 2;
+  }
+
+  if (title.includes(query)) {
+    return 3;
+  }
+
+  return 4;
+}
+
+function getPreciseTaskMatchRank(query: string, item: TaskAutocompleteCandidate) {
+  if (item.taskNumberKey === query) {
+    return 0;
+  }
+
+  if (item.taskNumberSuffixKey === query) {
+    return 1;
+  }
+
+  if (item.taskSlugKey === query) {
+    return 2;
+  }
+
+  if (item.taskNumberKey.startsWith(query)) {
+    return 3;
+  }
+
+  if (item.taskNumberSuffixKey?.startsWith(query)) {
+    return 4;
+  }
+
+  if (item.taskSlugKey.startsWith(query)) {
+    return 5;
+  }
+
+  return null;
+}
+
+function searchTaskAutocompleteCandidates(query: string, tasks: TaskSummary[], limit: number) {
+  const items = tasks.map(buildTaskAutocompleteItem);
+  if (!query) {
+    return items.slice(0, limit).map(mapAutocompleteCandidate);
+  }
+
+  const preciseMatches: Array<{ item: TaskAutocompleteCandidate; rank: number }> = [];
+  const fallbackMatches: Array<{ item: TaskAutocompleteCandidate; rank: number; fuzzy: number }> = [];
+
+  for (const item of items) {
+    const preciseRank = getPreciseTaskMatchRank(query, item);
+    if (preciseRank !== null) {
+      preciseMatches.push({ item, rank: preciseRank });
+      continue;
+    }
+
+    const fuzzy = fuzzyScore(query, item);
+    if (fuzzy < 0) {
+      continue;
+    }
+
+    fallbackMatches.push({
+      item,
+      rank: getTitleMatchRank(query, item.taskTitleKey),
+      fuzzy,
+    });
+  }
+
+  preciseMatches.sort((left, right) => {
+    if (left.rank !== right.rank) {
+      return left.rank - right.rank;
+    }
+    return left.item.label.localeCompare(right.item.label);
+  });
+
+  fallbackMatches.sort((left, right) => {
+    if (left.rank !== right.rank) {
+      return left.rank - right.rank;
+    }
+    if (right.fuzzy !== left.fuzzy) {
+      return right.fuzzy - left.fuzzy;
+    }
+    return left.item.label.localeCompare(right.item.label);
+  });
+
+  return [
+    ...preciseMatches.map(({ item }) => mapAutocompleteCandidate(item)),
+    ...fallbackMatches.slice(0, limit).map(({ item }) => mapAutocompleteCandidate(item)),
+  ];
+}
+
 export function searchProjectReferenceAutocompleteCandidates(
   query: string,
   context: ProjectReferenceContext,
   limit = 12,
 ): ComposerAutocompleteCandidate[] {
-  const items = buildAutocompleteItems(context);
-  return fuzzySearch(query, items, limit).map(({ item }) => ({
-    id: item.id,
-    insertText: item.insertText,
-    label: item.label,
-    detail: item.detail,
-  }));
+  const normalizedQuery = normalizeToken(query);
+  if (!normalizedQuery) {
+    return [
+      ...context.tasks.map(buildTaskAutocompleteItem),
+      ...buildNonTaskAutocompleteItems(context),
+    ].slice(0, limit).map(mapAutocompleteCandidate);
+  }
+
+  const taskMatches = searchTaskAutocompleteCandidates(normalizedQuery, context.tasks, limit);
+  const otherMatches = fuzzySearch(normalizedQuery, buildNonTaskAutocompleteItems(context), limit).map(({ item }) => mapAutocompleteCandidate(item));
+  return [...taskMatches, ...otherMatches];
 }
 
 export function buildProjectMentionLookup({ tasks, agents, roles }: ProjectReferenceContext) {
