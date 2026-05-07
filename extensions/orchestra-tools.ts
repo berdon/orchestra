@@ -1,3 +1,6 @@
+import { constants as fsConstants, promises as fs } from "node:fs";
+import { basename, extname, resolve } from "node:path";
+
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
@@ -313,11 +316,41 @@ type ReminderParams = {
   delayMinutes?: number;
 };
 
-type TaskAttachmentParams = {
+type TaskAttachmentBase64Params = {
   fileName: string;
   mediaType: string;
   base64Data: string;
   caption?: string;
+  filePath?: never;
+};
+
+type TaskAttachmentFileParams = {
+  filePath: string;
+  fileName?: string;
+  mediaType?: string;
+  caption?: string;
+  base64Data?: never;
+};
+
+type TaskAttachmentParams = TaskAttachmentBase64Params | TaskAttachmentFileParams;
+
+type BridgeTaskAttachmentInput = {
+  fileName: string;
+  mediaType: string;
+  base64Data: string;
+  caption?: string;
+};
+
+type ResolvedTaskAttachmentInput = {
+  bridgeInput: BridgeTaskAttachmentInput;
+  auditInput: {
+    inputMode: "filePath" | "base64Data";
+    filePath?: string;
+    resolvedPath?: string;
+    fileName: string;
+    mediaType: string;
+    caption?: string;
+  };
 };
 
 function buildAgentInput(params: AgentInputParams) {
@@ -365,12 +398,142 @@ function buildRoleQueueEntryInput(params: RoleQueueEntryParams) {
   };
 }
 
-function buildTaskAttachmentInput(params: TaskAttachmentParams) {
+const ATTACHMENT_MEDIA_TYPES_BY_EXTENSION: Record<string, string> = {
+  ".csv": "text/csv",
+  ".gif": "image/gif",
+  ".gz": "application/gzip",
+  ".html": "text/html",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".json": "application/json",
+  ".log": "text/plain",
+  ".md": "text/markdown",
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".tar": "application/x-tar",
+  ".txt": "text/plain",
+  ".webp": "image/webp",
+  ".xml": "application/xml",
+  ".yaml": "application/yaml",
+  ".yml": "application/yaml",
+  ".zip": "application/zip",
+};
+
+function normalizeOptionalString(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function getErrorCode(error: unknown) {
+  if (!error || typeof error !== "object" || !("code" in error)) {
+    return null;
+  }
+
+  return typeof error.code === "string" ? error.code : null;
+}
+
+function inferAttachmentMediaType(fileName: string) {
+  return ATTACHMENT_MEDIA_TYPES_BY_EXTENSION[extname(fileName).toLowerCase()];
+}
+
+async function buildTaskAttachmentInput(params: TaskAttachmentParams): Promise<ResolvedTaskAttachmentInput> {
+  const hasFilePath = typeof (params as { filePath?: unknown }).filePath === "string";
+  const hasBase64Data = typeof (params as { base64Data?: unknown }).base64Data === "string";
+
+  if (hasFilePath && hasBase64Data) {
+    throw new Error("Attachment input must provide either input.filePath or input.base64Data, not both.");
+  }
+
+  if (!hasFilePath && !hasBase64Data) {
+    throw new Error("Attachment input must provide either input.filePath for a readable local file or input.base64Data for an in-memory payload.");
+  }
+
+  if (hasFilePath) {
+    const filePath = (params as TaskAttachmentFileParams).filePath.trim();
+    if (!filePath) {
+      throw new Error("input.filePath must not be empty.");
+    }
+
+    const absolutePath = resolve(process.cwd(), filePath);
+    let resolvedPath: string;
+    try {
+      resolvedPath = await fs.realpath(absolutePath);
+    } catch (error) {
+      const errorCode = getErrorCode(error);
+      if (errorCode === "ENOENT") {
+        throw new Error(`Attachment file was not found: ${absolutePath}`);
+      }
+      if (errorCode === "EACCES" || errorCode === "EPERM") {
+        throw new Error(`Attachment file is not readable from this session: ${absolutePath}`);
+      }
+      throw new Error(`Attachment file could not be resolved: ${absolutePath}`);
+    }
+
+    let stat;
+    try {
+      stat = await fs.stat(resolvedPath);
+      await fs.access(resolvedPath, fsConstants.R_OK);
+    } catch (error) {
+      const errorCode = getErrorCode(error);
+      if (errorCode === "EACCES" || errorCode === "EPERM") {
+        throw new Error(`Attachment file is not readable from this session: ${resolvedPath}`);
+      }
+      throw new Error(`Attachment file could not be read: ${resolvedPath}`);
+    }
+
+    if (!stat.isFile()) {
+      throw new Error(`Attachment file must be a regular readable file, not a directory: ${resolvedPath}`);
+    }
+
+    const bytes = await fs.readFile(resolvedPath);
+    const fileName = normalizeOptionalString(params.fileName) ?? basename(resolvedPath);
+    const mediaType = normalizeOptionalString(params.mediaType)
+      ?? inferAttachmentMediaType(fileName)
+      ?? inferAttachmentMediaType(resolvedPath)
+      ?? "application/octet-stream";
+
+    return {
+      bridgeInput: {
+        fileName,
+        mediaType,
+        base64Data: bytes.toString("base64"),
+        ...(params.caption !== undefined ? { caption: params.caption } : {}),
+      },
+      auditInput: {
+        inputMode: "filePath",
+        filePath: params.filePath,
+        resolvedPath,
+        fileName,
+        mediaType,
+        ...(params.caption !== undefined ? { caption: params.caption } : {}),
+      },
+    };
+  }
+
+  const fileName = normalizeOptionalString((params as TaskAttachmentBase64Params).fileName);
+  if (!fileName) {
+    throw new Error("input.fileName is required when using input.base64Data.");
+  }
+
+  const mediaType = normalizeOptionalString((params as TaskAttachmentBase64Params).mediaType);
+  if (!mediaType) {
+    throw new Error("input.mediaType is required when using input.base64Data.");
+  }
+
   return {
-    fileName: params.fileName,
-    mediaType: params.mediaType,
-    base64Data: params.base64Data,
-    ...(params.caption !== undefined ? { caption: params.caption } : {}),
+    bridgeInput: {
+      fileName,
+      mediaType,
+      base64Data: (params as TaskAttachmentBase64Params).base64Data,
+      ...(params.caption !== undefined ? { caption: params.caption } : {}),
+    },
+    auditInput: {
+      inputMode: "base64Data",
+      fileName,
+      mediaType,
+      ...(params.caption !== undefined ? { caption: params.caption } : {}),
+    },
   };
 }
 
@@ -452,14 +615,31 @@ function roleQueueEntrySchema() {
 function taskAttachmentSchema() {
   return Type.Object(
     {
-      fileName: Type.String({ description: "File name to store on the task, e.g. error.log or screenshot.png." }),
-      mediaType: Type.String({ description: "Media type such as text/plain, image/png, or application/json." }),
-      base64Data: Type.String({ description: "Base64-encoded file contents." }),
+      filePath: Type.Optional(
+        Type.String({
+          description: "Preferred mode for on-disk files. Absolute paths are allowed; relative paths resolve from the session cwd. The path must point to a readable regular file.",
+        }),
+      ),
+      fileName: Type.Optional(
+        Type.String({
+          description: "Optional stored file name override in filePath mode. Required when using base64Data.",
+        }),
+      ),
+      mediaType: Type.Optional(
+        Type.String({
+          description: "Optional media type override in filePath mode. Required when using base64Data. When omitted in filePath mode, Orchestra infers a type from the file name or path and falls back to application/octet-stream.",
+        }),
+      ),
+      base64Data: Type.Optional(
+        Type.String({
+          description: "Compatibility mode for in-memory bytes. Use when the file is not available as a readable local path in this session.",
+        }),
+      ),
       caption: Type.Optional(Type.String({ description: "Optional human-readable caption for the attachment." })),
     },
     {
       description:
-        'Wrapped attachment payload. Put the attachment fields inside top-level input, e.g. {"input": {...}}. Use camelCase field names inside input.',
+        'Wrapped attachment payload. Put the attachment fields inside top-level input, e.g. {"input": {...}}. Use camelCase field names inside input. Provide either filePath or base64Data; base64Data mode also requires fileName and mediaType.',
     },
   );
 }
@@ -2116,8 +2296,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       helpNotes: [
         'The attachment payload must be wrapped inside the top-level input property.',
         camelCaseInputNote('task attachment'),
+        'Prefer input.filePath for readable files that already exist on disk in this session. Relative filePath values resolve from the current session working directory.',
+        'Use input.base64Data only when the bytes are already in memory or generated outside the local filesystem. In base64Data mode, input.fileName and input.mediaType are required.',
       ],
       helpExamples: [
+        {
+          taskId: 'task-123',
+          input: {
+            filePath: './artifacts/ci-output.log',
+            caption: 'CI failure excerpt',
+          },
+        },
         {
           taskId: 'task-123',
           input: {
@@ -2133,14 +2322,15 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         input: taskAttachmentSchema(),
       }),
       async execute(_toolCallId: string, params: { taskId: string; input: TaskAttachmentParams }) {
+        const attachmentInput = await buildTaskAttachmentInput(params.input);
         const payload = {
           taskId: params.taskId,
-          input: buildTaskAttachmentInput(params.input),
+          input: attachmentInput.bridgeInput,
         };
         const result = await invokeBridge(tool.name, payload);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
-          details: { command: tool.name, payload, result },
+          details: { command: tool.name, payload, attachmentInput: attachmentInput.auditInput, result },
         };
       },
     };

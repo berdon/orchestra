@@ -1,9 +1,14 @@
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import orchestraToolsExtension from "../extensions/orchestra-tools";
 
 describe("orchestra tools extension bridge tool setup", () => {
   const originalEnv = { ...process.env };
+  const originalCwd = process.cwd();
 
   beforeEach(() => {
     process.env.ORCHESTRA_BRIDGE_URL = "http://127.0.0.1:43123";
@@ -321,6 +326,7 @@ describe("orchestra tools extension bridge tool setup", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     process.env = { ...originalEnv };
+    process.chdir(originalCwd);
   });
 
   test("registers one tool per allowed Orchestra command and routes execution to the matching bridge command", async () => {
@@ -730,6 +736,227 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(attachRepositoryRemoteResult.content[0]?.text).toContain("attach_repository_remote");
     expect(setProjectDefaultRepositoryResult.details.command).toBe("set_project_default_repository");
     expect(setProjectDefaultRepositoryResult.content[0]?.text).toContain("set_project_default_repository");
+  });
+
+  test("supports attaching a readable session-local file via filePath with inferred metadata", async () => {
+    const tempDir = await fs.mkdtemp(join(tmpdir(), "orchestra-attachment-tool-"));
+    try {
+      const artifactsDir = join(tempDir, "artifacts");
+      const attachmentPath = join(artifactsDir, "ci-output.log");
+      await fs.mkdir(artifactsDir, { recursive: true });
+      await fs.writeFile(attachmentPath, "failure output\nsecond line\n", "utf8");
+      const resolvedAttachmentPath = await fs.realpath(attachmentPath);
+      process.chdir(tempDir);
+
+      const registeredTools: Array<any> = [];
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+        async json() {
+          return {
+            success: true,
+            data: {
+              echoedCommand: JSON.parse(String(init?.body)).command,
+              echoedPayload: JSON.parse(String(init?.body)).payload,
+            },
+          };
+        },
+      }));
+
+      vi.stubGlobal("fetch", fetchMock);
+
+      orchestraToolsExtension({
+        registerTool(tool: any) {
+          registeredTools.push(tool);
+        },
+        registerCommand() {},
+      } as any);
+
+      const attachmentTool = registeredTools.find((tool) => tool.name === "add_task_attachment");
+      expect(attachmentTool.parameters.properties.input.properties.filePath).toBeTruthy();
+      expect(attachmentTool.parameters.properties.input.properties.base64Data).toBeTruthy();
+      expect(attachmentTool.helpNotes).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("Prefer input.filePath"),
+          expect.stringContaining("Relative filePath values resolve"),
+        ]),
+      );
+      expect(attachmentTool.helpExamples).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            input: expect.objectContaining({ filePath: "./artifacts/ci-output.log" }),
+          }),
+        ]),
+      );
+
+      const result = await attachmentTool.execute("tool-call-file-attachment", {
+        taskId: "task-1",
+        input: {
+          filePath: "./artifacts/ci-output.log",
+          caption: "CI failure excerpt",
+        },
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(request.command).toBe("add_task_attachment");
+      expect(request.payload).toEqual({
+        taskId: "task-1",
+        input: {
+          fileName: "ci-output.log",
+          mediaType: "text/plain",
+          base64Data: Buffer.from("failure output\nsecond line\n").toString("base64"),
+          caption: "CI failure excerpt",
+        },
+      });
+      expect(result.details.attachmentInput).toEqual({
+        inputMode: "filePath",
+        filePath: "./artifacts/ci-output.log",
+        resolvedPath: resolvedAttachmentPath,
+        fileName: "ci-output.log",
+        mediaType: "text/plain",
+        caption: "CI failure excerpt",
+      });
+      expect(result.content[0]?.text).toContain("add_task_attachment");
+    } finally {
+      process.chdir(originalCwd);
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("supports filePath overrides and preserves base64 attachment compatibility", async () => {
+    const tempDir = await fs.mkdtemp(join(tmpdir(), "orchestra-attachment-tool-"));
+    try {
+      const attachmentPath = join(tempDir, "raw.bin");
+      await fs.writeFile(attachmentPath, Buffer.from([0, 1, 2, 3]));
+      const resolvedAttachmentPath = await fs.realpath(attachmentPath);
+
+      const registeredTools: Array<any> = [];
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+        async json() {
+          return {
+            success: true,
+            data: {
+              echoedCommand: JSON.parse(String(init?.body)).command,
+              echoedPayload: JSON.parse(String(init?.body)).payload,
+            },
+          };
+        },
+      }));
+
+      vi.stubGlobal("fetch", fetchMock);
+
+      orchestraToolsExtension({
+        registerTool(tool: any) {
+          registeredTools.push(tool);
+        },
+        registerCommand() {},
+      } as any);
+
+      const attachmentTool = registeredTools.find((tool) => tool.name === "add_task_attachment");
+      const filePathResult = await attachmentTool.execute("tool-call-file-attachment-overrides", {
+        taskId: "task-1",
+        input: {
+          filePath: attachmentPath,
+          fileName: "artifact.txt",
+          mediaType: "text/custom",
+        },
+      });
+      const base64Result = await attachmentTool.execute("tool-call-base64-attachment", {
+        taskId: "task-2",
+        input: {
+          fileName: "error.log",
+          mediaType: "text/plain",
+          base64Data: "ZXhhbXBsZSBsb2c=",
+          caption: "Existing flow",
+        },
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const filePathRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(filePathRequest.payload).toEqual({
+        taskId: "task-1",
+        input: {
+          fileName: "artifact.txt",
+          mediaType: "text/custom",
+          base64Data: Buffer.from([0, 1, 2, 3]).toString("base64"),
+        },
+      });
+      const base64Request = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+      expect(base64Request.payload).toEqual({
+        taskId: "task-2",
+        input: {
+          fileName: "error.log",
+          mediaType: "text/plain",
+          base64Data: "ZXhhbXBsZSBsb2c=",
+          caption: "Existing flow",
+        },
+      });
+      expect(filePathResult.details.attachmentInput).toEqual({
+        inputMode: "filePath",
+        filePath: attachmentPath,
+        resolvedPath: resolvedAttachmentPath,
+        fileName: "artifact.txt",
+        mediaType: "text/custom",
+      });
+      expect(base64Result.details.attachmentInput).toEqual({
+        inputMode: "base64Data",
+        fileName: "error.log",
+        mediaType: "text/plain",
+        caption: "Existing flow",
+      });
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects missing, non-file, and unreadable attachment paths before invoking the bridge", async () => {
+    const tempDir = await fs.mkdtemp(join(tmpdir(), "orchestra-attachment-tool-"));
+    try {
+      const attachmentPath = join(tempDir, "secret.log");
+      const directoryPath = join(tempDir, "logs");
+      await fs.writeFile(attachmentPath, "secret", "utf8");
+      await fs.mkdir(directoryPath, { recursive: true });
+      const resolvedAttachmentPath = await fs.realpath(attachmentPath);
+      const resolvedDirectoryPath = await fs.realpath(directoryPath);
+
+      const registeredTools: Array<any> = [];
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      orchestraToolsExtension({
+        registerTool(tool: any) {
+          registeredTools.push(tool);
+        },
+        registerCommand() {},
+      } as any);
+
+      const attachmentTool = registeredTools.find((tool) => tool.name === "add_task_attachment");
+
+      await expect(
+        attachmentTool.execute("tool-call-missing-attachment", {
+          taskId: "task-1",
+          input: { filePath: join(tempDir, "missing.log") },
+        }),
+      ).rejects.toThrow(`Attachment file was not found: ${join(tempDir, "missing.log")}`);
+
+      await expect(
+        attachmentTool.execute("tool-call-directory-attachment", {
+          taskId: "task-1",
+          input: { filePath: directoryPath },
+        }),
+      ).rejects.toThrow(`Attachment file must be a regular readable file, not a directory: ${resolvedDirectoryPath}`);
+
+      vi.spyOn(fs, "access").mockRejectedValueOnce(Object.assign(new Error("permission denied"), { code: "EACCES" }));
+      await expect(
+        attachmentTool.execute("tool-call-unreadable-attachment", {
+          taskId: "task-1",
+          input: { filePath: attachmentPath },
+        }),
+      ).rejects.toThrow(`Attachment file is not readable from this session: ${resolvedAttachmentPath}`);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("exposes typed session management tools", async () => {
