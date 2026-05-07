@@ -98,7 +98,10 @@ describe("desktop task browser", () => {
         description: "Verify the in-app browser window and DOM comment flow.",
       });
       await waitForText(sessionId, "Task browser coverage");
-      const taskId = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks')
+      const projectId = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
+        .then((projects) => projects.find((project) => project.name === 'Browser Task Project')?.id ?? '');
+      expect(projectId).toBeTruthy();
+      const taskId = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', { projectId })
         .then((tasks) => tasks.find((task) => task.title === 'Task browser coverage')?.id ?? '');
       expect(taskId).toBeTruthy();
       await clickSelector(sessionId, '[data-role="task-detail-tab-browser"]');

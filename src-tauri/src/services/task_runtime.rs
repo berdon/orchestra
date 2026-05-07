@@ -3807,6 +3807,7 @@ pub fn reassign_task_to_lane_with_app(
                 column_start: None,
                 column_end: None,
                 selected_text: None,
+                anchor: None,
             },
         )?;
     }
