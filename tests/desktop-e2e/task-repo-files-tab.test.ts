@@ -190,6 +190,7 @@ describe("desktop task repo files tab", () => {
       const developerRole = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_roles', { includeArchived: false })
         .then((roles) => roles.find((entry) => entry.name === 'Repo Files Developer'));
       expect(developerRole).toBeTruthy();
+      await invokeCommand(sessionId, 'dispatch_task_lane', { taskId: task!.id });
       await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
       await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: developerRole!.id }).catch(() => undefined);
 

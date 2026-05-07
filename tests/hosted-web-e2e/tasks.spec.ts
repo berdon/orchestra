@@ -10,11 +10,11 @@ test("hosted-web tasks browse the seeded Remote API task list and open detail", 
   await page.goto("/");
   await page.locator('[data-role="nav-item-tasks"]').click();
 
-  const hostedTaskCard = page.locator('[data-role="task-card"]').filter({ hasText: "Hosted web seeded task" }).first();
-  await expect(hostedTaskCard).toBeVisible();
-  await expect(page.locator('[data-role="task-card"]').filter({ hasText: "Hosted web review task" }).first()).toBeVisible();
+  const hostedTaskEntry = page.getByText("Hosted web seeded task", { exact: true }).first();
+  await expect(hostedTaskEntry).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Hosted web review task", { exact: true }).first()).toBeVisible({ timeout: 10_000 });
 
-  await hostedTaskCard.click();
+  await hostedTaskEntry.click();
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Hosted web seeded task");
   await expect(page.locator('[data-role="task-overview-description"]')).toContainText("Browser-hosted task coverage through the Remote API path.");
 });

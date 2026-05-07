@@ -6,6 +6,8 @@ import {
   buildExampleRemoteSecureBaseUrl,
 } from "../../src/lib/exampleRemoteEndpoints";
 
+const webDriverBaseUrl = process.env.ORCHESTRA_WEB_DRIVER_E2E_BASE_URL ?? "http://127.0.0.1:4174";
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -17,7 +19,7 @@ test("paired web client dev harness shows pairing guidance and can reset the API
 
   await expect(page.getByText("Connect to Orchestra")).toBeVisible();
   await expect(page.getByTestId("web-driver-helper-card")).toBeVisible();
-  await expect(page.getByTestId("web-driver-current-url")).toContainText("http://127.0.0.1:4174");
+  await expect(page.getByTestId("web-driver-current-url")).toContainText(webDriverBaseUrl);
   await expect(page.getByTestId("web-driver-suggested-api-url")).toContainText("http://127.0.0.1:49500");
 
   const hostInput = page.getByTestId("connect-host-url");

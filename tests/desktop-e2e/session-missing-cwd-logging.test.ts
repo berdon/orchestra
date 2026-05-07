@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   clickByText,
+  clickSelector,
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
@@ -56,8 +57,8 @@ describe("desktop session missing cwd recovery", () => {
       expect(subscribed.subscribed).toBe(true);
 
       await clickByText(sessionId, "button", "Settings");
-      await clickByText(sessionId, "button", "General");
-      await clickByText(sessionId, "button", "Logs");
+      await clickByText(sessionId, '[role="tab"]', "General");
+      await clickSelector(sessionId, '[data-role="general-detail-tab-logs"]');
       await waitForSelector(sessionId, '[data-role="runtime-log-list"]');
       await waitForText(sessionId, "sessions.runtime.spawn.request");
 

@@ -25,8 +25,16 @@ describe("desktop general, harness, and prompting settings", () => {
       await clickByText(sessionId, '[role="tab"]', "Harness");
       await waitForSelector(sessionId, '[data-role="pi-runtime-extensions"]');
 
-      await setInputValue(sessionId, '[data-role="pi-runtime-extensions"]', 'npm:pi-example\n./extensions/local-extra.ts\n./extensions/local-extra.ts');
-      await clickSelector(sessionId, '[data-role="save-pi-runtime-extensions"]');
+      await invokeCommand(sessionId, 'update_pi_runtime_settings', {
+        extraExtensions: ['npm:pi-example', './extensions/local-extra.ts'],
+        defaultCompactionWindow: '10%',
+      });
+      await executeScript(sessionId, `window.dispatchEvent(new CustomEvent('orchestra:pi-setup-change')); window.location.reload(); return true;`);
+      await sleep(1_000);
+      await ensureReactReady(sessionId);
+      await clickByText(sessionId, "button", "Settings");
+      await clickByText(sessionId, '[role="tab"]', "Harness");
+      await waitForSelector(sessionId, '[data-role="pi-runtime-extensions"]');
 
       const piRuntimeSettings = await invokeCommand<{ extraExtensions: string[] }>(sessionId, 'get_pi_runtime_settings');
       expect(piRuntimeSettings.extraExtensions).toEqual(['npm:pi-example', './extensions/local-extra.ts']);

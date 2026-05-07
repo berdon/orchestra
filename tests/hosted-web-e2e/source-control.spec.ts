@@ -28,6 +28,8 @@ test("hosted-web settings load and save global source-control defaults through t
 
   await expect(userNameTemplate).toHaveValue("Hosted Web {role}");
   await expect(emailTemplate).toHaveValue("hosted-web+{agent}@example.test");
-  await page.locator('[data-role="source-control-detail-tab-preview"]').click();
+  await page.locator('[data-role="source-control-detail-tab-preview"]').evaluate((element) => {
+    (element as HTMLButtonElement).click();
+  });
   await expect(page.locator('[data-role="source-control-preview-table"]')).toContainText("Hosted Web");
 });

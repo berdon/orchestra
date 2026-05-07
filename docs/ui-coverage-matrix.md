@@ -12,7 +12,7 @@ The phrase **"automated UI coverage above 90%"** means the checked-in critical-j
 - A journey counts as covered only when:
   - its mapped spec files exist in the repository, and
   - every required harness for that journey has at least one mapped spec, and
-  - any mapped desktop spec is part of the required desktop suite resolved from `tests/desktop-e2e-suite.json`
+  - any mapped desktop spec is part of the required supported E2E suite resolved from `tests/e2e-suite.json`
 - The matrix is validated by:
 
 ```bash
@@ -97,16 +97,17 @@ Reports are emitted to `coverage/vitest/` with:
 
 ORC-30 also removes the old desktop suite drift where the package scripts listed only a subset of authored desktop specs.
 
-The required desktop suite is now derived from:
+The required desktop suite is now derived from the shared supported E2E manifest:
 
-- `tests/desktop-e2e-suite.json`
+- `tests/e2e-suite.json`
+- `scripts/e2e-suite.mjs`
 - `scripts/desktop-e2e-suite.mjs`
 
 Current desktop suite policy:
 
 - include every `tests/desktop-e2e/*.test.ts` file by default
-- only exclude a spec by adding an explicit quarantine entry in `tests/desktop-e2e-suite.json`
-- both `npm run test:desktop-e2e` and `npm run test:desktop-e2e:host` consume the same source of truth
+- only exclude a spec by adding an explicit quarantine entry in `tests/e2e-suite.json`
+- both `npm run test:e2e:desktop` and `npm run test:e2e:desktop:local` consume the same source of truth
 
 That keeps authored desktop coverage and executed desktop coverage aligned.
 
@@ -117,9 +118,11 @@ npm test
 npm run test:coverage
 npm run test:ui:matrix
 npm run test:e2e
-npm run test:web-driver:e2e
-npm run test:desktop-e2e
-npm run test:desktop-e2e:host
+npm run test:e2e:browser
+npm run test:e2e:hosted-web
+npm run test:e2e:web-driver
+npm run test:e2e:desktop
+npm run test:e2e:desktop:local
 npm run verify
 ```
 
@@ -128,4 +131,4 @@ npm run verify
 1. `npm run test:coverage`
 2. `npm run test:ui:matrix`
 
-Use the harness-specific browser, desktop, and web-driver commands above when you want to execute the full UI suites directly.
+Use the harness-specific Podman-backed commands above when you want to execute one full UI harness directly. Use the explicit `:local` aliases only for host-local debugging.

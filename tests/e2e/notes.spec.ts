@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { PLAYWRIGHT_WEB_URL } from "./webServerConfig";
+const browserE2eBaseUrl = process.env.ORCHESTRA_BROWSER_E2E_BASE_URL ?? "http://127.0.0.1:4173";
 
 function fulfillJson(route: any, body: unknown, status = 200) {
   return route.fulfill({
@@ -95,7 +95,7 @@ test("notes mobile preview, page scrolling, and floating header behavior stay al
     hostKind: "remote_api",
     authMode: "same_origin_cookie",
     urls: {
-      apiBaseUrl: PLAYWRIGHT_WEB_URL,
+      apiBaseUrl: browserE2eBaseUrl,
       websocketUrl: null,
     },
     featureFlags: {

@@ -224,19 +224,23 @@ describe("desktop channels telegram flow", () => {
       await clickByText(sessionId, "button", "Settings");
       await clickByText(sessionId, '[role="tab"]', "Channels");
       await clickSelector(sessionId, '[data-role="new-channel"]');
+      await waitForSelector(sessionId, '[data-role="channel-name"]');
       await setInputValue(sessionId, '[data-role="channel-name"]', `Telegram Ops ${suffix}`);
       await selectValue(sessionId, '[data-role="channel-default-project"]', "orchestra");
       await clickSelector(sessionId, '[data-role="channel-detail-tab-bot"]');
+      await waitForSelector(sessionId, '[data-role="telegram-bot-token"]');
       await setInputValue(sessionId, '[data-role="telegram-bot-token"]', harness.botToken);
       await setInputValue(sessionId, '[data-role="telegram-api-base-url"]', harness.apiBaseUrl);
       await clickSelector(sessionId, '[data-role="validate-telegram-bot"]');
       await waitForText(sessionId, "@orchestra_test_bot");
 
+      await clickSelector(sessionId, '[data-role="channel-detail-tab-chat"]');
       await harness.pushUpdate({ chatId, title: chatTitle, text: "/start" });
       await clickSelector(sessionId, '[data-role="channel-detail-tab-chat"]');
       await clickSelector(sessionId, '[data-role="detect-telegram-chats"]');
       await waitForSelectOption(sessionId, '[data-role="telegram-chat-select"]', { value: chatId });
       await selectValue(sessionId, '[data-role="telegram-chat-select"]', chatId);
+
       await clickSelector(sessionId, '[data-role="channel-detail-tab-behavior"]');
       await selectValue(sessionId, '[data-role="telegram-notification-scope"]', "active_project");
       await clickSelector(sessionId, '[data-role="channel-enabled"]');

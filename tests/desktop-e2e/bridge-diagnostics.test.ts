@@ -47,6 +47,7 @@ describe("desktop bridge diagnostics", () => {
       await clickSelector(sessionId, '[data-role="general-detail-tab-bridge"]');
       await waitForText(sessionId, "Bridge diagnostics");
       await waitForSelector(sessionId, '[data-role="bridge-instance-id"]');
+      await waitForSelector(sessionId, '[data-role="bridge-instance-id"]');
       await waitForSelector(sessionId, '[data-role="refresh-bridge-diagnostics"]');
       await waitForSelector(sessionId, '[data-role="cleanup-stale-bridges"]');
 

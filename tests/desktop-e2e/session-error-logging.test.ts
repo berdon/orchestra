@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   clickByText,
+  clickSelector,
   createReadyWebdriverSession,
   deleteWebdriverSession,
   ensureReactReady,
@@ -45,8 +46,8 @@ describe("desktop session error logging", () => {
       await expect(invokeCommand(sessionId, "get_session_model_state", { sessionId: createdSession.id })).rejects.toThrow();
 
       await clickByText(sessionId, "button", "Settings");
-      await clickByText(sessionId, "button", "General");
-      await clickByText(sessionId, "button", "Logs");
+      await clickByText(sessionId, '[role="tab"]', "General");
+      await clickSelector(sessionId, '[data-role="general-detail-tab-logs"]');
       await waitForSelector(sessionId, '[data-role="runtime-log-list"]');
       await waitForText(sessionId, "sessions.subscribe.failed");
       await waitForText(sessionId, "sessions.model_state.failed");

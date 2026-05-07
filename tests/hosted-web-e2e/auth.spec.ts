@@ -2,11 +2,13 @@ import { expect, test } from "@playwright/test";
 
 import { fetchHostedWebPairingCode } from "./helpers";
 
+const hostedWebBaseUrl = process.env.ORCHESTRA_HOSTED_WEB_E2E_BASE_URL ?? "http://127.0.0.1:4175";
+
 test("hosted-web browser auth gate pairs on the live server and reloads into the main shared app", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.locator('[data-role="hosted-web-auth-gate"]')).toBeVisible();
-  await expect(page.locator('[data-role="hosted-web-current-origin"]')).toContainText("http://127.0.0.1:4175");
+  await expect(page.locator('[data-role="hosted-web-current-origin"]')).toContainText(hostedWebBaseUrl);
 
   const bootstrapBefore = await page.request.get("/api/v1/frontend/bootstrap", {
     headers: {

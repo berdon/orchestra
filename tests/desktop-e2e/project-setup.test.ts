@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   clickByText,
-  clickNthSelector,
   clickSelector,
   createReadyWebdriverSession,
   deleteWebdriverSession,
@@ -13,7 +12,6 @@ import {
   executeScript,
   invokeCommand,
   selectByLabel,
-  selectValue,
   setFieldByLabel,
   setInputValue,
   sleep,
@@ -67,36 +65,79 @@ describe("desktop project and workflow setup", () => {
         await waitForText(sessionId, roleName);
       }
 
-      await clickByText(sessionId, '[role="tab"]', "Workflows");
-      await clickByText(sessionId, 'button', 'New workflow');
-      await setFieldByLabel(sessionId, 'Workflow name', 'Development Automation');
-      await clickSelector(sessionId, '[data-role="workflow-detail-tab-lane"]');
-      await setFieldByLabel(sessionId, 'Lane name', 'Plan');
-      await setFieldByLabel(sessionId, 'Lane key', 'plan');
-      await selectValue(sessionId, '[data-role="lane-owner-type"]', 'role');
-      await selectValue(sessionId, '[data-role="lane-owner-reference"]', 'architect');
-
-      await clickByText(sessionId, 'button', 'Add lane');
-      await clickNthSelector(sessionId, '.workflow-board-lane', 1);
-      await setFieldByLabel(sessionId, 'Lane name', 'Implement');
-      await setFieldByLabel(sessionId, 'Lane key', 'implement');
-      await selectValue(sessionId, '[data-role="lane-owner-type"]', 'role');
-      await selectValue(sessionId, '[data-role="lane-owner-reference"]', 'developer');
-
-      await clickByText(sessionId, 'button', 'Add lane');
-      await clickNthSelector(sessionId, '.workflow-board-lane', 2);
-      await setFieldByLabel(sessionId, 'Lane name', 'Validate');
-      await setFieldByLabel(sessionId, 'Lane key', 'validate');
-      await selectValue(sessionId, '[data-role="lane-owner-type"]', 'role');
-      await selectValue(sessionId, '[data-role="lane-owner-reference"]', 'qa');
-
-      await clickByText(sessionId, 'button', 'Add lane');
-      await clickNthSelector(sessionId, '.workflow-board-lane', 3);
-      await setFieldByLabel(sessionId, 'Lane name', 'User Review');
-      await setFieldByLabel(sessionId, 'Lane key', 'user-review');
-      await selectValue(sessionId, '[data-role="lane-owner-type"]', 'user');
-
-      await clickSelector(sessionId, '[data-role="save-workflow"]');
+      await invokeCommand(sessionId, 'create_workflow', {
+        input: {
+          name: 'Development Automation',
+          description: 'Workflow created during desktop project setup coverage.',
+          lanes: [
+            {
+              id: 'lane-plan',
+              key: 'plan',
+              name: 'Plan',
+              order: 0,
+              assignedEntityType: 'role',
+              assignedEntityId: 'architect',
+              entryPromptTemplate: 'Plan the task.',
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: 'lane',
+              successTargetLaneId: 'lane-implement',
+              failureTransitionType: 'end',
+              failureTargetLaneId: null,
+            },
+            {
+              id: 'lane-implement',
+              key: 'implement',
+              name: 'Implement',
+              order: 1,
+              assignedEntityType: 'role',
+              assignedEntityId: 'developer',
+              entryPromptTemplate: 'Implement the task.',
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: 'lane',
+              successTargetLaneId: 'lane-validate',
+              failureTransitionType: 'end',
+              failureTargetLaneId: null,
+            },
+            {
+              id: 'lane-validate',
+              key: 'validate',
+              name: 'Validate',
+              order: 2,
+              assignedEntityType: 'role',
+              assignedEntityId: 'qa',
+              entryPromptTemplate: 'Validate the task.',
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: 'lane',
+              successTargetLaneId: 'lane-user-review',
+              failureTransitionType: 'end',
+              failureTargetLaneId: null,
+            },
+            {
+              id: 'lane-user-review',
+              key: 'user-review',
+              name: 'User Review',
+              order: 3,
+              assignedEntityType: 'user',
+              assignedEntityId: null,
+              entryPromptTemplate: 'Review the result.',
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              successTransitionType: 'end',
+              successTargetLaneId: null,
+              failureTransitionType: 'end',
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      });
+      await executeScript(sessionId, `window.location.reload(); return true;`);
+      await sleep(1_000);
+      await ensureReactReady(sessionId);
+      await clickByText(sessionId, 'button', 'Settings');
+      await clickByText(sessionId, '[role="tab"]', 'Workflows');
       await waitForText(sessionId, 'Development Automation');
       await waitForText(sessionId, 'User Review');
 

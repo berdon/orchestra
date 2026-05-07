@@ -7,13 +7,17 @@ cd "$ROOT_DIR"
 PORT="${ORCHESTRA_HOSTED_WEB_E2E_PORT:-4175}"
 export ORCHESTRA_HOSTED_WEB_E2E_PORT="$PORT"
 export ORCHESTRA_HOSTED_WEB_E2E_ROOT="${ORCHESTRA_HOSTED_WEB_E2E_ROOT:-$ROOT_DIR/dist}"
-export ORCHESTRA_STORAGE_ROOT="${ORCHESTRA_STORAGE_ROOT:-$ROOT_DIR/.tmp/hosted-web-e2e-runtime}"
 
-existing_listener_pids="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
-if [[ -n "$existing_listener_pids" ]]; then
-  echo "Stopping stale hosted-web E2E listeners on port $PORT: $existing_listener_pids"
-  kill $existing_listener_pids 2>/dev/null || true
-  sleep 1
+if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Hosted-web E2E port ${PORT} is already in use. Set ORCHESTRA_HOSTED_WEB_E2E_PORT to an unused port before retrying." >&2
+  lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >&2 || true
+  exit 1
+fi
+
+if [[ -z "${ORCHESTRA_STORAGE_ROOT:-}" ]]; then
+  RUNTIME_PARENT="$ROOT_DIR/.tmp/hosted-web-e2e"
+  mkdir -p "$RUNTIME_PARENT"
+  export ORCHESTRA_STORAGE_ROOT="$(mktemp -d "${RUNTIME_PARENT}/runtime-XXXXXX")"
 fi
 
 rm -rf "$ORCHESTRA_STORAGE_ROOT"

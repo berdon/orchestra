@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { PLAYWRIGHT_WEB_URL } from "./webServerConfig";
+const browserE2eBaseUrl = process.env.ORCHESTRA_BROWSER_E2E_BASE_URL ?? "http://127.0.0.1:4173";
 
 function fulfillJson(route: any, body: unknown, status = 200) {
   return route.fulfill({
@@ -53,7 +53,7 @@ function createHostedWebSecretsApiMock(options?: {
     hostKind: "remote_api",
     authMode: "same_origin_cookie",
     urls: {
-      apiBaseUrl: PLAYWRIGHT_WEB_URL,
+      apiBaseUrl: browserE2eBaseUrl,
       websocketUrl: null,
     },
     featureFlags: {
@@ -415,6 +415,12 @@ test("project settings asynchronously prefetches tab-specific hosted-web setting
   expect(api.requestCounts.sourceControlGlobal).toBe(0);
   expect(api.requestCounts.sourceControlProject).toBe(0);
   expect(api.requestCounts.secrets).toBe(0);
+
+  await page.goto("/?page=settings&settingsTab=projects");
+  await expect(page.locator('[data-role="project-detail-tabpanel-general"]')).toBeVisible();
+  await expect(page.locator('[data-role="project-detail-tabpanel-automation"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="project-detail-tabpanel-source-control"]')).toHaveCount(0);
+  await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toHaveCount(0);
 
   await page.goto("/?page=settings&settingsTab=projects");
   await expect(page.locator('[data-role="project-detail-tabpanel-general"]')).toBeVisible();

@@ -18,7 +18,7 @@ if [[ "$#" -eq 0 ]]; then
     AUTO_TEST_FILES+=("${test_file}")
   done < <(node "${ROOT_DIR}/scripts/desktop-e2e-suite.mjs")
   if (( ${#AUTO_TEST_FILES[@]} == 0 )); then
-    echo "No desktop E2E specs were discovered by tests/desktop-e2e-suite.json" >&2
+    echo "No desktop E2E specs were discovered by tests/e2e-suite.json" >&2
     exit 1
   fi
   set -- "${AUTO_TEST_FILES[@]}"

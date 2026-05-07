@@ -178,7 +178,131 @@ Run the frontend:
 npm run dev
 ```
 
-Run the desktop app:
+`npm run test:coverage` writes terminal, HTML, `json-summary`, and `lcov` reports to `coverage/vitest/`.
+`npm run test:ui:matrix` validates the critical-journey UI coverage matrix in `tests/ui-coverage-matrix.json` and enforces the >=90% UI threshold.
+
+### Release guardrails
+
+Before distributing an adhoc build, run the verified guardrail flow:
+
+```bash
+npm run build:adhoc:verified
+```
+
+That command runs:
+- `gitleaks` against the current source tree
+- `gitleaks` against reachable git history
+- the repo-local machine-reference scanner for usernames and concrete local paths
+- a sanitized release-mode adhoc bundle build with Rust path remapping enabled
+- a post-build artifact scan over the built app/resources using extracted text plus `strings`
+
+If `gitleaks` is not already installed, the wrapper script will download the repo-pinned version into `.tmp/tools/gitleaks/` for repeatable local use.
+
+For individual checks, use:
+
+```bash
+npm run scan:secrets
+npm run scan:history
+npm run scan:machine-refs
+npm run scan:artifacts
+npm run scan:artifacts:release
+```
+
+To audit specific local usernames without committing them, set `ORCHESTRA_MACHINE_REFERENCE_SEED_USERNAMES` for the scan invocation, for example:
+
+```bash
+ORCHESTRA_MACHINE_REFERENCE_SEED_USERNAMES=alice,bob npm run scan:machine-refs
+```
+
+### E2E policy
+
+The supported E2E runner is Podman. The checked-in supported inventory lives in `tests/e2e-suite.json`, and `npm run test:e2e` now fans the full supported suite through Podman-backed harness wrappers.
+
+Supported commands:
+
+```bash
+npm run test:e2e
+npm run test:e2e:desktop
+npm run test:e2e:browser
+npm run test:e2e:hosted-web
+npm run test:e2e:web-driver
+```
+
+The umbrella runner also accepts explicit spec paths and routes them to the right harness, for example:
+
+```bash
+npm run test:e2e -- tests/e2e/inbox.spec.ts tests/hosted-web-e2e/inbox.spec.ts
+```
+
+For desktop-only Podman subsets, you can still call the lower-level wrappers directly:
+
+```bash
+./scripts/run-desktop-e2e-podman.sh tests/desktop-e2e/<spec>.test.ts
+./scripts/run-desktop-e2e-suite-podman.sh tests/desktop-e2e/<spec-a>.test.ts tests/desktop-e2e/<spec-b>.test.ts
+```
+
+To fan the Podman suite out across harnesses, set `E2E_JOBS`. To fan the desktop subset out internally, set `DESKTOP_E2E_JOBS`:
+
+```bash
+E2E_JOBS=4 npm run test:e2e
+DESKTOP_E2E_JOBS=2 npm run test:e2e:desktop
+```
+
+If you need direct host-local debugging, use the explicit `:local` aliases instead of the supported Podman commands:
+
+```bash
+npm run test:e2e:browser:local -- --grep "projects"
+npm run test:e2e:hosted-web:local
+npm run test:e2e:web-driver:local
+npm run test:e2e:desktop:local
+```
+
+On macOS, first-time Podman setup may also require:
+
+```bash
+brew install podman
+/usr/sbin/softwareupdate --install-rosetta --agree-to-license
+podman machine init
+podman machine set --memory 8192 podman-machine-default
+podman machine start
+```
+
+### Tauri desktop app
+
+The repository includes a `src-tauri/` scaffold and matching session command surface, but building/running the desktop app requires a Rust toolchain and Tauri system prerequisites to be installed locally.
+
+### `orc` CLI
+
+The Rust backend also ships an `orc` CLI under `src-tauri/src/bin/orc.rs`.
+
+Current command surface:
+
+```bash
+orc [--orchestra-home <path>] chat [--agent <agent>]
+orc [--orchestra-home <path>] msg [--agent <agent>] <message...>
+orc [--orchestra-home <path>] [--project <project>] task list [--json]
+orc [--orchestra-home <path>] [--project <project>] task show <task> [--json]
+orc [--orchestra-home <path>] [--project <project>] task create --title <title> [...flags] [--json]
+orc [--orchestra-home <path>] [--project <project>] task update <task> [...flags] [--json]
+orc [--orchestra-home <path>] [--project <project>] task comment <task> <message...> [--reply-to <comment-id>] [--interrupt] [--json]
+orc [--orchestra-home <path>] [--project <project>] task comments <task> [--json]
+orc [--orchestra-home <path>] [--project <project>] task approve <task> [--json]
+orc [--orchestra-home <path>] [--project <project>] task needs-work <task> [--notes <text>] [--json]
+orc [--orchestra-home <path>] [--project <project>] task pause <task> [--notes <text>] [--json]
+orc [--orchestra-home <path>] [--project <project>] task resume <task> [--notes <text>] [--json]
+orc [--orchestra-home <path>] [--project <project>] task stop <task> [--notes <text>] [--json]
+orc [--orchestra-home <path>] [--project <project>] task dispatch <task> [--json]
+orc [--orchestra-home <path>] [--project <project>] task move <task> --lane <lane-id> [--notes <text>] [--json]
+```
+
+Task selectors accept canonical ids, task numbers like `ORC-67`, and numeric shorthand like `67` when a selected/default project makes the reference unambiguous. Human-readable text is the default output mode; pass `--json` for structured scripting output. Use `--orchestra-home <path>` when you want the CLI to read/write a different Orchestra storage root than the default `~/.orchestra`; the value should be the final storage root itself (for example `~/.orchestra-dev`).
+
+#### Prerequisites
+
+- Rust toolchain (`cargo install tauri-cli`)
+- macOS: Xcode Command Line Tools (`xcode-select --install`)
+
+#### Running the dev app
 
 ```bash
 source "$HOME/.cargo/env"

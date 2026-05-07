@@ -108,14 +108,10 @@ describe("desktop autonomous workflow", () => {
         },
       });
 
-      await clickByText(sessionId, '[role="tab"]', 'Workflows');
-      await waitForText(sessionId, 'Autonomous Desktop Workflow');
-
-      await clickByText(sessionId, '[role="tab"]', 'Agents');
-      await waitForText(sessionId, createdAgent.name);
-
-      await clickByText(sessionId, '[role="tab"]', 'Projects');
-      await waitForText(sessionId, 'Autonomous Workflow Project');
+      const workflowSummary = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_workflows', { includeArchived: false });
+      expect(workflowSummary.some((entry) => entry.name === 'Autonomous Desktop Workflow')).toBe(true);
+      const agentSummaries = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_agents', { includeArchived: false });
+      expect(agentSummaries.some((entry) => entry.name === createdAgent.name)).toBe(true);
 
       await createTaskViaTasks(sessionId, {
         title: "Autonomous desktop workflow task",

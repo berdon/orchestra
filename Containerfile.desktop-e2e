@@ -3,6 +3,7 @@ FROM debian:trixie
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CARGO_HOME=/root/.cargo
 ENV PATH=/root/.cargo/bin:${PATH}
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
   ca-certificates \
@@ -11,8 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   rsync \
   bash \
   file \
+  libnspr4 \
+  libnss3 \
   procps \
   iproute2 \
+  lsof \
   xauth \
   xvfb \
   build-essential \
@@ -38,4 +42,7 @@ RUN mkdir -p /workspace/orchestra
 WORKDIR /workspace/orchestra
 COPY package.json package-lock.json ./
 RUN npm ci
+COPY mobile/package.json mobile/package-lock.json ./mobile/
+RUN npm --prefix ./mobile ci
+RUN npx playwright install chromium
 WORKDIR /workspace

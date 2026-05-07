@@ -143,6 +143,7 @@ describe("desktop harness model limits", () => {
       await clickByText(sessionId, '[role="tab"]', "Harness");
       await waitForText(sessionId, "Harness settings");
       await waitForSelector(sessionId, '[data-role="pi-runtime-diagnostics-summary"]');
+      await waitForSelector(sessionId, '[data-role="harness-detail-tab-models"]');
       await clickSelector(sessionId, '[data-role="harness-detail-tab-models"]');
       await waitForText(sessionId, "Structured model policies");
       await waitForText(sessionId, "No model limit rows yet. Add a row to choose a provider/model and set limits.");

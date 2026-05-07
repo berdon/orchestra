@@ -20,7 +20,7 @@ describe("desktop remote access", () => {
       await ensureReactReady(sessionId);
 
       await clickByText(sessionId, "button", "Settings");
-      await clickByText(sessionId, "button", "Remote");
+      await clickByText(sessionId, '[role="tab"]', "Remote");
       await waitForText(sessionId, "Remote API host");
       await waitForSelector(sessionId, '[data-role="remote-enabled"]');
       await waitForSelector(sessionId, '[data-role="save-remote-settings"]');

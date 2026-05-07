@@ -1,18 +1,19 @@
 import { defineConfig, devices } from "@playwright/test";
 
-import { PLAYWRIGHT_WEB_HOST, PLAYWRIGHT_WEB_PORT, PLAYWRIGHT_WEB_URL } from "./tests/e2e/webServerConfig";
+const port = Number(process.env.ORCHESTRA_BROWSER_E2E_PORT ?? 4173);
+const baseURL = process.env.ORCHESTRA_BROWSER_E2E_BASE_URL ?? `http://127.0.0.1:${port}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 30_000,
   workers: 1,
   use: {
-    baseURL: PLAYWRIGHT_WEB_URL,
+    baseURL,
     trace: "on-first-retry",
   },
   webServer: {
-    command: `npm run build && npm run preview -- --host ${PLAYWRIGHT_WEB_HOST} --port ${PLAYWRIGHT_WEB_PORT} --strictPort`,
-    url: PLAYWRIGHT_WEB_URL,
+    command: `npm run build && npm run preview -- --host 127.0.0.1 --port ${port} --strictPort`,
+    url: baseURL,
     reuseExistingServer: true,
     timeout: 120_000,
   },

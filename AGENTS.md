@@ -56,7 +56,8 @@ tail -f /tmp/orchestra-dev.log
 
 - The Vite dev server is expected on `http://localhost:1420`.
 - Tauri icons live under `src-tauri/icons/`.
-- Desktop E2E tests must use the desktop runner scripts (`scripts/run-desktop-e2e.sh`, `scripts/run-desktop-e2e-suite.sh`, and the Podman variants). Do not run desktop specs directly with generic Playwright commands.
+- Supported E2E coverage now runs through Podman. Use `npm run test:e2e` or the harness-specific `npm run test:e2e:{desktop,browser,hosted-web,web-driver}` commands for supported runs.
+- Desktop E2E tests must still use the desktop runner scripts (`scripts/run-desktop-e2e.sh`, `scripts/run-desktop-e2e-suite.sh`, and the Podman variants). Do not run desktop specs directly with generic Playwright commands.
 - Demo recordings should use the repo-managed Podman capture script from this worktree, not manual host screen capture:
   - `./scripts/record-desktop-e2e-video-podman.sh --trim-start <seconds> tests/desktop-e2e/<spec>.test.ts <demo-name>.webm`
   - The script captures the Xvfb-backed desktop run, trims startup time from the beginning, and writes the final `.webm` into `.tmp/demo-videos/`.

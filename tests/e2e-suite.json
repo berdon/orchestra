@@ -1,0 +1,58 @@
+{
+  "notes": "The supported E2E inventory lives here. Every supported harness runs through Podman by default; local runner aliases are explicit debug conveniences only.",
+  "suites": [
+    {
+      "harness": "desktop",
+      "directory": "tests/desktop-e2e",
+      "suffix": ".test.ts",
+      "supportedRunner": "podman",
+      "quarantined": []
+    },
+    {
+      "harness": "browser",
+      "directory": "tests/e2e",
+      "suffix": ".spec.ts",
+      "supportedRunner": "podman",
+      "quarantined": [
+        {
+          "path": "tests/e2e/app-header.spec.ts",
+          "reason": "Retired from the supported browser Podman suite because its mobile shell assertions duplicate supported desktop navigation coverage. Keep available for explicit local/browser debugging only."
+        },
+        {
+          "path": "tests/e2e/chat.spec.ts",
+          "reason": "Retired from the supported browser Podman suite because equivalent supported chat/session coverage now lives in the desktop and hosted-web harnesses."
+        },
+        {
+          "path": "tests/e2e/command-palette.spec.ts",
+          "reason": "Retired from the supported browser Podman suite because the supported desktop harness owns the command-palette and terminal-launch coverage."
+        },
+        {
+          "path": "tests/e2e/pi-auth.spec.ts",
+          "reason": "Retired from the supported browser Podman suite because it exercises browser-mock harness auth stubs rather than a supported product surface."
+        },
+        {
+          "path": "tests/e2e/sessions.spec.ts",
+          "reason": "Retired from the supported browser Podman suite because the supported desktop harness is the authoritative session UX coverage path."
+        },
+        {
+          "path": "tests/e2e/task-comment-deletion.spec.ts",
+          "reason": "Retired from the supported browser Podman suite because it duplicates broader supported task comment coverage and remained brittle in the mock browser harness."
+        }
+      ]
+    },
+    {
+      "harness": "hosted-web",
+      "directory": "tests/hosted-web-e2e",
+      "suffix": ".spec.ts",
+      "supportedRunner": "podman",
+      "quarantined": []
+    },
+    {
+      "harness": "web-driver",
+      "directory": "tests/web-driver-e2e",
+      "suffix": ".spec.ts",
+      "supportedRunner": "podman",
+      "quarantined": []
+    }
+  ]
+}

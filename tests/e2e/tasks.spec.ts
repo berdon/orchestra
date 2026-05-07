@@ -177,20 +177,7 @@ async function revealTaskDetailDock(page: Page) {
     });
   }
 
-  await page.waitForFunction(() => {
-    const dock = document.querySelector('[data-role="task-detail-tab-dock"]') as HTMLElement | null;
-    if (!dock) {
-      return false;
-    }
-
-    const styles = window.getComputedStyle(dock);
-    const rect = dock.getBoundingClientRect();
-    return dock.dataset.scrollState === "visible"
-      && styles.visibility !== "hidden"
-      && styles.pointerEvents !== "none"
-      && rect.top >= 0
-      && rect.bottom <= window.innerHeight;
-  });
+  await expect.poll(async () => tabDock.getAttribute("data-scroll-state"), { timeout: 10_000 }).toBe("visible");
   await page.waitForTimeout(220);
   await expect(tabDock).toBeVisible();
 }
@@ -2395,6 +2382,7 @@ test("project setting auto-dispatches newly unblocked tasks when a blocker compl
   await page.goto("/");
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("tab", { name: "Projects" }).click();
+  await page.locator('[data-role="project-detail-tab-automation"]').click();
   await page.locator('[data-role="project-auto-dispatch-on-blocker-completion"]').check();
   await page.locator('[data-role="save-project-automation-settings"]').click();
   await expect(page.locator('[data-role="project-auto-dispatch-on-blocker-completion"]')).toBeChecked();

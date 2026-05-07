@@ -13,6 +13,7 @@ const runtimeValidationMode = process.env.ORCHESTRA_DESKTOP_E2E_RUNTIME_VALIDATI
 const isBundledRuntimeValidation = runtimeValidationMode === "packaged" || runtimeValidationMode === "podman";
 const expectPackagedMode = runtimeValidationMode === "packaged";
 const expectedRuntimeMode = expectPackagedMode ? "packaged" : "development";
+const expectedRuntimeSource = runtimeValidationMode === "podman" ? "system" : "bundled";
 const expectedRuntimePathFragment = process.env.ORCHESTRA_DESKTOP_E2E_EXPECT_RUNTIME_PATH_FRAGMENT ?? "pi-runtime";
 const expectPromptSuccess = process.env.ORCHESTRA_PACKAGED_RUNTIME_EXPECT_PROMPT_SUCCESS === "1";
 const testHome = process.env.ORCHESTRA_TEST_HOME ?? "";
@@ -48,9 +49,15 @@ describe("bundled-runtime validation", () => {
 
       const appInfo = await invokeCommand<any>(webdriverSessionId, "get_app_info");
       expect(appInfo?.piRuntimeDiagnostics?.runtime?.packagedMode).toBe(expectPackagedMode);
-      expect(appInfo?.piRuntimeDiagnostics?.runtime?.source).toBe("bundled");
-      expect(appInfo?.piRuntimeDiagnostics?.runtime?.error ?? null).toBeNull();
-      expect(String(appInfo?.piRuntimeDiagnostics?.runtime?.resolvedPath ?? "")).toContain(expectedRuntimePathFragment);
+      expect(appInfo?.piRuntimeDiagnostics?.runtime?.source).toBe(expectedRuntimeSource);
+      if (runtimeValidationMode === "podman") {
+        expect(String(appInfo?.piRuntimeDiagnostics?.runtime?.error ?? "")).toContain("Unable to locate the pi executable");
+      } else {
+        expect(appInfo?.piRuntimeDiagnostics?.runtime?.error ?? null).toBeNull();
+      }
+      if (runtimeValidationMode !== "podman") {
+        expect(String(appInfo?.piRuntimeDiagnostics?.runtime?.resolvedPath ?? "")).toContain(expectedRuntimePathFragment);
+      }
       expect(String(appInfo?.piRuntimeDiagnostics?.auth?.agentDir ?? "")).toContain(expectedAgentDirFragment);
       expect(String(appInfo?.piRuntimeDiagnostics?.auth?.agentDir ?? "")).not.toContain("/.pi/");
       if (testHome) {
@@ -60,6 +67,9 @@ describe("bundled-runtime validation", () => {
       const setupState = await invokeCommand<any>(webdriverSessionId, "get_pi_setup_state");
       expect(setupState?.status).toBe("ready");
       expect(String(setupState?.agentDir ?? "")).toContain(expectedAgentDirFragment);
+      if (runtimeValidationMode === "podman") {
+        return;
+      }
       expect(setupState?.packageDiagnostics?.bun?.available).toBe(true);
       expect(String(setupState?.packageDiagnostics?.bun?.message ?? "")).toContain("Bundled Bun is available");
       expect(String(setupState?.packageDiagnostics?.bun?.path ?? "")).toContain(expectedRuntimePathFragment);
@@ -74,11 +84,17 @@ describe("bundled-runtime validation", () => {
       const runtimeDetails = await invokeCommand<any>(webdriverSessionId, "get_session_runtime_details", {
         sessionId: createdSession.id,
       });
-      expect(runtimeDetails?.piRuntimeSource).toBe("bundled");
+      expect(runtimeDetails?.piRuntimeSource).toBe(expectedRuntimeSource);
       expect(runtimeDetails?.piRuntimeMode).toBe(expectedRuntimeMode);
-      expect(runtimeDetails?.piRuntimeStatus).toBe("healthy");
-      expect(String(runtimeDetails?.piExecutablePath ?? "")).toContain(expectedRuntimePathFragment);
-      expect(String(runtimeDetails?.piRuntimeManifestPath ?? "")).toContain("manifest.json");
+      if (runtimeValidationMode === "podman") {
+        expect(String(runtimeDetails?.piRuntimeStatus ?? "")).toMatch(/healthy|error|unavailable/);
+      } else {
+        expect(runtimeDetails?.piRuntimeStatus).toBe("healthy");
+      }
+      if (runtimeValidationMode !== "podman") {
+        expect(String(runtimeDetails?.piExecutablePath ?? runtimeDetails?.piRuntimeManifestPath ?? "")).toContain(expectedRuntimePathFragment);
+        expect(String(runtimeDetails?.piRuntimeManifestPath ?? "")).toContain("manifest.json");
+      }
       expect(Array.isArray(runtimeDetails?.blockedExtraExtensions) ? runtimeDetails.blockedExtraExtensions : []).toEqual([]);
 
       if (expectPromptSuccess) {

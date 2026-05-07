@@ -2,32 +2,55 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-JOBS="${DESKTOP_E2E_JOBS:-2}"
-LOG_ROOT="${ROOT_DIR}/.tmp/desktop-e2e"
+HARNESS="${1:-}"
+JOBS="${PLAYWRIGHT_E2E_JOBS:-1}"
+LOG_ROOT="${ROOT_DIR}/.tmp/${HARNESS:-playwright-e2e}"
 mkdir -p "${LOG_ROOT}"
 SUITE_RUN_DIR="$(mktemp -d "${LOG_ROOT}/suite-podman-XXXXXX")"
 SCRIPT_LOG="${SUITE_RUN_DIR}/suite.log"
 
-if [[ "$#" -eq 0 ]]; then
-  AUTO_TEST_FILES=()
-  while IFS= read -r test_file; do
-    if [[ -n "${test_file}" ]]; then
-      AUTO_TEST_FILES+=("${test_file}")
-    fi
-  done < <(node "${ROOT_DIR}/scripts/desktop-e2e-suite.mjs")
-  if (( ${#AUTO_TEST_FILES[@]} == 0 )); then
-    echo "No desktop E2E specs were discovered by tests/e2e-suite.json" >&2
-    exit 1
-  fi
-  set -- "${AUTO_TEST_FILES[@]}"
+if [[ -z "${HARNESS}" ]]; then
+  echo "Usage: $0 <browser|hosted-web|web-driver> [playwright args...]" >&2
+  exit 1
 fi
+shift || true
+
+case "${HARNESS}" in
+  browser|hosted-web|web-driver)
+    ;;
+  *)
+    echo "Unsupported Playwright E2E harness: ${HARNESS}" >&2
+    exit 1
+    ;;
+esac
 
 if ! [[ "${JOBS}" =~ ^[0-9]+$ ]] || (( JOBS < 1 )); then
-  echo "DESKTOP_E2E_JOBS must be a positive integer. Got: ${JOBS}" >&2
+  echo "PLAYWRIGHT_E2E_JOBS must be a positive integer. Got: ${JOBS}" >&2
   exit 1
 fi
 
-"${ROOT_DIR}/scripts/build-desktop-e2e-image.sh"
+positional_args=()
+option_args=()
+for arg in "$@"; do
+  if [[ "${arg}" == tests/* ]]; then
+    positional_args+=("${arg}")
+  else
+    option_args+=("${arg}")
+  fi
+done
+
+if (( ${#positional_args[@]} == 0 )); then
+  AUTO_TEST_FILES=()
+  while IFS= read -r test_file; do
+    [[ -n "${test_file}" ]] || continue
+    AUTO_TEST_FILES+=("${test_file}")
+  done < <(node "${ROOT_DIR}/scripts/e2e-suite.mjs" --harness "${HARNESS}")
+  if (( ${#AUTO_TEST_FILES[@]} == 0 )); then
+    echo "No ${HARNESS} E2E specs were discovered by tests/e2e-suite.json" >&2
+    exit 1
+  fi
+  positional_args=("${AUTO_TEST_FILES[@]}")
+fi
 
 LAUNCHED_PIDS=()
 LAUNCHED_TESTS=()
@@ -53,15 +76,19 @@ trap cleanup EXIT INT TERM
 
 launch_test() {
   local test_file="$1"
-  local test_name
-  local test_log
-  test_name="$(basename "${test_file}" .test.ts)"
-  test_log="${SUITE_RUN_DIR}/${test_name}.log"
+  local test_name="$(basename "${test_file}" .spec.ts)"
+  local test_log="${SUITE_RUN_DIR}/${test_name}.log"
+  local -a command=("${ROOT_DIR}/scripts/run-playwright-e2e-podman.sh" "${HARNESS}")
 
-  echo "==> Running desktop E2E in isolated container: ${test_file}" | tee -a "${SCRIPT_LOG}"
+  if (( ${#option_args[@]} > 0 )); then
+    command+=("${option_args[@]}")
+  fi
+  command+=("${test_file}")
+
+  echo "==> Running ${HARNESS} E2E in isolated Podman container: ${test_file}" | tee -a "${SCRIPT_LOG}"
   (
     cd "${ROOT_DIR}"
-    "${ROOT_DIR}/scripts/run-desktop-e2e-podman.sh" "${test_file}"
+    "${command[@]}"
   ) >"${test_log}" 2>&1 &
 
   LAUNCHED_PIDS+=("$!")
@@ -123,7 +150,7 @@ wait_for_one_completion() {
   done
 }
 
-for test_file in "$@"; do
+for test_file in "${positional_args[@]}"; do
   while (( ${#LAUNCHED_PIDS[@]} >= JOBS )); do
     wait_for_one_completion
   done
@@ -135,8 +162,8 @@ while (( ${#LAUNCHED_PIDS[@]} > 0 )); do
 done
 
 if (( FAILURES > 0 )); then
-  echo "[desktop-e2e-suite-podman] completed with ${FAILURES} failure(s). Logs: ${SUITE_RUN_DIR}" >&2
+  echo "[playwright-e2e-suite-podman] completed with ${FAILURES} failure(s). Logs: ${SUITE_RUN_DIR}" >&2
   exit 1
 fi
 
-echo "[desktop-e2e-suite-podman] all tests passed. Logs: ${SUITE_RUN_DIR}" | tee -a "${SCRIPT_LOG}"
+echo "[playwright-e2e-suite-podman] all ${HARNESS} tests passed. Logs: ${SUITE_RUN_DIR}" | tee -a "${SCRIPT_LOG}"
