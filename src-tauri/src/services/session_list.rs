@@ -925,6 +925,7 @@ mod tests {
             role_instance_id: None,
             prompt: None,
             pending_outcome: None,
+            completion_summary: None,
             completion_notes: None,
             whip_count: 0,
             last_whip_at: None,

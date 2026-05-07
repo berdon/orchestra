@@ -1160,6 +1160,15 @@ pub fn get_session_path(session_dir: &Path, session_id: &str) -> Result<PathBuf,
         {
             return Ok(registered.session_path);
         }
+        if let Some(path) = discover_session_path_in_dir(&context.session_dir, session_id)? {
+            let _ = repair_canonical_session_row_from_path(
+                &connection,
+                &context,
+                session_id,
+                &path,
+            );
+            return Ok(path);
+        }
         return Err(format!(
             "Session {session_id} was not found in canonical session rows for project {}; run explicit session reconciliation to inspect legacy drift",
             context.project_slug
@@ -1515,29 +1524,40 @@ fn resolve_session(
         let connection = database::open_connection()?;
         let registered = registered_session_context(session_id)
             .filter(|registered| registered.session_path.parent() == Some(session_dir));
-        let path = resolve_session_path_with_canonical(&connection, &context, session_id)?
-            .or_else(|| registered.as_ref().map(|registered| registered.session_path.clone()))
-            .ok_or_else(|| {
-                format!(
-                    "Session {session_id} was not found in canonical session rows for project {}; run explicit session reconciliation to inspect legacy drift",
-                    context.project_slug
-                )
-            })?;
+        let path = if let Some(path) =
+            resolve_session_path_with_canonical(&connection, &context, session_id)?
+        {
+            path
+        } else if let Some(registered) = registered.as_ref() {
+            registered.session_path.clone()
+        } else if let Some(path) = discover_session_path_in_dir(&context.session_dir, session_id)? {
+            let _ = repair_canonical_session_row_from_path(
+                &connection,
+                &context,
+                session_id,
+                &path,
+            );
+            path
+        } else {
+            return Err(format!(
+                "Session {session_id} was not found in canonical session rows for project {}; run explicit session reconciliation to inspect legacy drift",
+                context.project_slug
+            ));
+        };
 
+        let parsed = parse_session_file(&path, subscribed)?;
         if let Some(row) = session_records::load_session_row(&connection, session_id)? {
-            let parsed = parse_session_file(&path, subscribed)?;
             let mut record = row.to_record(subscribed);
             record.title = parsed.record.title;
             record.status = parsed.record.status;
             record.updated_at = parsed.record.updated_at;
             record.events = parsed.record.events;
             Ok(StoredSession { path, record })
-        } else if registered.is_some() {
-            parse_session_file(&path, subscribed)
         } else {
-            Err(format!(
-                "Session {session_id} was not found in canonical session rows; run explicit session reconciliation to inspect legacy drift"
-            ))
+            Ok(StoredSession {
+                path,
+                record: parsed.record,
+            })
         }
     } else {
         if !session_dir.exists() {

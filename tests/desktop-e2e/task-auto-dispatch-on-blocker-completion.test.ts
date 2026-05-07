@@ -507,6 +507,7 @@ describe("desktop auto dispatch on blocker completion", () => {
 
         await invokeCommand(sessionId, "complete_lane_as_success", {
           taskId: blockerTask.id,
+          summary: "Implementation complete and ready for the Test lane.",
           notes: "Implementation ready for Test in desktop test.",
         });
 
@@ -535,6 +536,7 @@ describe("desktop auto dispatch on blocker completion", () => {
 
         await invokeCommand(sessionId, "complete_lane_as_success", {
           taskId: blockerTask.id,
+          summary: "Test lane complete and blocker fully finished.",
           notes: "Finished blocker in desktop test.",
         });
 
@@ -788,6 +790,7 @@ describe("desktop auto dispatch on blocker completion", () => {
 
         await invokeCommand(sessionId, "complete_lane_as_success", {
           taskId: blockerTask.id,
+          summary: "Test lane complete and blocker fully finished.",
           notes: "Finished blocker in desktop test.",
         });
 

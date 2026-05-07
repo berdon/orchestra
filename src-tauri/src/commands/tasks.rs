@@ -1165,9 +1165,10 @@ pub async fn complete_lane_as_success(
     app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
+    summary: String,
     notes: Option<String>,
 ) -> Result<TaskDetail, String> {
-    complete_lane_command(app, state, task_id, notes, "success").await
+    complete_lane_command(app, state, task_id, summary, notes, "success").await
 }
 
 #[tauri::command]
@@ -1175,9 +1176,10 @@ pub async fn complete_lane_as_failure(
     app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
+    summary: String,
     notes: Option<String>,
 ) -> Result<TaskDetail, String> {
-    complete_lane_command(app, state, task_id, notes, "failure").await
+    complete_lane_command(app, state, task_id, summary, notes, "failure").await
 }
 
 #[tauri::command]
@@ -1185,9 +1187,10 @@ pub async fn request_user_intervention(
     app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
+    summary: String,
     notes: Option<String>,
 ) -> Result<TaskDetail, String> {
-    complete_lane_command(app, state, task_id, notes, "needs_user").await
+    complete_lane_command(app, state, task_id, summary, notes, "needs_user").await
 }
 
 #[tauri::command]
@@ -1838,6 +1841,7 @@ async fn complete_lane_command(
     app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
+    summary: String,
     notes: Option<String>,
     outcome: &str,
 ) -> Result<TaskDetail, String> {
@@ -1856,7 +1860,8 @@ async fn complete_lane_command(
                 &context.project_root,
                 &context.session_dir,
                 &task_id,
-                notes,
+                Some(summary.clone()),
+                notes.clone(),
                 Some(&app),
                 None,
             )?,
@@ -1865,7 +1870,8 @@ async fn complete_lane_command(
                 &context.project_root,
                 &context.session_dir,
                 &task_id,
-                notes,
+                Some(summary.clone()),
+                notes.clone(),
                 Some(&app),
                 None,
             )?,
@@ -1874,7 +1880,8 @@ async fn complete_lane_command(
                 &context.project_root,
                 &context.session_dir,
                 &task_id,
-                notes,
+                Some(summary.clone()),
+                notes.clone(),
                 Some(&app),
                 None,
             )?,
@@ -1940,6 +1947,8 @@ async fn complete_lane_command(
                 "workflowId": task.workflow_id.clone(),
                 "laneId": task.current_lane_id.clone(),
                 "outcome": outcome,
+                "summary": summary,
+                "notes": notes,
             }),
         );
 

@@ -415,9 +415,12 @@ describe("orchestra tools extension bridge tool setup", () => {
 
     const completionTool = registeredTools.find((tool) => tool.name === "complete_lane_as_success");
     expect(completionTool.parameters.properties.taskId).toBeTruthy();
+    expect(completionTool.parameters.properties.summary).toBeTruthy();
+    expect(completionTool.parameters.required).toContain("summary");
     expect(completionTool.parameters.properties.inputJson).toBeUndefined();
     const result = await completionTool.execute("tool-call-1", {
       taskId: "task-1",
+      summary: "Implementation complete and ready to hand off.",
       notes: "Ship it",
     });
 
@@ -573,7 +576,11 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(fetchMock).toHaveBeenCalledTimes(21);
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.command).toBe("complete_lane_as_success");
-    expect(request.payload).toEqual({ taskId: "task-1", notes: "Ship it" });
+    expect(request.payload).toEqual({
+      taskId: "task-1",
+      summary: "Implementation complete and ready to hand off.",
+      notes: "Ship it",
+    });
     const relaneRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(relaneRequest.command).toBe("reassign_task_to_lane");
     expect(relaneRequest.payload).toEqual({

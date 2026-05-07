@@ -2206,6 +2206,7 @@ test("session detail only shows active task navigation when the session still ow
           comments: [],
           todos: [],
           laneRuns: [],
+  laneSummaries: [],
           activeLaneAssignment: {
             id: "assignment-linked",
             taskId: "task-linked",

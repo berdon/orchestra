@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -15,8 +15,8 @@ use crate::{
     models::{
         AuthorizationContext, TaskComment, TaskCommentAnchor, TaskCommentDeleteImpact,
         TaskCommentDomAnchor, TaskCommentFileAnchor, TaskCommentInput, TaskCommentReceipt,
-        TaskDependency, TaskDetail, TaskLaneAssignment, TaskLaneRun, TaskSummary, TaskTodo,
-        TaskTodoInput, TaskUpsertInput,
+        TaskDependency, TaskDetail, TaskLaneAssignment, TaskLaneRun, TaskLaneSummary,
+        TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
     },
     services::{
         orchestra_paths::{default_orchestra_root, task_attachments_dir},
@@ -476,6 +476,7 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
                     comments: Vec::new(),
                     todos: Vec::new(),
                     lane_runs: Vec::new(),
+                    lane_summaries: Vec::new(),
                     active_lane_assignment: None,
                     created_at: row.get(29)?,
                     updated_at: row.get(30)?,
@@ -519,6 +520,12 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
     task.comments = load_task_comments(connection, task_id)?;
     task.todos = load_task_todos(connection, task_id, None, None)?;
     task.lane_runs = load_task_lane_runs(connection, task_id)?;
+    task.lane_summaries = load_task_lane_summaries(
+        connection,
+        task.workflow_id.as_deref(),
+        task.active_lane_assignment.as_ref(),
+        &task.lane_runs,
+    )?;
     Ok(task)
 }
 
@@ -2294,7 +2301,7 @@ fn load_task_lane_runs(connection: &Connection, task_id: &str) -> Result<Vec<Tas
     let mut statement = connection
         .prepare(
             r#"
-            SELECT id, task_id, lane_id, session_id, result, notes, started_at, completed_at
+            SELECT id, task_id, lane_id, session_id, result, summary, notes, started_at, completed_at
             FROM task_lane_runs
             WHERE task_id = ?1
             ORDER BY started_at ASC, id ASC
@@ -2310,15 +2317,127 @@ fn load_task_lane_runs(connection: &Connection, task_id: &str) -> Result<Vec<Tas
                 lane_id: row.get(2)?,
                 session_id: row.get(3)?,
                 result: row.get(4)?,
-                notes: row.get(5)?,
-                started_at: row.get(6)?,
-                completed_at: row.get(7)?,
+                summary: row.get(5)?,
+                notes: row.get(6)?,
+                started_at: row.get(7)?,
+                completed_at: row.get(8)?,
             })
         })
         .map_err(|error| format!("Unable to read task lane runs for {task_id}: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Unable to collect task lane runs for {task_id}: {error}"))
+}
+
+fn load_task_lane_summaries(
+    connection: &Connection,
+    workflow_id: Option<&str>,
+    active_lane_assignment: Option<&TaskLaneAssignment>,
+    lane_runs: &[TaskLaneRun],
+) -> Result<Vec<TaskLaneSummary>, String> {
+    let mut summaries_by_lane = BTreeMap::<String, TaskLaneSummary>::new();
+
+    if let Some(assignment) = active_lane_assignment.filter(|assignment| {
+        matches!(
+            assignment.status.as_str(),
+            "awaiting_user_approval" | "awaiting_user_intervention"
+        )
+    }) {
+        if let Some(summary) = assignment.completion_summary.as_ref() {
+            summaries_by_lane.insert(
+                assignment.lane_id.clone(),
+                TaskLaneSummary {
+                    lane_id: assignment.lane_id.clone(),
+                    lane_name: None,
+                    summary: summary.clone(),
+                    outcome: assignment.pending_outcome.clone(),
+                    pending: true,
+                    session_id: assignment.session_id.clone(),
+                    updated_at: assignment.updated_at.clone(),
+                },
+            );
+        }
+    }
+
+    for lane_run in lane_runs.iter().rev() {
+        let Some(summary) = lane_run.summary.as_ref() else {
+            continue;
+        };
+        summaries_by_lane
+            .entry(lane_run.lane_id.clone())
+            .or_insert_with(|| TaskLaneSummary {
+                lane_id: lane_run.lane_id.clone(),
+                lane_name: None,
+                summary: summary.clone(),
+                outcome: Some(lane_run.result.clone()),
+                pending: false,
+                session_id: Some(lane_run.session_id.clone()),
+                updated_at: lane_run.completed_at.clone().unwrap_or_else(|| lane_run.started_at.clone()),
+            });
+    }
+
+    if summaries_by_lane.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let lane_metadata = if let Some(workflow_id) = workflow_id {
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT id, name, lane_order
+                FROM workflow_lanes
+                WHERE workflow_id = ?1
+                ORDER BY lane_order ASC, id ASC
+                "#,
+            )
+            .map_err(|error| format!("Unable to prepare workflow lane summary query: {error}"))?;
+        let rows = statement
+            .query_map([workflow_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(|error| format!("Unable to read workflow lanes for {workflow_id}: {error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Unable to collect workflow lanes for {workflow_id}: {error}"))?
+    } else {
+        Vec::new()
+    };
+
+    let lane_order_lookup = lane_metadata
+        .iter()
+        .enumerate()
+        .map(|(fallback_index, (lane_id, lane_name, lane_order))| {
+            (lane_id.clone(), (*lane_order, fallback_index, Some(lane_name.clone())))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let mut summaries = summaries_by_lane.into_values().collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        let left_meta = lane_order_lookup
+            .get(&left.lane_id)
+            .cloned()
+            .unwrap_or((i64::MAX, usize::MAX, None));
+        let right_meta = lane_order_lookup
+            .get(&right.lane_id)
+            .cloned()
+            .unwrap_or((i64::MAX, usize::MAX, None));
+        left_meta
+            .0
+            .cmp(&right_meta.0)
+            .then(left_meta.1.cmp(&right_meta.1))
+            .then(left.lane_id.cmp(&right.lane_id))
+    });
+
+    for summary in &mut summaries {
+        summary.lane_name = lane_order_lookup
+            .get(&summary.lane_id)
+            .and_then(|(_, _, lane_name)| lane_name.clone());
+    }
+
+    Ok(summaries)
 }
 
 fn load_task_todos(
@@ -3520,6 +3639,48 @@ mod tests {
             .into_iter()
             .map(|task| task.title)
             .collect()
+    }
+
+    #[test]
+    fn get_task_context_derives_lane_summaries_from_pending_assignments_and_lane_runs() {
+        let mut connection = in_memory_connection();
+        seed_multi_lane_workflow(&connection);
+
+        let task = create_named_task(&mut connection, "Lane summaries target", "in_review", None);
+        let now = now_iso();
+        connection
+            .execute(
+                "UPDATE tasks SET current_lane_id = 'lane-review', status = 'in_review', assignee_type = 'user', assignee_id = NULL, updated_at = ?2 WHERE id = ?1",
+                params![task.id, now],
+            )
+            .expect("task should move to review lane");
+        connection
+            .execute(
+                "INSERT INTO task_lane_runs (id, task_id, lane_id, session_id, result, summary, notes, started_at, completed_at) VALUES ('lane-run-plan', ?1, 'lane-plan', 'session-plan', 'success', 'Defined the implementation plan.', 'Planning notes.', ?2, ?2)",
+                params![task.id, now],
+            )
+            .expect("plan lane run should insert");
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, pending_outcome, completion_summary, completion_notes, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-review', ?1, 'workflow-dev', 'lane-review', 'agent', 'agent-review', 'awaiting_user_approval', 'session-review', '/tmp/review', NULL, NULL, 'Prompt', 'success', 'Implementation is complete and ready for approval.', 'All review checks passed.', 0, NULL, ?2, NULL, ?2, ?2)",
+                params![task.id, now],
+            )
+            .expect("pending review assignment should insert");
+
+        let loaded = get_task_context(&connection, &task.id).expect("task context should load");
+        assert_eq!(loaded.lane_summaries.len(), 2);
+        assert_eq!(loaded.lane_summaries[0].lane_id, "lane-plan");
+        assert_eq!(loaded.lane_summaries[0].lane_name.as_deref(), Some("Plan"));
+        assert_eq!(loaded.lane_summaries[0].summary, "Defined the implementation plan.");
+        assert!(!loaded.lane_summaries[0].pending);
+        assert_eq!(loaded.lane_summaries[1].lane_id, "lane-review");
+        assert_eq!(loaded.lane_summaries[1].lane_name.as_deref(), Some("Review"));
+        assert_eq!(
+            loaded.lane_summaries[1].summary,
+            "Implementation is complete and ready for approval."
+        );
+        assert!(loaded.lane_summaries[1].pending);
+        assert_eq!(loaded.lane_summaries[1].outcome.as_deref(), Some("success"));
     }
 
     #[test]
@@ -5211,6 +5372,7 @@ mod tests {
             role_instance_id: None,
             prompt: Some("Prompt".into()),
             pending_outcome: None,
+            completion_summary: None,
             completion_notes: None,
             whip_count: 0,
             last_whip_at: None,
@@ -5335,6 +5497,7 @@ mod tests {
             role_instance_id: None,
             prompt: Some("Prompt".into()),
             pending_outcome: None,
+            completion_summary: None,
             completion_notes: None,
             whip_count: 0,
             last_whip_at: None,

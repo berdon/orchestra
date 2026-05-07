@@ -81,6 +81,7 @@ import type {
   TaskDetail,
   TaskLaneAssignment,
   TaskLaneRun,
+  TaskLaneSummary,
   TaskListOptions,
   TaskScheduleDetail,
   TaskScheduleOccurrence,
@@ -1141,6 +1142,7 @@ function seedMockTasks(): TaskDetail[] {
       comments: [],
       todos: [],
       laneRuns: [],
+      laneSummaries: [],
     },
     {
       id: planningTaskId,
@@ -1213,6 +1215,7 @@ function seedMockTasks(): TaskDetail[] {
             } satisfies TaskLaneRun,
           ]
         : [],
+      laneSummaries: [],
     },
     {
       id: blockedTaskId,
@@ -1259,6 +1262,7 @@ function seedMockTasks(): TaskDetail[] {
       comments: [],
       todos: [],
       laneRuns: [],
+      laneSummaries: [],
     },
   ];
 
@@ -2087,14 +2091,71 @@ function dedupeMockTaskIds(taskIds: string[]) {
   return [...new Set(taskIds)];
 }
 
+function deriveMockLaneSummaries(task: TaskDetail | StoredMockTask): TaskLaneSummary[] {
+  const workflow = task.workflowId
+    ? ensureMockWorkflows().find((entry) => entry.id === task.workflowId) ?? null
+    : null;
+  const laneLookup = new Map(
+    (workflow?.lanes ?? []).map((lane) => [lane.id, lane]),
+  );
+  const byLane = new Map<string, TaskLaneSummary>();
+
+  const assignment = task.activeLaneAssignment;
+  if (
+    assignment?.completionSummary &&
+    ["awaiting_user_approval", "awaiting_user_intervention"].includes(
+      assignment.status,
+    )
+  ) {
+    byLane.set(assignment.laneId, {
+      laneId: assignment.laneId,
+      laneName: laneLookup.get(assignment.laneId)?.name ?? null,
+      summary: assignment.completionSummary,
+      outcome: assignment.pendingOutcome ?? null,
+      pending: true,
+      sessionId: assignment.sessionId ?? null,
+      updatedAt: assignment.updatedAt,
+    });
+  }
+
+  for (const laneRun of [...task.laneRuns].reverse()) {
+    if (!laneRun.summary || byLane.has(laneRun.laneId)) {
+      continue;
+    }
+    byLane.set(laneRun.laneId, {
+      laneId: laneRun.laneId,
+      laneName: laneLookup.get(laneRun.laneId)?.name ?? null,
+      summary: laneRun.summary,
+      outcome: laneRun.result,
+      pending: false,
+      sessionId: laneRun.sessionId,
+      updatedAt: laneRun.completedAt ?? laneRun.startedAt,
+    });
+  }
+
+  return [...byLane.values()].sort((left, right) => {
+    const leftOrder = laneLookup.get(left.laneId)?.order ?? Number.MAX_SAFE_INTEGER;
+    const rightOrder = laneLookup.get(right.laneId)?.order ?? Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return left.laneId.localeCompare(right.laneId);
+  });
+}
+
 function ensureStoredMockTask(
   task: TaskDetail | StoredMockTask,
 ): StoredMockTask {
-  return {
+  const normalizedTask = {
     ...task,
     tags: normalizeMockTaskTags(task.tags),
     autoBlockedByDependencies:
       (task as StoredMockTask).autoBlockedByDependencies ?? false,
+  } as StoredMockTask;
+
+  return {
+    ...normalizedTask,
+    laneSummaries: deriveMockLaneSummaries(normalizedTask),
   };
 }
 
@@ -2753,6 +2814,7 @@ function normalizeMockTaskInput(
     comments: existingTask?.comments ?? [],
     todos: existingTask?.todos ?? [],
     laneRuns: existingTask?.laneRuns ?? [],
+    laneSummaries: existingTask?.laneSummaries ?? [],
   };
 }
 
@@ -6019,6 +6081,7 @@ function resolveMockTaskTodo(todoId: string) {
 async function completeMockTaskLane(
   taskId: string,
   outcome: "success" | "failure" | "needs_user",
+  summary: string,
   notes?: string,
 ): Promise<TaskDetail> {
   const tasks = ensureMockTasks();
@@ -6035,6 +6098,13 @@ async function completeMockTaskLane(
   }
 
   const updatedAt = nowIso();
+  const normalizedSummary = summary.trim();
+  if (!normalizedSummary) {
+    throw new Error("summary: A lane summary is required when closing a lane transition.");
+  }
+  if (Array.from(normalizedSummary).length > 500) {
+    throw new Error("summary: Lane summaries must be 500 characters or fewer.");
+  }
   const normalizedNotes = notes?.trim() || null;
   const unfinishedLaneTodos = listMockTaskTodos(taskId, lane.id, false);
   if (unfinishedLaneTodos.length > 0) {
@@ -6062,6 +6132,7 @@ async function completeMockTaskLane(
                   ? {
                       ...run,
                       result: "blocked" as const,
+                      summary: normalizedSummary,
                       notes: normalizedNotes ?? run.notes ?? null,
                       completedAt: updatedAt,
                     }
@@ -6078,7 +6149,7 @@ async function completeMockTaskLane(
       {
         ...task,
         activeLaneAssignment: task.activeLaneAssignment
-          ? { ...task.activeLaneAssignment, completionNotes: normalizedNotes }
+          ? { ...task.activeLaneAssignment, completionSummary: normalizedSummary, completionNotes: normalizedNotes }
           : null,
       },
       "success",
@@ -6117,10 +6188,22 @@ async function completeMockTaskLane(
                     ...entry.activeLaneAssignment,
                     status: "awaiting_user_approval",
                     pendingOutcome: "success",
+                    completionSummary: normalizedSummary,
                     completionNotes: normalizedNotes,
                     updatedAt,
                   }
                 : null,
+              laneRuns: entry.laneRuns.map((run, index, allRuns) =>
+                index === allRuns.length - 1 && run.completedAt == null
+                  ? {
+                      ...run,
+                      result: outcome,
+                      summary: normalizedSummary,
+                      notes: normalizedNotes ?? run.notes ?? null,
+                      completedAt: updatedAt,
+                    }
+                  : run,
+              ),
               updatedAt,
             }
           : entry,
@@ -6166,10 +6249,22 @@ async function completeMockTaskLane(
                     ...entry.activeLaneAssignment,
                     status: "awaiting_user_intervention",
                     pendingOutcome: "needs_user",
+                    completionSummary: normalizedSummary,
                     completionNotes: normalizedNotes,
                     updatedAt,
                   }
                 : null,
+              laneRuns: entry.laneRuns.map((run, index, allRuns) =>
+                index === allRuns.length - 1 && run.completedAt == null
+                  ? {
+                      ...run,
+                      result: outcome,
+                      summary: normalizedSummary,
+                      notes: normalizedNotes ?? run.notes ?? null,
+                      completedAt: updatedAt,
+                    }
+                  : run,
+              ),
               updatedAt,
             }
           : entry,
@@ -6255,6 +6350,7 @@ async function completeMockTaskLane(
           ? {
               ...run,
               result: outcome,
+              summary: normalizedSummary,
               notes: normalizedNotes ?? run.notes ?? null,
               completedAt: updatedAt,
             }
@@ -6317,7 +6413,7 @@ async function completeMockTaskLane(
     {
       ...task,
       activeLaneAssignment: task.activeLaneAssignment
-        ? { ...task.activeLaneAssignment, completionNotes: normalizedNotes }
+        ? { ...task.activeLaneAssignment, completionSummary: normalizedSummary, completionNotes: normalizedNotes }
         : null,
     },
     outcome,
@@ -6349,6 +6445,8 @@ async function completeMockTaskLane(
       taskId,
       status: updatedTask.status,
       outcome,
+      summary: normalizedSummary,
+      notes: normalizedNotes,
       workflowId: updatedTask.workflowId ?? null,
       laneId: updatedTask.currentLaneId ?? null,
     },
@@ -6635,10 +6733,27 @@ async function sendMockLaneBackForWork(taskId: string): Promise<TaskDetail> {
                   ...entry.activeLaneAssignment,
                   status: "active",
                   pendingOutcome: null,
+                  completionSummary: null,
                   completionNotes: null,
                   updatedAt,
                 }
               : null,
+            laneRuns: entry.activeLaneAssignment?.sessionId
+              ? [
+                  ...entry.laneRuns,
+                  {
+                    id: createId("lane-run"),
+                    taskId: entry.id,
+                    laneId: entry.activeLaneAssignment.laneId,
+                    sessionId: entry.activeLaneAssignment.sessionId,
+                    result: "needs_user" as const,
+                    summary: null,
+                    notes: null,
+                    startedAt: updatedAt,
+                    completedAt: null,
+                  },
+                ]
+              : entry.laneRuns,
             updatedAt,
           }
         : entry,
@@ -6879,35 +6994,38 @@ async function reassignMockTaskToLane(
 
 export async function completeLaneAsSuccess(
   taskId: string,
+  summary: string,
   notes?: string,
 ): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
-    return completeMockTaskLane(taskId, "success", notes);
+    return completeMockTaskLane(taskId, "success", summary, notes);
   }
 
-  return invoke<TaskDetail>("complete_lane_as_success", { taskId, notes });
+  return invoke<TaskDetail>("complete_lane_as_success", { taskId, summary, notes });
 }
 
 export async function completeLaneAsFailure(
   taskId: string,
+  summary: string,
   notes?: string,
 ): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
-    return completeMockTaskLane(taskId, "failure", notes);
+    return completeMockTaskLane(taskId, "failure", summary, notes);
   }
 
-  return invoke<TaskDetail>("complete_lane_as_failure", { taskId, notes });
+  return invoke<TaskDetail>("complete_lane_as_failure", { taskId, summary, notes });
 }
 
 export async function requestUserIntervention(
   taskId: string,
+  summary: string,
   notes?: string,
 ): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
-    return completeMockTaskLane(taskId, "needs_user", notes);
+    return completeMockTaskLane(taskId, "needs_user", summary, notes);
   }
 
-  return invoke<TaskDetail>("request_user_intervention", { taskId, notes });
+  return invoke<TaskDetail>("request_user_intervention", { taskId, summary, notes });
 }
 
 export async function approveTaskReview(taskId: string): Promise<TaskDetail> {

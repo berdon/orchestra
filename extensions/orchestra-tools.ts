@@ -657,6 +657,10 @@ function reminderInputSchema() {
   );
 }
 
+function completionTransitionExamples(taskId = "task-123") {
+  return [{ taskId, summary: "Implementation complete and ready to hand off.", notes: "Tests passed." }];
+}
+
 function transitionExamples(taskId = "task-123") {
   return [{ taskId, notes: "Implementation complete. Tests passed." }];
 }
@@ -2198,7 +2202,33 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     };
   }
 
-  if (["complete_lane_as_success", "complete_lane_as_failure", "request_user_intervention", "mark_task_needs_work", "resume_task_lane", "pause_task_lane", "stop_task_activity"].includes(tool.name)) {
+  if (["complete_lane_as_success", "complete_lane_as_failure", "request_user_intervention"].includes(tool.name)) {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, required summary, and optionally notes.`,
+      helpExamples: completionTransitionExamples(),
+      parameters: Type.Object({
+        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        summary: Type.String({ description: "Required concise lane summary describing what happened in this lane." }),
+        notes: Type.Optional(Type.String({ description: "Optional notes describing the outcome, status, or reason for the transition." })),
+      }),
+      async execute(_toolCallId: string, params: { taskId: string; summary: string; notes?: string }) {
+        const payload = {
+          taskId: params.taskId,
+          summary: params.summary,
+          ...(params.notes !== undefined ? { notes: params.notes } : {}),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (["mark_task_needs_work", "resume_task_lane", "pause_task_lane", "stop_task_activity"].includes(tool.name)) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,

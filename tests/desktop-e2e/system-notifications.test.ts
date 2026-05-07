@@ -148,6 +148,7 @@ describe("desktop system notifications", () => {
 
       await invokeCommand(sessionId, "complete_lane_as_success", {
         taskId: task.id,
+        summary: "Ready for approval after the worker completed the lane.",
         notes: "Please verify the lane output before approving.",
       });
 

@@ -52,7 +52,7 @@ async function completeTaskLaneWithRetries(sessionId: string, taskId: string, ti
       return task;
     }
     try {
-      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId, notes: null });
+      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId, summary: 'Completed the lane and handed it off for approval.', notes: null });
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }
@@ -513,6 +513,7 @@ describe("desktop approval-gated workflow lanes", () => {
 
       await invokeCommand(sessionId, 'request_user_intervention', {
         taskId: createdTask!.id,
+        summary: 'Blocked on a user decision before I can continue.',
         notes: 'Need the user to weigh in before continuing.',
       });
 
@@ -640,6 +641,7 @@ describe("desktop approval-gated workflow lanes", () => {
 
       await invokeCommand(sessionId, 'request_user_intervention', {
         taskId: createdTask!.id,
+        summary: 'Pausing this lane for user intervention during the regression flow.',
         notes: 'Pause so the desktop regression can send a direct session message.',
       });
 

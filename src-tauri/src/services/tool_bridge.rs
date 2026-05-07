@@ -2166,6 +2166,7 @@ fn invoke_bridge_command(
         }
         "complete_lane_as_success" => {
             let task_id = require_string(&payload, "taskId")?;
+            let summary = require_string(&payload, "summary")?;
             let notes = payload
                 .get("notes")
                 .and_then(Value::as_str)
@@ -2179,12 +2180,14 @@ fn invoke_bridge_command(
             let mut writable = database::open_connection()?;
             let previous_assignment =
                 crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
-            let task = crate::services::task_runtime::complete_lane_as_success(
+            let task = crate::services::task_runtime::complete_lane_as_success_with_app(
                 &mut writable,
                 &context.project_root,
                 &context.session_dir,
                 &task_id,
+                Some(summary),
                 notes,
+                None,
                 authorization,
             )?;
             let auto_dispatches =
@@ -2239,6 +2242,7 @@ fn invoke_bridge_command(
         }
         "complete_lane_as_failure" => {
             let task_id = require_string(&payload, "taskId")?;
+            let summary = require_string(&payload, "summary")?;
             let notes = payload
                 .get("notes")
                 .and_then(Value::as_str)
@@ -2252,12 +2256,14 @@ fn invoke_bridge_command(
             let mut writable = database::open_connection()?;
             let previous_assignment =
                 crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
-            let task = crate::services::task_runtime::complete_lane_as_failure(
+            let task = crate::services::task_runtime::complete_lane_as_failure_with_app(
                 &mut writable,
                 &context.project_root,
                 &context.session_dir,
                 &task_id,
+                Some(summary),
                 notes,
+                None,
                 authorization,
             )?;
             let auto_dispatches =
@@ -2312,6 +2318,7 @@ fn invoke_bridge_command(
         }
         "request_user_intervention" => {
             let task_id = require_string(&payload, "taskId")?;
+            let summary = require_string(&payload, "summary")?;
             let notes = payload
                 .get("notes")
                 .and_then(Value::as_str)
@@ -2325,12 +2332,14 @@ fn invoke_bridge_command(
             let mut writable = database::open_connection()?;
             let previous_assignment =
                 crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
-            let task = crate::services::task_runtime::request_user_intervention(
+            let task = crate::services::task_runtime::request_user_intervention_with_app(
                 &mut writable,
                 &context.project_root,
                 &context.session_dir,
                 &task_id,
+                Some(summary),
                 notes,
+                None,
                 authorization,
             )?;
             if let Some(session_id) =

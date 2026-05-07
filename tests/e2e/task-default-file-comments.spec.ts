@@ -72,6 +72,7 @@ test("task detail supports quick comments, line comments, replies, and viewer co
         ],
         comments: [],
         laneRuns: [],
+  laneSummaries: [],
         activeLaneAssignment: null,
         createdAt: timestamp,
         updatedAt: timestamp,

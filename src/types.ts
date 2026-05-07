@@ -1674,6 +1674,7 @@ export interface TaskLaneRun {
   sessionId: string;
   sessionTitle?: string | null;
   result: "success" | "failure" | "needs_user" | "canceled" | "blocked";
+  summary?: string | null;
   notes?: string | null;
   startedAt: string;
   completedAt?: string | null;
@@ -1695,12 +1696,23 @@ export interface TaskLaneAssignment {
   roleInstanceId?: string | null;
   prompt?: string | null;
   pendingOutcome?: string | null;
+  completionSummary?: string | null;
   completionNotes?: string | null;
   whipCount?: number;
   lastWhipAt?: string | null;
   startedAt: string;
   completedAt?: string | null;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskLaneSummary {
+  laneId: string;
+  laneName?: string | null;
+  summary: string;
+  outcome?: string | null;
+  pending: boolean;
+  sessionId?: string | null;
   updatedAt: string;
 }
 
@@ -1783,6 +1795,7 @@ export interface TaskDetail extends TaskSummary {
   comments: TaskComment[];
   todos: TaskTodo[];
   laneRuns: TaskLaneRun[];
+  laneSummaries: TaskLaneSummary[];
   activeLaneAssignment?: TaskLaneAssignment | null;
 }
 

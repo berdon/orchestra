@@ -114,7 +114,7 @@ async function waitForTaskAwaitingApproval(sessionId: string, taskId: string, ti
   }
 
   try {
-    await invokeCommand(sessionId, "complete_lane_as_success", { taskId, notes: null });
+    await invokeCommand(sessionId, "complete_lane_as_success", { taskId, summary: "Completed the channel notification lane successfully.", notes: null });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.includes("paused for user review")) {

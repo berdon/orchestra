@@ -250,6 +250,7 @@ test("keyboard navigation scrolls the active command into view", async ({ page }
       updatedAt: timestamp,
       comments: [],
       laneRuns: [],
+  laneSummaries: [],
     }));
     window.localStorage.setItem("orchestra.mock.tasks", JSON.stringify(tasks));
   });

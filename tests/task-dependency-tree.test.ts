@@ -57,6 +57,7 @@ function makeTask(overrides: Partial<TaskDetail> & Pick<TaskDetail, "id" | "numb
     comments: overrides.comments ?? [],
     todos: overrides.todos ?? [],
     laneRuns: overrides.laneRuns ?? [],
+    laneSummaries: overrides.laneSummaries ?? [],
     activeLaneAssignment: overrides.activeLaneAssignment ?? null,
   };
 }

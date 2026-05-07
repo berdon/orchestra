@@ -83,6 +83,7 @@ test("navigation badges reflect unread inbox work and active sessions per projec
           fileReferences: [],
           comments: [],
           laneRuns: [],
+  laneSummaries: [],
           activeLaneAssignment: null,
           createdAt: timestamp,
           updatedAt: timestamp,

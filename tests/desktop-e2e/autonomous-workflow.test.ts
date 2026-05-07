@@ -80,7 +80,7 @@ describe("desktop autonomous workflow", () => {
           "Verify the file exists with the exact contents.",
           "Do not ask questions.",
           "Do not wait for human input.",
-          "When verification succeeds, immediately call complete_lane_as_success with notes 'autonomous desktop e2e complete'.",
+          "When verification succeeds, immediately call complete_lane_as_success with summary 'Autonomous workflow verification complete.' and notes 'autonomous desktop e2e complete'.",
           "If anything fails, immediately call request_user_intervention.",
         ].join(" "),
         provider: "openai-codex",

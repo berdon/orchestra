@@ -26,7 +26,8 @@ const ASSIGNMENT_STATUS_COMPLETED: &str = "completed";
 const ASSIGNMENT_STATUS_FAILED: &str = "failed";
 const ASSIGNMENT_STATUS_CANCELED: &str = "canceled";
 const DEFAULT_TASK_WHIP_MAX_ATTEMPTS: i64 = 10;
-const TASK_WHIP_PROMPT: &str = "Keep working until you are done - when you are done use tool `complete_lane_as_success` (with the task ID and optional notes) unless you believe either you or the task that was sent to you failed - then use tool `complete_lane_as_failure` (with task ID and optional notes). If you believe you need to escalate to the user - use tool `request_user_intervention` (with task ID and optional notes).";
+const MAX_LANE_SUMMARY_LENGTH: usize = 500;
+const TASK_WHIP_PROMPT: &str = "Keep working until you are done - when you are done use tool `complete_lane_as_success` (with the task ID, required lane summary, and optional notes) unless you believe either you or the task that was sent to you failed - then use tool `complete_lane_as_failure` (with task ID, required lane summary, and optional notes). If you believe you need to escalate to the user - use tool `request_user_intervention` (with task ID, required lane summary, and optional notes).";
 
 #[derive(Debug, Clone)]
 pub struct StaleTaskAssignmentCandidate {
@@ -145,6 +146,7 @@ pub fn get_active_lane_assignment(
                 tla.role_instance_id,
                 tla.prompt,
                 tla.pending_outcome,
+                tla.completion_summary,
                 tla.completion_notes,
                 tla.whip_count,
                 tla.last_whip_at,
@@ -194,6 +196,7 @@ pub fn get_current_lane_assignment(
                 tla.role_instance_id,
                 tla.prompt,
                 tla.pending_outcome,
+                tla.completion_summary,
                 tla.completion_notes,
                 tla.whip_count,
                 tla.last_whip_at,
@@ -247,6 +250,7 @@ pub fn find_open_assignment_for_task_lane(
                 role_instance_id,
                 prompt,
                 pending_outcome,
+                completion_summary,
                 completion_notes,
                 whip_count,
                 last_whip_at,
@@ -490,6 +494,7 @@ pub fn get_assignment_by_id(
                 role_instance_id,
                 prompt,
                 pending_outcome,
+                completion_summary,
                 completion_notes,
                 whip_count,
                 last_whip_at,
@@ -584,6 +589,7 @@ pub fn list_current_role_assignments(
                 role_instance_id,
                 prompt,
                 pending_outcome,
+                completion_summary,
                 completion_notes,
                 whip_count,
                 last_whip_at,
@@ -633,6 +639,7 @@ pub fn get_active_assignment_for_session(
                 tla.role_instance_id,
                 tla.prompt,
                 tla.pending_outcome,
+                tla.completion_summary,
                 tla.completion_notes,
                 tla.whip_count,
                 tla.last_whip_at,
@@ -713,6 +720,7 @@ pub fn rotate_open_assignment_session(
         role_instance_id: assignment.role_instance_id.clone(),
         prompt: assignment.prompt.clone(),
         pending_outcome: assignment.pending_outcome.clone(),
+        completion_summary: assignment.completion_summary.clone(),
         completion_notes: assignment.completion_notes.clone(),
         whip_count: assignment.whip_count,
         last_whip_at: assignment.last_whip_at.clone(),
@@ -755,6 +763,7 @@ fn list_open_task_lane_assignments(
                 role_instance_id,
                 prompt,
                 pending_outcome,
+                completion_summary,
                 completion_notes,
                 whip_count,
                 last_whip_at,
@@ -886,7 +895,7 @@ pub fn clear_task_runtime_claims_preserving_status(
     let mut changed = false;
     let cleared_assignments = tx
         .execute(
-            "UPDATE task_lane_assignments SET status = ?2, pending_outcome = NULL, completion_notes = ?4, completed_at = ?3, updated_at = ?3 WHERE task_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')",
+            "UPDATE task_lane_assignments SET status = ?2, pending_outcome = NULL, completion_summary = NULL, completion_notes = ?4, completed_at = ?3, updated_at = ?3 WHERE task_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')",
             params![task_id, ASSIGNMENT_STATUS_CANCELED, now, normalized_notes.as_deref()],
         )
         .map_err(|error| format!("Unable to clear open task lane assignments for blocked task {task_id}: {error}"))?;
@@ -1003,7 +1012,7 @@ pub fn stop_task_activity(
     }
 
     tx.execute(
-        "UPDATE task_lane_assignments SET status = ?2, pending_outcome = NULL, completion_notes = ?4, completed_at = ?3, updated_at = ?3 WHERE task_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')",
+        "UPDATE task_lane_assignments SET status = ?2, pending_outcome = NULL, completion_summary = NULL, completion_notes = ?4, completed_at = ?3, updated_at = ?3 WHERE task_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')",
         params![task_id, ASSIGNMENT_STATUS_CANCELED, now, normalized_notes.as_deref()],
     )
     .map_err(|error| format!("Unable to clear task lane assignments for {task_id}: {error}"))?;
@@ -1112,6 +1121,7 @@ pub fn reset_role_assignments_to_queue(
                 runtime_cwd = NULL,
                 role_instance_id = NULL,
                 pending_outcome = NULL,
+                completion_summary = NULL,
                 completion_notes = NULL,
                 completed_at = NULL,
                 updated_at = ?2
@@ -1491,6 +1501,7 @@ pub fn activate_queued_role_assignments(
                 tla.role_instance_id,
                 tla.prompt,
                 tla.pending_outcome,
+                tla.completion_summary,
                 tla.completion_notes,
                 tla.whip_count,
                 tla.last_whip_at,
@@ -2957,6 +2968,7 @@ pub fn complete_lane_as_success(
         project_root,
         session_dir,
         task_id,
+        notes.clone(),
         notes,
         None,
         authorization,
@@ -2968,6 +2980,7 @@ pub fn complete_lane_as_success_with_app(
     project_root: &Path,
     session_dir: &Path,
     task_id: &str,
+    summary: Option<String>,
     notes: Option<String>,
     app: Option<&AppHandle>,
     authorization: Option<&AuthorizationContext>,
@@ -2978,6 +2991,7 @@ pub fn complete_lane_as_success_with_app(
         session_dir,
         task_id,
         "success",
+        summary,
         notes,
         app,
         authorization,
@@ -2997,6 +3011,7 @@ pub fn complete_lane_as_failure(
         project_root,
         session_dir,
         task_id,
+        notes.clone(),
         notes,
         None,
         authorization,
@@ -3008,6 +3023,7 @@ pub fn complete_lane_as_failure_with_app(
     project_root: &Path,
     session_dir: &Path,
     task_id: &str,
+    summary: Option<String>,
     notes: Option<String>,
     app: Option<&AppHandle>,
     authorization: Option<&AuthorizationContext>,
@@ -3018,6 +3034,7 @@ pub fn complete_lane_as_failure_with_app(
         session_dir,
         task_id,
         "failure",
+        summary,
         notes,
         app,
         authorization,
@@ -3037,6 +3054,7 @@ pub fn request_user_intervention(
         project_root,
         session_dir,
         task_id,
+        notes.clone(),
         notes,
         None,
         authorization,
@@ -3048,6 +3066,7 @@ pub fn request_user_intervention_with_app(
     project_root: &Path,
     session_dir: &Path,
     task_id: &str,
+    summary: Option<String>,
     notes: Option<String>,
     app: Option<&AppHandle>,
     authorization: Option<&AuthorizationContext>,
@@ -3058,6 +3077,7 @@ pub fn request_user_intervention_with_app(
         session_dir,
         task_id,
         "needs_user",
+        summary,
         notes,
         app,
         authorization,
@@ -3163,6 +3183,7 @@ fn dispatch_role_lane(
         role_instance_id,
         prompt: Some(prompt.to_string()),
         pending_outcome: None,
+        completion_summary: None,
         completion_notes: None,
         whip_count: 0,
         last_whip_at: None,
@@ -3392,6 +3413,7 @@ fn dispatch_agent_lane(
         role_instance_id: None,
         prompt: Some(prompt.to_string()),
         pending_outcome: None,
+        completion_summary: None,
         completion_notes: None,
         whip_count: 0,
         last_whip_at: None,
@@ -3431,6 +3453,7 @@ fn complete_lane(
     session_dir: &Path,
     task_id: &str,
     outcome: &str,
+    summary: Option<String>,
     notes: Option<String>,
     app: Option<&AppHandle>,
     authorization: Option<&AuthorizationContext>,
@@ -3514,16 +3537,18 @@ fn complete_lane(
     }
 
     let now = now_iso();
+    let normalized_summary = normalize_lane_summary(summary)?;
     let normalized_notes = normalize_optional(notes);
 
     if let Some(assignment) = active_assignment.as_ref() {
         if task.status == "blocked" || task.dependency_blocked {
-            update_open_lane_run(
+            update_open_lane_run_with_summary(
                 connection,
                 task_id,
                 &assignment.lane_id,
                 assignment.session_id.as_deref(),
                 "blocked",
+                Some(normalized_summary.clone()),
                 normalized_notes.clone(),
                 &now,
             )?;
@@ -3553,9 +3578,20 @@ fn complete_lane(
             && lane.require_user_approval_on_success
             && matches!(assignment.worker_type.as_str(), "agent" | "role")
         {
+            update_open_lane_run_with_summary(
+                connection,
+                task_id,
+                &assignment.lane_id,
+                assignment.session_id.as_deref(),
+                outcome,
+                Some(normalized_summary.clone()),
+                normalized_notes.clone(),
+                &now,
+            )?;
             mark_assignment_awaiting_user_approval(
                 connection,
                 &assignment.id,
+                &normalized_summary,
                 normalized_notes.clone(),
                 &now,
             )?;
@@ -3574,9 +3610,20 @@ fn complete_lane(
         }
 
         if outcome == "needs_user" && matches!(assignment.worker_type.as_str(), "agent" | "role") {
+            update_open_lane_run_with_summary(
+                connection,
+                task_id,
+                &assignment.lane_id,
+                assignment.session_id.as_deref(),
+                outcome,
+                Some(normalized_summary.clone()),
+                normalized_notes.clone(),
+                &now,
+            )?;
             mark_assignment_awaiting_user_intervention(
                 connection,
                 &assignment.id,
+                &normalized_summary,
                 normalized_notes.clone(),
                 &now,
             )?;
@@ -3594,12 +3641,13 @@ fn complete_lane(
             return Ok(updated);
         }
 
-        update_open_lane_run(
+        update_open_lane_run_with_summary(
             connection,
             task_id,
             &assignment.lane_id,
             assignment.session_id.as_deref(),
             outcome,
+            Some(normalized_summary.clone()),
             normalized_notes.clone(),
             &now,
         )?;
@@ -3672,12 +3720,13 @@ pub fn approve_task_review(
         .ok_or_else(|| format!("Unable to resolve current lane for task {}", task.id))?;
     let now = now_iso();
 
-    update_open_lane_run(
+    update_open_lane_run_with_summary(
         connection,
         task_id,
         &assignment.lane_id,
         assignment.session_id.as_deref(),
         "success",
+        assignment.completion_summary.clone(),
         assignment.completion_notes.clone(),
         &now,
     )?;
@@ -3904,6 +3953,7 @@ fn reactivate_task_lane_assignment(
             UPDATE task_lane_assignments
             SET status = ?2,
                 pending_outcome = NULL,
+                completion_summary = NULL,
                 completion_notes = NULL,
                 updated_at = ?3
             WHERE id = ?1
@@ -4056,6 +4106,10 @@ fn reactivate_task_lane_assignment(
         )
         .map_err(|error| format!("Unable to reactivate task {} for work: {error}", task_id))?;
 
+    if let Some(session_id) = assignment.session_id.as_deref() {
+        ensure_lane_run(connection, task_id, &assignment.lane_id, session_id, &now)?;
+    }
+
     if next_assignment_status == ASSIGNMENT_STATUS_QUEUED {
         activate_queued_role_assignments(connection)?;
     }
@@ -4172,6 +4226,7 @@ pub fn pause_task_lane(
             UPDATE task_lane_assignments
             SET status = ?2,
                 pending_outcome = 'paused',
+                completion_summary = NULL,
                 completion_notes = ?3,
                 updated_at = ?4
             WHERE id = ?1
@@ -4289,6 +4344,7 @@ pub fn send_lane_back_for_work(
 fn mark_assignment_awaiting_user_approval(
     connection: &Connection,
     assignment_id: &str,
+    summary: &str,
     notes: Option<String>,
     now: &str,
 ) -> Result<(), String> {
@@ -4298,13 +4354,15 @@ fn mark_assignment_awaiting_user_approval(
             UPDATE task_lane_assignments
             SET status = ?2,
                 pending_outcome = 'success',
-                completion_notes = ?3,
-                updated_at = ?4
+                completion_summary = ?3,
+                completion_notes = ?4,
+                updated_at = ?5
             WHERE id = ?1
             "#,
             params![
                 assignment_id,
                 ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL,
+                summary,
                 notes,
                 now
             ],
@@ -4321,6 +4379,7 @@ fn mark_assignment_awaiting_user_approval(
 fn mark_assignment_awaiting_user_intervention(
     connection: &Connection,
     assignment_id: &str,
+    summary: &str,
     notes: Option<String>,
     now: &str,
 ) -> Result<(), String> {
@@ -4330,13 +4389,15 @@ fn mark_assignment_awaiting_user_intervention(
             UPDATE task_lane_assignments
             SET status = ?2,
                 pending_outcome = 'needs_user',
-                completion_notes = ?3,
-                updated_at = ?4
+                completion_summary = ?3,
+                completion_notes = ?4,
+                updated_at = ?5
             WHERE id = ?1
             "#,
             params![
                 assignment_id,
                 ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION,
+                summary,
                 notes,
                 now
             ],
@@ -4893,6 +4954,7 @@ fn insert_assignment(
                 role_instance_id,
                 prompt,
                 pending_outcome,
+                completion_summary,
                 completion_notes,
                 whip_count,
                 last_whip_at,
@@ -4901,7 +4963,7 @@ fn insert_assignment(
                 created_at,
                 updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
             "#,
             params![
                 assignment.id,
@@ -4917,6 +4979,7 @@ fn insert_assignment(
                 assignment.role_instance_id,
                 assignment.prompt,
                 assignment.pending_outcome,
+                assignment.completion_summary,
                 assignment.completion_notes,
                 assignment.whip_count,
                 assignment.last_whip_at,
@@ -4978,8 +5041,8 @@ fn ensure_lane_run(
     connection
         .execute(
             r#"
-            INSERT INTO task_lane_runs (id, task_id, lane_id, session_id, result, notes, started_at, completed_at)
-            VALUES (?1, ?2, ?3, ?4, 'needs_user', NULL, ?5, NULL)
+            INSERT INTO task_lane_runs (id, task_id, lane_id, session_id, result, summary, notes, started_at, completed_at)
+            VALUES (?1, ?2, ?3, ?4, 'needs_user', NULL, NULL, ?5, NULL)
             "#,
             params![format!("lane-run-{}", Uuid::new_v4().simple()), task_id, lane_id, session_id, now],
         )
@@ -4993,6 +5056,28 @@ fn update_open_lane_run(
     lane_id: &str,
     session_id: Option<&str>,
     result: &str,
+    notes: Option<String>,
+    now: &str,
+) -> Result<(), String> {
+    update_open_lane_run_with_summary(
+        connection,
+        task_id,
+        lane_id,
+        session_id,
+        result,
+        None,
+        notes,
+        now,
+    )
+}
+
+fn update_open_lane_run_with_summary(
+    connection: &Connection,
+    task_id: &str,
+    lane_id: &str,
+    session_id: Option<&str>,
+    result: &str,
+    summary: Option<String>,
     notes: Option<String>,
     now: &str,
 ) -> Result<(), String> {
@@ -5017,8 +5102,8 @@ fn update_open_lane_run(
     if let Some(lane_run_id) = lane_run_id {
         connection
             .execute(
-                "UPDATE task_lane_runs SET result = ?2, notes = ?3, completed_at = ?4 WHERE id = ?1",
-                params![lane_run_id, result, notes, now],
+                "UPDATE task_lane_runs SET result = ?2, summary = COALESCE(?3, summary), notes = ?4, completed_at = ?5 WHERE id = ?1",
+                params![lane_run_id, result, summary, notes, now],
             )
             .map_err(|error| format!("Unable to update lane run {lane_run_id}: {error}"))?;
     }
@@ -5221,9 +5306,9 @@ fn orchestra_tool_help_block() -> String {
         "- remove_task_dependency(dependency_id): Call this tool only when an existing blocking relationship is no longer true.",
         "- add_task_attachment(task_id, input): Call this tool for artifacts that matter to execution or review, such as notes, logs, screenshots, examples, or generated outputs. Prefer input.filePath for readable session-local files; use input.base64Data when the bytes are already in memory. Relative filePath values resolve from the session cwd.",
         "- remove_task_attachment(attachment_id): Call this tool only to clean up an attachment that is incorrect, outdated, or should not remain attached.",
-        "- complete_lane_as_success(task_id, notes?): Call this tool when you finished the lane's goal and the task should follow the workflow's success transition.",
-        "- complete_lane_as_failure(task_id, notes?): Call this tool when you attempted the lane but the correct workflow outcome is failure, so Orchestra should follow the failure transition.",
-        "- request_user_intervention(task_id, notes?): Call this tool when you are blocked, missing information or permissions, hit a failing transition/completion step, or need a human decision before proceeding.",
+        "- complete_lane_as_success(task_id, summary, notes?): Call this tool when you finished the lane's goal and the task should follow the workflow's success transition. The lane summary is required.",
+        "- complete_lane_as_failure(task_id, summary, notes?): Call this tool when you attempted the lane but the correct workflow outcome is failure, so Orchestra should follow the failure transition. The lane summary is required.",
+        "- request_user_intervention(task_id, summary, notes?): Call this tool when you are blocked, missing information or permissions, hit a failing transition/completion step, or need a human decision before proceeding. The lane summary is required.",
     ]
     .join("\n")
 }
@@ -5233,6 +5318,7 @@ fn orchestra_completion_rules_block() -> String {
         "Critical completion rules:",
         "- You must end this lane by invoking exactly one Orchestra completion tool: complete_lane_as_success, complete_lane_as_failure, or request_user_intervention.",
         "- You are not done and cannot stop until you have actually called one of those tools.",
+        "- Every completion tool requires a concise lane summary. Prepare that summary before you transition.",
         "- Immediately before any completion tool, call get_unread_task_comments for the canonical task ID, review any unread comments, and then call mark_task_comments_read before completing the lane.",
         "- Immediately before any completion tool, call get_unread_mail for the canonical task ID, review any unread mail, and then call mark_mail_read before completing the lane.",
         "- Immediately before any completion tool, call list_unfinished_task_todos for the canonical task ID and current lane. Finish or intentionally reopen every remaining lane todo before you transition.",
@@ -5668,6 +5754,18 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     })
 }
 
+fn normalize_lane_summary(value: Option<String>) -> Result<String, String> {
+    let summary = normalize_optional(value)
+        .ok_or_else(|| "summary: A lane summary is required when closing a lane transition.".to_string())?;
+    if summary.chars().count() > MAX_LANE_SUMMARY_LENGTH {
+        return Err(format!(
+            "summary: Lane summaries must be {} characters or fewer.",
+            MAX_LANE_SUMMARY_LENGTH
+        ));
+    }
+    Ok(summary)
+}
+
 fn read_assignment(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskLaneAssignment> {
     Ok(TaskLaneAssignment {
         id: row.get(0)?,
@@ -5683,13 +5781,14 @@ fn read_assignment(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskLaneAssignme
         role_instance_id: row.get(10)?,
         prompt: row.get(11)?,
         pending_outcome: row.get(12)?,
-        completion_notes: row.get(13)?,
-        whip_count: row.get(14)?,
-        last_whip_at: row.get(15)?,
-        started_at: row.get(16)?,
-        completed_at: row.get(17)?,
-        created_at: row.get(18)?,
-        updated_at: row.get(19)?,
+        completion_summary: row.get(13)?,
+        completion_notes: row.get(14)?,
+        whip_count: row.get(15)?,
+        last_whip_at: row.get(16)?,
+        started_at: row.get(17)?,
+        completed_at: row.get(18)?,
+        created_at: row.get(19)?,
+        updated_at: row.get(20)?,
     })
 }
 
@@ -5945,6 +6044,7 @@ mod tests {
             comments: Vec::new(),
             todos: Vec::new(),
             lane_runs: Vec::new(),
+            lane_summaries: Vec::new(),
             active_lane_assignment: None,
             created_at: now.clone(),
             updated_at: now,
@@ -5970,6 +6070,7 @@ mod tests {
             role_instance_id: None,
             prompt: None,
             pending_outcome: pending_outcome.map(|value| value.to_string()),
+            completion_summary: None,
             completion_notes: None,
             whip_count: 0,
             last_whip_at: None,
@@ -6174,15 +6275,10 @@ mod tests {
         std::fs::create_dir_all(repo_root.join("docs")).expect("docs dir should create");
         std::fs::write(repo_root.join("docs/design.md"), "# Design\n")
             .expect("design file should write");
+        ensure_default_project(&connection);
         connection
             .execute(
-                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', 'repo-prompt', ?1, ?1)",
-                params![now],
-            )
-            .expect("project should insert");
-        connection
-            .execute(
-                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-prompt', 'orchestra', 'orchestra', 'Orchestra repository', ?1, NULL, 'main', ?2, ?2)",
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-prompt', 'orchestra', 'repo-prompt', 'Orchestra repository', ?1, NULL, 'main', ?2, ?2)",
                 params![repo_root.display().to_string(), now],
             )
             .expect("repository should insert");
@@ -6285,11 +6381,12 @@ mod tests {
         assert!(prompt.contains(
             "- mark_mail_read(taskId?, deliveryIds?): After you read and handle unread mail"
         ));
-        assert!(prompt.contains("- complete_lane_as_success(task_id, notes?): Call this tool"));
-        assert!(prompt.contains("- complete_lane_as_failure(task_id, notes?): Call this tool"));
-        assert!(prompt.contains("- request_user_intervention(task_id, notes?): Call this tool"));
+        assert!(prompt.contains("- complete_lane_as_success(task_id, summary, notes?): Call this tool"));
+        assert!(prompt.contains("- complete_lane_as_failure(task_id, summary, notes?): Call this tool"));
+        assert!(prompt.contains("- request_user_intervention(task_id, summary, notes?): Call this tool"));
         assert!(prompt
             .contains("You must end this lane by invoking exactly one Orchestra completion tool"));
+        assert!(prompt.contains("Every completion tool requires a concise lane summary"));
         assert!(prompt
             .contains("Immediately before any completion tool, call get_unread_task_comments"));
         assert!(prompt.contains("Immediately before any completion tool, call get_unread_mail"));
@@ -6349,6 +6446,7 @@ mod tests {
             comments: Vec::new(),
             todos: Vec::new(),
             lane_runs: Vec::new(),
+            lane_summaries: Vec::new(),
         };
         let workflow = WorkflowDefinition {
             id: "workflow-1".into(),
@@ -6494,6 +6592,7 @@ mod tests {
             }],
             todos: Vec::new(),
             lane_runs: Vec::new(),
+            lane_summaries: Vec::new(),
         };
         let workflow = WorkflowDefinition {
             id: "workflow-1".into(),
@@ -6616,6 +6715,7 @@ mod tests {
             comments: Vec::new(),
             todos: Vec::new(),
             lane_runs: Vec::new(),
+            lane_summaries: Vec::new(),
         };
         let workflow = WorkflowDefinition {
             id: "workflow-source-control".into(),
@@ -6741,6 +6841,7 @@ mod tests {
             comments: Vec::new(),
             todos: Vec::new(),
             lane_runs: Vec::new(),
+            lane_summaries: Vec::new(),
         };
         let workflow = WorkflowDefinition {
             id: "workflow-legacy-source-control".into(),
@@ -7082,7 +7183,15 @@ mod tests {
             Some(session_id.as_str())
         );
         assert_eq!(awaiting_review.lane_runs.len(), 1);
-        assert!(awaiting_review.lane_runs[0].completed_at.is_none());
+        assert_eq!(awaiting_review.lane_runs[0].summary.as_deref(), Some("Ready for review"));
+        assert!(awaiting_review.lane_runs[0].completed_at.is_some());
+        assert_eq!(
+            awaiting_review
+                .active_lane_assignment
+                .as_ref()
+                .and_then(|entry| entry.completion_summary.as_deref()),
+            Some("Ready for review")
+        );
         let waiting_ops = role_runtime::get_role_operations(&connection, &role.id)
             .expect("role operations should load while awaiting approval");
         assert_eq!(waiting_ops.active_instance_count, 0);
@@ -7122,6 +7231,8 @@ mod tests {
             tasks::get_task_context(&connection, &task.id).expect("task should reload");
         assert_eq!(reactivated_task.status, "in_progress");
         assert_eq!(reactivated_task.assignee_type, "role");
+        assert_eq!(reactivated_task.lane_runs.len(), 2);
+        assert!(reactivated_task.lane_runs[1].completed_at.is_none());
         let running_ops = role_runtime::get_role_operations(&connection, &role.id)
             .expect("role operations should load after reactivation");
         assert_eq!(running_ops.active_instance_count, 1);
@@ -7163,9 +7274,11 @@ mod tests {
                 .expect("approval should finish the lane");
         assert_eq!(approved.status, "completed");
         assert!(approved.active_lane_assignment.is_none());
-        assert_eq!(approved.lane_runs.len(), 1);
-        assert_eq!(approved.lane_runs[0].result, "success");
-        assert!(approved.lane_runs[0].completed_at.is_some());
+        assert_eq!(approved.lane_runs.len(), 2);
+        assert_eq!(approved.lane_runs[0].summary.as_deref(), Some("Ready for review"));
+        assert_eq!(approved.lane_runs[1].result, "success");
+        assert_eq!(approved.lane_runs[1].summary.as_deref(), Some("Ready again"));
+        assert!(approved.lane_runs[1].completed_at.is_some());
         let completed_ops = role_runtime::get_role_operations(&connection, &role.id)
             .expect("role operations should load after approval");
         assert_eq!(completed_ops.active_instance_count, 0);
@@ -7291,7 +7404,18 @@ mod tests {
             Some(session_id.as_str())
         );
         assert_eq!(awaiting_intervention.lane_runs.len(), 1);
-        assert!(awaiting_intervention.lane_runs[0].completed_at.is_none());
+        assert_eq!(
+            awaiting_intervention.lane_runs[0].summary.as_deref(),
+            Some("Need help from the user")
+        );
+        assert!(awaiting_intervention.lane_runs[0].completed_at.is_some());
+        assert_eq!(
+            awaiting_intervention
+                .active_lane_assignment
+                .as_ref()
+                .and_then(|entry| entry.completion_summary.as_deref()),
+            Some("Need help from the user")
+        );
         let waiting_ops = role_runtime::get_role_operations(&connection, &role.id)
             .expect("role operations should load while awaiting intervention");
         assert_eq!(waiting_ops.active_instance_count, 0);
@@ -7324,6 +7448,8 @@ mod tests {
             tasks::get_task_context(&connection, &task.id).expect("task should reload");
         assert_eq!(resumed_task.status, "in_progress");
         assert_eq!(resumed_task.assignee_type, "role");
+        assert_eq!(resumed_task.lane_runs.len(), 2);
+        assert!(resumed_task.lane_runs[1].completed_at.is_none());
         let running_ops = role_runtime::get_role_operations(&connection, &role.id)
             .expect("role operations should load after resume");
         assert_eq!(running_ops.active_instance_count, 1);
@@ -7846,6 +7972,7 @@ mod tests {
             role_instance_id: None,
             prompt: Some("Implement the task".into()),
             pending_outcome: Some("success".into()),
+            completion_summary: Some("Implemented the feature but the user requested another pass before final completion.".into()),
             completion_notes: Some("This still needs more work".into()),
             whip_count: 0,
             last_whip_at: None,
@@ -8263,6 +8390,7 @@ mod tests {
             role_instance_id: None,
             prompt: Some("Prompt".into()),
             pending_outcome: None,
+            completion_summary: None,
             completion_notes: None,
             whip_count: 0,
             last_whip_at: None,
@@ -8376,6 +8504,7 @@ mod tests {
             role_instance_id: None,
             prompt: Some("Prompt".into()),
             pending_outcome: None,
+            completion_summary: None,
             completion_notes: None,
             whip_count: 0,
             last_whip_at: None,
@@ -8629,6 +8758,94 @@ mod tests {
             crate::services::messages::list_user_messages(&connection, Some(&project.id), false)
                 .expect("user inbox should load");
         assert!(inbox.is_empty());
+    }
+
+    #[test]
+    fn lane_completion_requires_a_summary() {
+        let mut connection = in_memory_connection();
+        let _role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Completer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, "developer", &agent.slug);
+        let now = now_iso();
+        let project_root = init_test_repo("task-runtime-summary-required");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Summary required".into(),
+                description: Some("Do not finish without a summary.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-review".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("agent lane should dispatch");
+
+        let error = complete_lane_as_success(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            None,
+            Some(&AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: agent.id.clone(),
+            }),
+        )
+        .expect_err("completion should fail without a summary");
+        assert!(error.contains("lane summary is required"));
     }
 
     #[test]

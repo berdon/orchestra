@@ -82,7 +82,7 @@ describe("desktop session restart resume", () => {
           systemPrompt: [
             "You are a deterministic Orchestra agent for a restart-resume test.",
             `Before any restart-resume message arrives, reply with exactly ${WAITING_TOKEN}, do not create ${resumeOutputPath}, and do not complete the lane yet.`,
-            `When you later receive a follow-up message that says Orchestra restarted and tells you to resume the active task, immediately create the requested file, verify it, reply with exactly ${RESUMED_TOKEN}, and then call complete_lane_as_success with notes 'restart resume complete'.`,
+            `When you later receive a follow-up message that says Orchestra restarted and tells you to resume the active task, immediately create the requested file, verify it, reply with exactly ${RESUMED_TOKEN}, and then call complete_lane_as_success with summary 'Restarted session resumed successfully.' and notes 'restart resume complete'.`,
             `When resuming, write the exact file ${resumeOutputPath} with the exact contents ${JSON.stringify(expectedOutput)}.`,
             "Do not ask questions. Do not wait for human input once the restart-resume message arrives.",
           ].join(" "),

@@ -878,6 +878,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 lane_id TEXT NOT NULL,
                 session_id TEXT NOT NULL,
                 result TEXT NOT NULL,
+                summary TEXT,
                 notes TEXT,
                 started_at TEXT NOT NULL,
                 completed_at TEXT,
@@ -990,6 +991,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 role_instance_id TEXT,
                 prompt TEXT,
                 pending_outcome TEXT,
+                completion_summary TEXT,
                 completion_notes TEXT,
                 whip_count INTEGER NOT NULL DEFAULT 0,
                 last_whip_at TEXT,
@@ -1135,6 +1137,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_session_list_entry_columns(connection)?;
     ensure_mailbox_tables(connection)?;
     ensure_mailbox_table_columns(connection)?;
+    ensure_task_lane_runs_table_columns(connection)?;
     ensure_task_lane_assignments_table_columns(connection)?;
     ensure_task_browser_sessions_table_columns(connection)?;
     ensure_task_file_references_table_columns(connection)?;
@@ -2439,6 +2442,20 @@ fn ensure_mailbox_table_columns(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_task_lane_runs_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "task_lane_runs")?;
+
+    if !columns.contains("summary") {
+        connection
+            .execute("ALTER TABLE task_lane_runs ADD COLUMN summary TEXT", [])
+            .map_err(|error| {
+                format!("Unable to add summary column to task_lane_runs: {error}")
+            })?;
+    }
+
+    Ok(())
+}
+
 fn ensure_task_lane_assignments_table_columns(connection: &Connection) -> Result<(), String> {
     let columns = table_columns(connection, "task_lane_assignments")?;
 
@@ -2450,6 +2467,17 @@ fn ensure_task_lane_assignments_table_columns(connection: &Connection) -> Result
             )
             .map_err(|error| {
                 format!("Unable to add pending_outcome column to task_lane_assignments: {error}")
+            })?;
+    }
+
+    if !columns.contains("completion_summary") {
+        connection
+            .execute(
+                "ALTER TABLE task_lane_assignments ADD COLUMN completion_summary TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add completion_summary column to task_lane_assignments: {error}")
             })?;
     }
 

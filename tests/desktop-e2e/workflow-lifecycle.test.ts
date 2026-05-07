@@ -48,7 +48,7 @@ async function completeTaskLaneWithRetries(sessionId: string, taskId: string, ti
       return task;
     }
     try {
-      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId, notes: null });
+      await invokeCommand(sessionId, 'complete_lane_as_success', { taskId, summary: 'Completed the workflow lane successfully.', notes: null });
       return task;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);

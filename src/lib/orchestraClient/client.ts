@@ -379,7 +379,7 @@ export interface OrchestraTaskService {
   updateSchedule(scheduleId: string, input: TaskScheduleUpsertInput): Promise<TaskScheduleDetail>;
   deleteSchedule(scheduleId: string): Promise<TaskScheduleDetail>;
   dispatch(taskId: string): Promise<TaskDetail>;
-  complete(taskId: string, outcome: OrchestraTaskCompletionOutcome, notes?: string): Promise<TaskDetail>;
+  complete(taskId: string, outcome: OrchestraTaskCompletionOutcome, summary: string, notes?: string): Promise<TaskDetail>;
   approveReview(taskId: string): Promise<TaskDetail>;
   approveCompletion(taskId: string): Promise<TaskDetail>;
   markNeedsWork(taskId: string, notes?: string): Promise<TaskDetail>;

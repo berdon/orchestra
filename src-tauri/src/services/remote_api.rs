@@ -183,6 +183,13 @@ struct NotesInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct LaneCompletionInput {
+    summary: String,
+    notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct NoteLocationInput {
     location: NoteLocation,
 }
@@ -6415,14 +6422,16 @@ async fn post_task_complete_success(
     AxumState(context): AxumState<RemoteApiContext>,
     headers: HeaderMap,
     Path(task_id): Path<String>,
-    input: Option<Json<NotesInput>>,
+    input: Json<LaneCompletionInput>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
+    let Json(input) = input;
     task_commands::complete_lane_as_success(
         context.app.clone(),
         context.app.state::<AppState>(),
         task_id,
-        input.and_then(|Json(notes)| notes.notes),
+        input.summary,
+        input.notes,
     )
     .await
     .map(Json)
@@ -6433,14 +6442,16 @@ async fn post_task_complete_failure(
     AxumState(context): AxumState<RemoteApiContext>,
     headers: HeaderMap,
     Path(task_id): Path<String>,
-    input: Option<Json<NotesInput>>,
+    input: Json<LaneCompletionInput>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
+    let Json(input) = input;
     task_commands::complete_lane_as_failure(
         context.app.clone(),
         context.app.state::<AppState>(),
         task_id,
-        input.and_then(|Json(notes)| notes.notes),
+        input.summary,
+        input.notes,
     )
     .await
     .map(Json)
@@ -6451,14 +6462,16 @@ async fn post_task_request_user_intervention(
     AxumState(context): AxumState<RemoteApiContext>,
     headers: HeaderMap,
     Path(task_id): Path<String>,
-    input: Option<Json<NotesInput>>,
+    input: Json<LaneCompletionInput>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
+    let Json(input) = input;
     task_commands::request_user_intervention(
         context.app.clone(),
         context.app.state::<AppState>(),
         task_id,
-        input.and_then(|Json(notes)| notes.notes),
+        input.summary,
+        input.notes,
     )
     .await
     .map(Json)

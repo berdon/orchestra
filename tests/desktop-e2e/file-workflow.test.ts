@@ -110,7 +110,7 @@ describe("desktop file workflow", () => {
             `Create the exact file ${targetFile} with exactly ${JSON.stringify(targetContents)}.`,
             'Verify the file contents exactly match the request.',
             'Do not ask questions.',
-            'When the work is complete, call complete_lane_as_success with concise notes.',
+            'When the work is complete, call complete_lane_as_success with a concise lane summary and optional notes.',
             'If anything fails, call request_user_intervention.',
           ].join(' '),
           provider: 'openai-codex',

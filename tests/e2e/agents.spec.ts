@@ -419,6 +419,7 @@ test("agents page shows linked task and session labels in agent operations", asy
           comments: [],
           todos: [],
           laneRuns: [],
+  laneSummaries: [],
           activeLaneAssignment: null,
           tags: [],
           createdAt: now,

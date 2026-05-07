@@ -134,6 +134,7 @@ async function seedTaskDetailTypographyFixture(page: Page) {
         comments,
         todos: [],
         laneRuns: [],
+  laneSummaries: [],
         activeLaneAssignment: null,
         createdAt: timestamp,
         updatedAt: new Date(Date.parse(timestamp) + 5_000).toISOString(),

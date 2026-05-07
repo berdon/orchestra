@@ -87,6 +87,7 @@ const taskDetail: TaskDetail = {
   comments: [],
   todos: [],
   laneRuns: [],
+  laneSummaries: [],
   activeLaneAssignment: null,
 };
 
@@ -103,11 +104,11 @@ const sessionRecord: SessionRecord = {
 function createStubServices(): {
   services: OrchestraClientServiceBindings;
   taskListCalls: TaskListOptions[];
-  completionCalls: Array<{ taskId: string; outcome: string; notes?: string }>;
+  completionCalls: Array<{ taskId: string; outcome: string; summary: string; notes?: string }>;
   sessionCalls: Array<{ operation: "subscribe" | "unsubscribe"; sessionId: string }>;
 } {
   const taskListCalls: TaskListOptions[] = [];
-  const completionCalls: Array<{ taskId: string; outcome: string; notes?: string }> = [];
+  const completionCalls: Array<{ taskId: string; outcome: string; summary: string; notes?: string }> = [];
   const sessionCalls: Array<{ operation: "subscribe" | "unsubscribe"; sessionId: string }> = [];
   const appInfo: AppInfo = {
     appName: "Orchestra",
@@ -179,8 +180,8 @@ function createStubServices(): {
         updateSchedule: vi.fn(async () => { throw new Error("unused"); }),
         deleteSchedule: vi.fn(async () => { throw new Error("unused"); }),
         dispatch: vi.fn(async () => taskDetail),
-        complete: vi.fn(async (taskId, outcome, notes) => {
-          completionCalls.push({ taskId, outcome, notes });
+        complete: vi.fn(async (taskId, outcome, summary, notes) => {
+          completionCalls.push({ taskId, outcome, summary, notes });
           return taskDetail;
         }),
         approveReview: vi.fn(async () => taskDetail),
@@ -257,13 +258,13 @@ async function createHarness(): Promise<OrchestraClientContractHarness> {
       expect(taskListCalls).toEqual([{}]);
     },
     async verifyCompletionOutcomes() {
-      await expect(client.tasks.complete("task-123", "success", "Looks good")).resolves.toEqual(taskDetail);
-      await expect(client.tasks.complete("task-123", "failure", "Needs work")).resolves.toEqual(taskDetail);
-      await expect(client.tasks.complete("task-123", "needs_user", "Need review")).resolves.toEqual(taskDetail);
+      await expect(client.tasks.complete("task-123", "success", "Looks good", "Ship it")).resolves.toEqual(taskDetail);
+      await expect(client.tasks.complete("task-123", "failure", "Needs work", "Please rework the lane")).resolves.toEqual(taskDetail);
+      await expect(client.tasks.complete("task-123", "needs_user", "Need review", "User input required")).resolves.toEqual(taskDetail);
       expect(completionCalls).toEqual([
-        { taskId: "task-123", outcome: "success", notes: "Looks good" },
-        { taskId: "task-123", outcome: "failure", notes: "Needs work" },
-        { taskId: "task-123", outcome: "needs_user", notes: "Need review" },
+        { taskId: "task-123", outcome: "success", summary: "Looks good", notes: "Ship it" },
+        { taskId: "task-123", outcome: "failure", summary: "Needs work", notes: "Please rework the lane" },
+        { taskId: "task-123", outcome: "needs_user", summary: "Need review", notes: "User input required" },
       ]);
     },
     async verifySessionSubscriptionSemantics() {

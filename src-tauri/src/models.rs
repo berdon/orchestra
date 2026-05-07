@@ -2289,6 +2289,7 @@ pub struct TaskLaneRun {
     pub lane_id: String,
     pub session_id: String,
     pub result: String,
+    pub summary: Option<String>,
     pub notes: Option<String>,
     pub started_at: String,
     pub completed_at: Option<String>,
@@ -2310,12 +2311,25 @@ pub struct TaskLaneAssignment {
     pub role_instance_id: Option<String>,
     pub prompt: Option<String>,
     pub pending_outcome: Option<String>,
+    pub completion_summary: Option<String>,
     pub completion_notes: Option<String>,
     pub whip_count: i64,
     pub last_whip_at: Option<String>,
     pub started_at: String,
     pub completed_at: Option<String>,
     pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskLaneSummary {
+    pub lane_id: String,
+    pub lane_name: Option<String>,
+    pub summary: String,
+    pub outcome: Option<String>,
+    pub pending: bool,
+    pub session_id: Option<String>,
     pub updated_at: String,
 }
 
@@ -2433,6 +2447,8 @@ pub struct TaskDetail {
     pub comments: Vec<TaskComment>,
     pub todos: Vec<TaskTodo>,
     pub lane_runs: Vec<TaskLaneRun>,
+    #[serde(default)]
+    pub lane_summaries: Vec<TaskLaneSummary>,
     pub active_lane_assignment: Option<TaskLaneAssignment>,
     pub created_at: String,
     pub updated_at: String,

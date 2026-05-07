@@ -115,7 +115,7 @@ interface TaskDetailPageProps {
   onWhipTask: () => void;
   onResetTask: () => void;
   onRelane: (laneId: string, notes?: string) => void;
-  onComplete: (outcome: "success" | "failure" | "needs_user") => void;
+  onComplete: (outcome: "success" | "failure" | "needs_user", summary: string, notes?: string) => void;
   onApproveCompletion: () => void;
   onSendBackForWork: () => void;
   onAddDependency: () => void;
@@ -708,6 +708,9 @@ export function TaskDetailPage({
   const [todoDraftLaneId, setTodoDraftLaneId] = useState<string>(task.currentLaneId ?? draft.currentLaneId ?? "");
   const [relaneConfirmTarget, setRelaneConfirmTarget] = useState<RelaneTargetOption | null>(null);
   const [relaneNotes, setRelaneNotes] = useState("");
+  const [completionConfirmOutcome, setCompletionConfirmOutcome] = useState<"success" | "failure" | "needs_user" | null>(null);
+  const [completionSummary, setCompletionSummary] = useState("");
+  const [completionNotes, setCompletionNotes] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [pendingScrollReferenceId, setPendingScrollReferenceId] = useState<string | null>(null);
   const [pendingReplyFocusTargetId, setPendingReplyFocusTargetId] = useState<string | null>(null);
@@ -750,6 +753,7 @@ export function TaskDetailPage({
   const recentHistory = timelineItems.slice(0, historyLimit);
   const taskTags = getTaskTags(task);
   const todoGroups = groupTodosByLane(task);
+  const workflowLaneNameById = new Map(workflowLanes.map((lane) => [lane.id, lane.name]));
   const availableRelaneTargets = workflowLanes.filter((lane) => lane.id !== task.currentLaneId);
   const canRelane = Boolean(task.currentLaneId) && availableRelaneTargets.length > 0 && !["draft", "completed", "canceled"].includes(task.status);
   const canClose = !["completed", "canceled"].includes(task.status);
@@ -797,6 +801,9 @@ export function TaskDetailPage({
     setTodoDraftLaneId(task.currentLaneId ?? draft.currentLaneId ?? "");
     setRelaneConfirmTarget(null);
     setRelaneNotes("");
+    setCompletionConfirmOutcome(null);
+    setCompletionSummary("");
+    setCompletionNotes("");
   }, [workflowLanes, draft.currentLaneId, task.currentLaneId, task.id]);
 
   useEffect(() => {
@@ -1213,7 +1220,7 @@ export function TaskDetailPage({
     onApproveCompletion,
     onSendBackForWork,
     onResetTask,
-    onComplete,
+    onComplete: openCompletionConfirm,
     onPauseRuntime,
     onWhipTask,
   });
@@ -1293,6 +1300,12 @@ export function TaskDetailPage({
     setRelaneNotes("");
   }
 
+  function openCompletionConfirm(outcome: "success" | "failure" | "needs_user") {
+    setCompletionConfirmOutcome(outcome);
+    setCompletionSummary("");
+    setCompletionNotes("");
+  }
+
   function handleRelaneSubmit() {
     if (!relaneConfirmTarget) {
       return;
@@ -1300,6 +1313,20 @@ export function TaskDetailPage({
     onRelane(relaneConfirmTarget.id, relaneNotes.trim() || undefined);
     setRelaneConfirmTarget(null);
     setRelaneNotes("");
+  }
+
+  function handleCompletionSubmit() {
+    if (!completionConfirmOutcome || !completionSummary.trim()) {
+      return;
+    }
+    onComplete(
+      completionConfirmOutcome,
+      completionSummary.trim(),
+      completionNotes.trim() || undefined,
+    );
+    setCompletionConfirmOutcome(null);
+    setCompletionSummary("");
+    setCompletionNotes("");
   }
 
   function selectTaskDetailTab(tabId: TaskDetailTab) {
@@ -1392,12 +1419,14 @@ export function TaskDetailPage({
                 {effectiveActiveLaneAssignmentStatus === "awaiting_user_approval" ? (
                   <p className="muted-copy" data-role="task-awaiting-approval-note">
                     This lane reported success and is paused for user approval before the workflow continues.
+                    {task.activeLaneAssignment.completionSummary ? ` Lane summary: ${task.activeLaneAssignment.completionSummary}` : ""}
                     {task.activeLaneAssignment.completionNotes ? ` Worker notes: ${task.activeLaneAssignment.completionNotes}` : ""}
                   </p>
                 ) : null}
                 {effectiveActiveLaneAssignmentStatus === "awaiting_user_intervention" ? (
                   <p className="muted-copy" data-role="task-awaiting-user-intervention-note">
                     This lane asked for user intervention and is paused until you decide how to continue it.
+                    {task.activeLaneAssignment.completionSummary ? ` Lane summary: ${task.activeLaneAssignment.completionSummary}` : ""}
                     {task.activeLaneAssignment.completionNotes ? ` Worker notes: ${task.activeLaneAssignment.completionNotes}` : ""}
                   </p>
                 ) : null}
@@ -2015,7 +2044,8 @@ export function TaskDetailPage({
                         sessionTitle={laneRun.sessionTitle ?? null}
                       />
                     </p>
-                    {laneRun.notes ? <p>{laneRun.notes}</p> : null}
+                    {laneRun.summary ? <p data-role={`task-lane-history-summary-${laneRun.id}`}><strong>Summary:</strong> {laneRun.summary}</p> : null}
+                    {laneRun.notes ? <p><strong>Notes:</strong> {laneRun.notes}</p> : null}
                   </article>
                 ))}
               </div>
@@ -2332,6 +2362,31 @@ export function TaskDetailPage({
                     <li key={todo.id}>{todo.description}</li>
                   ))}
                 </ul>
+              </section>
+            ) : null}
+
+            {task.laneSummaries.length ? (
+              <section className="task-history-card" data-role="task-overview-lane-summaries">
+                <div className="workflow-section__header">
+                  <div>
+                    <p className="eyebrow">Lane summaries</p>
+                    <h4>Latest structured handoffs</h4>
+                  </div>
+                </div>
+                <div className="task-detail-summary__history-list">
+                  {task.laneSummaries.map((laneSummary) => (
+                    <article className="task-detail-summary__history-item" data-role="task-lane-summary-card" key={`${laneSummary.laneId}:${laneSummary.updatedAt}`}>
+                      <div className="workflow-section__header">
+                        <strong>{laneSummary.laneName ?? workflowLaneNameById.get(laneSummary.laneId) ?? laneSummary.laneId}</strong>
+                        <span className={`status-badge status-badge--${laneSummary.pending ? "warning" : laneSummary.outcome === "success" ? "success" : laneSummary.outcome === "failure" ? "error" : "neutral"}`}>
+                          {laneSummary.pending ? "pending" : (laneSummary.outcome ?? "summary").replace(/_/g, " ")}
+                        </span>
+                      </div>
+                      <p>{laneSummary.summary}</p>
+                      <p className="muted-copy">Updated {new Date(laneSummary.updatedAt).toLocaleString()}</p>
+                    </article>
+                  ))}
+                </div>
               </section>
             ) : null}
 
@@ -2679,6 +2734,50 @@ export function TaskDetailPage({
         </div>
       ) : null}
       </div>
+
+      {completionConfirmOutcome ? (
+        <div className="quick-chat-overlay" data-role="task-completion-confirm-overlay" onClick={() => !pendingActionId && setCompletionConfirmOutcome(null)}>
+          <section className="quick-chat-modal panel task-delete-confirm" data-role="task-completion-confirm-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="panel__header panel__header--stacked">
+              <div>
+                <p className="eyebrow">Lane transition summary</p>
+                <h3>{completionConfirmOutcome === "success" ? `Complete ${task.number} as success?` : completionConfirmOutcome === "failure" ? `Complete ${task.number} as failure?` : `Request user intervention for ${task.number}?`}</h3>
+              </div>
+            </div>
+            <p>Orchestra requires a concise lane summary whenever you close this lane transition.</p>
+            <label className="field-group">
+              <span className="field-group__label">Lane summary</span>
+              <textarea
+                className="text-area"
+                data-role="task-completion-summary"
+                rows={3}
+                value={completionSummary}
+                onChange={(event) => setCompletionSummary(event.target.value)}
+                placeholder="Summarize what happened in this lane"
+              />
+            </label>
+            <label className="field-group">
+              <span className="field-group__label">Notes (optional)</span>
+              <textarea
+                className="text-area"
+                data-role="task-completion-notes"
+                rows={3}
+                value={completionNotes}
+                onChange={(event) => setCompletionNotes(event.target.value)}
+                placeholder="Add any extra detail reviewers should know"
+              />
+            </label>
+            <div className="action-cluster action-cluster--wrap">
+              <button className="secondary-button" type="button" disabled={Boolean(pendingActionId)} onClick={() => setCompletionConfirmOutcome(null)}>
+                Cancel
+              </button>
+              <button className="primary-button" data-role="task-completion-confirm" type="button" disabled={Boolean(pendingActionId) || !completionSummary.trim()} onClick={handleCompletionSubmit}>
+                Continue
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {relaneConfirmTarget ? (
         <div className="quick-chat-overlay" data-role="task-relane-confirm-overlay" onClick={() => !pendingActionId && setRelaneConfirmTarget(null)}>

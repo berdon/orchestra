@@ -181,17 +181,18 @@ import type { OrchestraClientServiceBindings } from "./serviceBindings";
 async function completeTask(
   taskId: string,
   outcome: OrchestraTaskCompletionOutcome,
+  summary: string,
   notes?: string,
 ) {
   switch (outcome) {
     case "success":
-      return completeLaneAsSuccess(taskId, notes);
+      return completeLaneAsSuccess(taskId, summary, notes);
     case "failure":
-      return completeLaneAsFailure(taskId, notes);
+      return completeLaneAsFailure(taskId, summary, notes);
     case "needs_user":
-      return requestUserIntervention(taskId, notes);
+      return requestUserIntervention(taskId, summary, notes);
     default:
-      return requestUserIntervention(taskId, notes);
+      return requestUserIntervention(taskId, summary, notes);
   }
 }
 

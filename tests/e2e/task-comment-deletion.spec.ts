@@ -37,6 +37,7 @@ function buildTaskBase(timestamp: string) {
     fileReferences: [],
     todos: [],
     laneRuns: [],
+    laneSummaries: [],
     activeLaneAssignment: null,
     createdAt: timestamp,
     updatedAt: timestamp,

@@ -120,8 +120,16 @@ interface NotesInput {
   notes?: string;
 }
 
+interface LaneCompletionInput extends NotesInput {
+  summary: string;
+}
+
 function createNotesBody(notes?: string): NotesInput | undefined {
   return notes ? { notes } : undefined;
+}
+
+function createLaneCompletionBody(summary: string, notes?: string): LaneCompletionInput {
+  return notes ? { summary, notes } : { summary };
 }
 
 function createUnsupportedRemoteHostAdminMethod(name: string) {
@@ -1424,12 +1432,12 @@ export function createRemoteApiOrchestraClientBinding(
           path: `/api/v1/tasks/${encodeURIComponent(taskId)}/dispatch`,
         });
       },
-      complete: (taskId, outcome, notes) => {
+      complete: (taskId, outcome, summary, notes) => {
         transport.assertCapability("tasks.complete", bootstrap.capabilities.tasks.write);
         return transport.requestJson<TaskDetail>(`tasks.complete.${outcome}`, {
           method: "POST",
           path: `/api/v1/tasks/${encodeURIComponent(taskId)}/complete/${mapCompletionOutcomeToPath(outcome)}`,
-          body: createNotesBody(notes),
+          body: createLaneCompletionBody(summary, notes),
         });
       },
       approveReview: (taskId) => {

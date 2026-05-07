@@ -195,17 +195,18 @@ async function reportClientError(target: string, error: unknown, fallback: strin
 async function completeTask(
   taskId: string,
   outcome: OrchestraTaskCompletionOutcome,
+  summary: string,
   notes?: string,
 ) {
   switch (outcome) {
     case "success":
-      return invokeTauri<TaskDetail>("complete_lane_as_success", { taskId, notes });
+      return invokeTauri<TaskDetail>("complete_lane_as_success", { taskId, summary, notes });
     case "failure":
-      return invokeTauri<TaskDetail>("complete_lane_as_failure", { taskId, notes });
+      return invokeTauri<TaskDetail>("complete_lane_as_failure", { taskId, summary, notes });
     case "needs_user":
-      return invokeTauri<TaskDetail>("request_user_intervention", { taskId, notes });
+      return invokeTauri<TaskDetail>("request_user_intervention", { taskId, summary, notes });
     default:
-      return invokeTauri<TaskDetail>("request_user_intervention", { taskId, notes });
+      return invokeTauri<TaskDetail>("request_user_intervention", { taskId, summary, notes });
   }
 }
 

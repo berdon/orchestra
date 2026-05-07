@@ -224,6 +224,7 @@ test("draft and scheduled task cards stay visible against the page background in
             comments: [],
             todos: [],
             laneRuns: [],
+  laneSummaries: [],
             activeLaneAssignment: null,
             createdAt: timestamp,
             updatedAt: timestamp,

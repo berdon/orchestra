@@ -213,6 +213,7 @@ const taskDetail: TaskDetail = {
   comments: [],
   todos: [],
   laneRuns: [],
+  laneSummaries: [],
   activeLaneAssignment: null,
 };
 
@@ -289,25 +290,25 @@ async function createHarness(): Promise<OrchestraClientContractHarness> {
       ]);
     },
     async verifyCompletionOutcomes() {
-      await expect(client.tasks.complete("task-123", "success", "Looks good")).resolves.toEqual(taskDetail);
-      await expect(client.tasks.complete("task-123", "failure", "Needs work")).resolves.toEqual(taskDetail);
-      await expect(client.tasks.complete("task-123", "needs_user", "Need review")).resolves.toEqual(taskDetail);
+      await expect(client.tasks.complete("task-123", "success", "Looks good", "Ship it")).resolves.toEqual(taskDetail);
+      await expect(client.tasks.complete("task-123", "failure", "Needs work", "Please rework the lane")).resolves.toEqual(taskDetail);
+      await expect(client.tasks.complete("task-123", "needs_user", "Need review", "User input required")).resolves.toEqual(taskDetail);
 
       expect(requests).toEqual([
         {
           method: "POST",
           url: "https://orchestra.example.test/api/v1/tasks/task-123/complete/success",
-          body: { notes: "Looks good" },
+          body: { summary: "Looks good", notes: "Ship it" },
         },
         {
           method: "POST",
           url: "https://orchestra.example.test/api/v1/tasks/task-123/complete/failure",
-          body: { notes: "Needs work" },
+          body: { summary: "Needs work", notes: "Please rework the lane" },
         },
         {
           method: "POST",
           url: "https://orchestra.example.test/api/v1/tasks/task-123/complete/needs-user",
-          body: { notes: "Need review" },
+          body: { summary: "Need review", notes: "User input required" },
         },
       ]);
     },

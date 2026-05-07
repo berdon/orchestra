@@ -238,6 +238,9 @@ export function TasksPage({
   const [closingTask, setClosingTask] = useState(false);
   const [sendingTaskMail, setSendingTaskMail] = useState(false);
   const [detailActionPending, setDetailActionPending] = useState<string | null>(null);
+  const [mobileCompletionOutcome, setMobileCompletionOutcome] = useState<"success" | "failure" | null>(null);
+  const [mobileCompletionSummary, setMobileCompletionSummary] = useState("");
+  const [mobileCompletionNotes, setMobileCompletionNotes] = useState("");
   const [selectedBlockerTaskId, setSelectedBlockerTaskId] = useState("");
   const [dependencyViewMode, setDependencyViewMode] = useState<"list" | "tree">("list");
   const [dependencyTreeTasksById, setDependencyTreeTasksById] = useState<Record<string, TaskDetail>>({});
@@ -1236,18 +1239,28 @@ export function TasksPage({
     }, "Unable to dispatch task lane.");
   }
 
-  async function handleCompleteLane(outcome: "success" | "failure" | "needs_user") {
+  function openMobileCompletionConfirm(outcome: "success" | "failure") {
+    setMobileCompletionOutcome(outcome);
+    setMobileCompletionSummary("");
+    setMobileCompletionNotes("");
+  }
+
+  async function handleCompleteLane(
+    outcome: "success" | "failure" | "needs_user",
+    summary: string,
+    notes?: string,
+  ) {
     if (route.kind !== "detail") {
       return;
     }
     const actionId = outcome === "success" ? "approve-user" : outcome === "failure" ? "needs-work-user" : "needs-user";
     await runDetailAction(actionId, async () => {
       if (outcome === "success") {
-        await orchestraClient.tasks.complete(route.taskId, "success");
+        await orchestraClient.tasks.complete(route.taskId, "success", summary, notes);
       } else if (outcome === "failure") {
-        await orchestraClient.tasks.complete(route.taskId, "failure");
+        await orchestraClient.tasks.complete(route.taskId, "failure", summary, notes);
       } else {
-        await orchestraClient.tasks.complete(route.taskId, "needs_user");
+        await orchestraClient.tasks.complete(route.taskId, "needs_user", summary, notes);
       }
       await loadTasksData();
       await loadTaskDetail(route.taskId);
@@ -1316,7 +1329,7 @@ export function TasksPage({
       if (activeSessionId) {
         await orchestraClient.sessions.sendMessage(
           activeSessionId,
-          `Keep working until you are done - when you are done use tool \`complete_lane_as_success\` (with the task ID and optional notes) unless you believe either you or the task that was sent to you failed - then use tool \`complete_lane_as_failure\` (with task ID and optional notes). If you believe you need to escalate to the user - use tool \`request_user_intervention\` (with task ID and optional notes).\n\nCanonical task ID: ${route.taskId}`,
+          `Keep working until you are done - when you are done use tool \`complete_lane_as_success\` (with the task ID, required lane summary, and optional notes) unless you believe either you or the task that was sent to you failed - then use tool \`complete_lane_as_failure\` (with task ID, required lane summary, and optional notes). If you believe you need to escalate to the user - use tool \`request_user_intervention\` (with task ID, required lane summary, and optional notes).\n\nCanonical task ID: ${route.taskId}`,
           `manual-whip-${Date.now()}`,
         );
       }
@@ -1362,7 +1375,7 @@ export function TasksPage({
       if (activeSessionId) {
         await orchestraClient.sessions.sendMessage(
           activeSessionId,
-          "Keep working this ticket and use the tools complete_lane_as_success, complete_lane_as_failure, and request_user_intervention to mark the work as completed.",
+          "Keep working this ticket and use complete_lane_as_success, complete_lane_as_failure, or request_user_intervention with a concise lane summary when you are ready to transition.",
           `retry-task-${taskDetail.id}-${Date.now()}`,
         );
         return;
@@ -1403,7 +1416,7 @@ export function TasksPage({
         onApproveCompletion: () => void handleApproveLaneCompletion(),
         onSendBackForWork: () => void handleSendLaneBackForWork(),
         onResetTask: () => void handleResetTaskRuntime(),
-        onComplete: (outcome) => void handleCompleteLane(outcome),
+        onComplete: openMobileCompletionConfirm,
         onPauseRuntime: () => void handlePauseTaskRuntime(),
         onWhipTask: () => void handleWhipTask(),
       })
@@ -1626,7 +1639,7 @@ export function TasksPage({
             onApproveCompletion={() => void handleApproveLaneCompletion()}
             onCommentDraftChange={setCommentDraft}
             onCommentsTabViewed={() => void handleMarkTaskCommentsReadForUser()}
-            onComplete={(outcome) => void handleCompleteLane(outcome)}
+            onComplete={(outcome, summary, notes) => void handleCompleteLane(outcome, summary, notes)}
             onCancelEdit={handleCancelDetailEdit}
             onClose={(reason) => void handleCloseDetailTask(reason)}
             onDelete={() => void handleDeleteDetailTask()}
@@ -1727,6 +1740,65 @@ export function TasksPage({
             <span className="page-fab__icon" aria-hidden="true">+</span>
             <span className="page-fab__label">New task</span>
           </button>
+        </div>
+      ) : null}
+
+      {mobileCompletionOutcome && route.kind === "detail" && taskDetail ? (
+        <div className="quick-chat-overlay" data-role="tasks-mobile-completion-confirm-overlay" onClick={() => !detailActionPending && setMobileCompletionOutcome(null)}>
+          <section className="quick-chat-modal panel task-delete-confirm" data-role="tasks-mobile-completion-confirm-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="panel__header panel__header--stacked">
+              <div>
+                <p className="eyebrow">Lane transition summary</p>
+                <h3>{mobileCompletionOutcome === "success" ? `Complete ${taskDetail.number} as success?` : `Complete ${taskDetail.number} as failure?`}</h3>
+              </div>
+            </div>
+            <p>Orchestra requires a concise lane summary whenever you close this lane transition.</p>
+            <label className="field-group">
+              <span className="field-group__label">Lane summary</span>
+              <textarea
+                className="text-area"
+                data-role="tasks-mobile-completion-summary"
+                rows={3}
+                value={mobileCompletionSummary}
+                onChange={(event) => setMobileCompletionSummary(event.target.value)}
+                placeholder="Summarize what happened in this lane"
+              />
+            </label>
+            <label className="field-group">
+              <span className="field-group__label">Notes (optional)</span>
+              <textarea
+                className="text-area"
+                data-role="tasks-mobile-completion-notes"
+                rows={3}
+                value={mobileCompletionNotes}
+                onChange={(event) => setMobileCompletionNotes(event.target.value)}
+                placeholder="Add any extra detail reviewers should know"
+              />
+            </label>
+            <div className="action-cluster action-cluster--wrap">
+              <button className="secondary-button" type="button" disabled={Boolean(detailActionPending)} onClick={() => setMobileCompletionOutcome(null)}>
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                data-role="tasks-mobile-completion-confirm"
+                type="button"
+                disabled={Boolean(detailActionPending) || !mobileCompletionSummary.trim()}
+                onClick={() => {
+                  const outcome = mobileCompletionOutcome;
+                  if (!outcome || !mobileCompletionSummary.trim()) {
+                    return;
+                  }
+                  void handleCompleteLane(outcome, mobileCompletionSummary.trim(), mobileCompletionNotes.trim() || undefined);
+                  setMobileCompletionOutcome(null);
+                  setMobileCompletionSummary("");
+                  setMobileCompletionNotes("");
+                }}
+              >
+                Continue
+              </button>
+            </div>
+          </section>
         </div>
       ) : null}
 

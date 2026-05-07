@@ -186,6 +186,7 @@ describe("blocked task runtime mock parity", () => {
 
     const blocked = await completeLaneAsSuccess(
       task.id,
+      "Blocked by unresolved dependencies.",
       "Tried to finish while blocked.",
     );
     expect(blocked.status).toBe("blocked");
@@ -309,6 +310,7 @@ describe("blocked task runtime mock parity", () => {
     const transitioned = await completeLaneAsSuccess(
       blocker.id,
       "Implementation ready for Test.",
+      "Implementation ready for Test.",
     );
     expect(transitioned.status).toBe("in_review");
     expect(transitioned.currentLaneId).toBe("lane-test");
@@ -320,6 +322,7 @@ describe("blocked task runtime mock parity", () => {
 
     const completed = await completeLaneAsSuccess(
       blocker.id,
+      "Test completed.",
       "Test completed.",
     );
     expect(completed.status).toBe("completed");
