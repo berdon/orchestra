@@ -3789,6 +3789,7 @@ fn build_frontend_feature_flags(authenticated: bool) -> OrchestraClientFeatureFl
         session_controls: authenticated,
         task_comments: authenticated,
         task_files: authenticated,
+        task_browser: false,
         desktop_windows: false,
         agent_terminal: false,
     }
@@ -3907,6 +3908,7 @@ fn build_frontend_capabilities(authenticated: bool) -> OrchestraClientCapabiliti
             file_references: auth_guarded_capability(authenticated, true, "Remote task file-reference endpoints are unavailable."),
             file_contents: auth_guarded_capability(authenticated, true, "Remote task file-content endpoints are unavailable."),
             schedules: auth_guarded_capability(authenticated, true, "Remote task schedule endpoints are unavailable."),
+            browser: Some(unavailable_capability("This capability is only available when the shared frontend is hosted inside the Tauri desktop shell.")),
         },
         inbox: OrchestraClientInboxCapabilities {
             read: auth_guarded_capability(authenticated, true, "Remote inbox read endpoints are unavailable."),

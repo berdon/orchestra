@@ -743,6 +743,25 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_task_comment_user_receipts_task_user
                 ON task_comment_user_receipts(task_id, user_id, read_at ASC);
 
+            CREATE TABLE IF NOT EXISTS task_browser_sessions (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL UNIQUE,
+                window_label TEXT NOT NULL,
+                current_url TEXT,
+                page_title TEXT,
+                inspect_mode INTEGER NOT NULL DEFAULT 0,
+                dom_revision INTEGER NOT NULL DEFAULT 0,
+                last_mutation_at TEXT,
+                last_ready_state TEXT,
+                last_selected_anchor_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_task_browser_sessions_task_id
+                ON task_browser_sessions(task_id, updated_at DESC);
+
             CREATE TABLE IF NOT EXISTS mailbox_messages (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
@@ -1117,6 +1136,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_mailbox_tables(connection)?;
     ensure_mailbox_table_columns(connection)?;
     ensure_task_lane_assignments_table_columns(connection)?;
+    ensure_task_browser_sessions_table_columns(connection)?;
     ensure_task_file_references_table_columns(connection)?;
     ensure_domain_events_tables(connection)?;
     ensure_task_schedule_tables(connection)?;
@@ -2263,6 +2283,25 @@ fn ensure_task_comments_table_columns(connection: &Connection) -> Result<(), Str
             })?;
     }
 
+    if !columns.contains("anchor_kind") {
+        connection
+            .execute("ALTER TABLE task_comments ADD COLUMN anchor_kind TEXT", [])
+            .map_err(|error| {
+                format!("Unable to add anchor_kind column to task_comments: {error}")
+            })?;
+    }
+
+    if !columns.contains("anchor_payload_json") {
+        connection
+            .execute(
+                "ALTER TABLE task_comments ADD COLUMN anchor_payload_json TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add anchor_payload_json column to task_comments: {error}")
+            })?;
+    }
+
     connection
         .execute(
             "CREATE INDEX IF NOT EXISTS idx_task_comments_parent_comment_id ON task_comments(task_id, parent_comment_id, created_at ASC)",
@@ -2453,6 +2492,67 @@ fn ensure_task_lane_assignments_table_columns(connection: &Connection) -> Result
             [],
         )
         .map_err(|error| format!("Unable to backfill whip_count for task_lane_assignments: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_task_browser_sessions_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "task_browser_sessions")?;
+
+    if !columns.contains("inspect_mode") {
+        connection
+            .execute(
+                "ALTER TABLE task_browser_sessions ADD COLUMN inspect_mode INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add inspect_mode column to task_browser_sessions: {error}")
+            })?;
+    }
+
+    if !columns.contains("dom_revision") {
+        connection
+            .execute(
+                "ALTER TABLE task_browser_sessions ADD COLUMN dom_revision INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add dom_revision column to task_browser_sessions: {error}")
+            })?;
+    }
+
+    if !columns.contains("last_mutation_at") {
+        connection
+            .execute(
+                "ALTER TABLE task_browser_sessions ADD COLUMN last_mutation_at TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add last_mutation_at column to task_browser_sessions: {error}")
+            })?;
+    }
+
+    if !columns.contains("last_ready_state") {
+        connection
+            .execute(
+                "ALTER TABLE task_browser_sessions ADD COLUMN last_ready_state TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add last_ready_state column to task_browser_sessions: {error}")
+            })?;
+    }
+
+    if !columns.contains("last_selected_anchor_json") {
+        connection
+            .execute(
+                "ALTER TABLE task_browser_sessions ADD COLUMN last_selected_anchor_json TEXT",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add last_selected_anchor_json column to task_browser_sessions: {error}")
+            })?;
+    }
 
     Ok(())
 }

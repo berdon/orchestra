@@ -22,6 +22,7 @@ function createComment(overrides: Partial<TaskComment> & Pick<TaskComment, "id" 
     selectedText: overrides.selectedText ?? null,
     anchorCommitHash: overrides.anchorCommitHash ?? null,
     anchorHasUncommittedChanges: overrides.anchorHasUncommittedChanges ?? null,
+    anchor: overrides.anchor ?? null,
     createdAt: overrides.createdAt,
     updatedAt: overrides.updatedAt,
   };

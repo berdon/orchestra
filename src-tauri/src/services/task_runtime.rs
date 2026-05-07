@@ -2059,6 +2059,7 @@ pub fn escalate_task_whip_limit_exceeded(
             column_start: None,
             column_end: None,
             selected_text: None,
+            anchor: None,
         },
     )?;
     if let Some(assignment) = get_active_lane_assignment(connection, &candidate.task_id)? {
@@ -6486,6 +6487,7 @@ mod tests {
                 selected_text: None,
                 anchor_commit_hash: None,
                 anchor_has_uncommitted_changes: None,
+                anchor: None,
                 created_at: now.clone(),
                 updated_at: now.clone(),
             }],
@@ -8130,6 +8132,7 @@ mod tests {
                 column_start: None,
                 column_end: None,
                 selected_text: None,
+                anchor: None,
             },
         )
         .expect("comment should add")
@@ -8285,6 +8288,7 @@ mod tests {
             selected_text: None,
             anchor_commit_hash: None,
             anchor_has_uncommitted_changes: None,
+            anchor: None,
             created_at: now_iso(),
             updated_at: now_iso(),
         };
@@ -8397,6 +8401,7 @@ mod tests {
             selected_text: None,
             anchor_commit_hash: None,
             anchor_has_uncommitted_changes: None,
+            anchor: None,
             created_at: now_iso(),
             updated_at: now_iso(),
         };
@@ -8715,6 +8720,7 @@ mod tests {
                 column_start: None,
                 column_end: None,
                 selected_text: None,
+                anchor: None,
             },
         )
         .expect("task comment should add");

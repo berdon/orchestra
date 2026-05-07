@@ -5062,6 +5062,50 @@ strong {
   background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
 }
 
+.task-browser-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.task-browser-panel__controls,
+.task-browser-panel__navigate-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.task-browser-panel__navigate-row .text-input {
+  flex: 1 1 380px;
+}
+
+.task-browser-panel__meta {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.task-browser-panel__meta div,
+.task-browser-panel__selection {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
+}
+
+.task-browser-panel__meta dt {
+  margin: 0 0 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.task-browser-panel__meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .task-attachment-upload {
   position: relative;
   overflow: hidden;

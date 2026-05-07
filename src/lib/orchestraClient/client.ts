@@ -61,8 +61,10 @@ import type {
   SourceControlSettings,
   TaskAttachment,
   TaskAttachmentUploadInput,
+  TaskBrowserSession,
   TaskComment,
   TaskCommentDeleteImpact,
+  TaskCommentDomAnchor,
   TaskCommentFileMentionCandidate,
   TaskCommentInput,
   TaskCommentUpdateInput,
@@ -158,8 +160,10 @@ export type {
   SourceControlSettings,
   TaskAttachment,
   TaskAttachmentUploadInput,
+  TaskBrowserSession,
   TaskComment,
   TaskCommentDeleteImpact,
+  TaskCommentDomAnchor,
   TaskCommentFileMentionCandidate,
   TaskCommentInput,
   TaskCommentUpdateInput,
@@ -350,6 +354,11 @@ export interface OrchestraTaskService {
   comment(taskId: string, input: TaskCommentInput): Promise<TaskComment>;
   updateComment(commentId: string, input: TaskCommentUpdateInput): Promise<TaskComment>;
   deleteComment(commentId: string): Promise<TaskComment>;
+  showBrowser(taskId: string): Promise<TaskBrowserSession>;
+  getBrowserState(taskId: string): Promise<TaskBrowserSession>;
+  navigateBrowser(taskId: string, url: string): Promise<TaskBrowserSession>;
+  setBrowserInspectMode(taskId: string, enabled: boolean): Promise<TaskBrowserSession>;
+  revealBrowserDomAnchor(taskId: string, anchor: TaskCommentDomAnchor): Promise<TaskBrowserSession>;
   getCommentDeleteImpact(commentId: string): Promise<TaskCommentDeleteImpact>;
   markCommentsRead(taskId: string): Promise<TaskDetail>;
   searchCommentFileMentions(taskId: string, query: string, limit?: number): Promise<TaskCommentFileMentionCandidate[]>;

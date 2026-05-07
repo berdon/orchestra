@@ -52,6 +52,7 @@ pub mod startup_options;
 pub mod startup_resume;
 pub mod system_notifications;
 pub mod task_attachments;
+pub mod task_browser;
 pub mod task_comment_file_mentions;
 pub mod task_file_references;
 pub mod task_repositories;

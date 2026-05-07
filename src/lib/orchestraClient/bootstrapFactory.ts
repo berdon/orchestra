@@ -49,6 +49,7 @@ function resolveFeatureFlags(hostKind: OrchestraClientHostKind): OrchestraClient
     sessionControls: true,
     taskComments: true,
     taskFiles: true,
+    taskBrowser: hostKind === "tauri",
     desktopWindows,
     agentTerminal: desktopWindows,
   };
@@ -108,6 +109,7 @@ function resolveCapabilities(hostKind: OrchestraClientHostKind): OrchestraClient
       fileReferences: available,
       fileContents: available,
       schedules: available,
+      browser: hostKind === "tauri" ? available : unavailableCapability(desktopOnlyReason),
     },
     inbox: {
       read: available,

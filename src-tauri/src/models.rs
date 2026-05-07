@@ -246,6 +246,7 @@ pub struct OrchestraClientFeatureFlags {
     pub session_controls: bool,
     pub task_comments: bool,
     pub task_files: bool,
+    pub task_browser: bool,
     pub desktop_windows: bool,
     pub agent_terminal: bool,
 }
@@ -312,6 +313,7 @@ pub struct OrchestraClientTaskCapabilities {
     pub file_references: OrchestraCapabilityDescriptor,
     pub file_contents: OrchestraCapabilityDescriptor,
     pub schedules: OrchestraCapabilityDescriptor,
+    pub browser: Option<OrchestraCapabilityDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1974,6 +1976,71 @@ pub struct RoleOperationsDetail {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskCommentFileAnchor {
+    pub repository_id: String,
+    pub relative_path: String,
+    pub line_start: i64,
+    pub line_end: i64,
+    pub column_start: Option<i64>,
+    pub column_end: Option<i64>,
+    pub selected_text: Option<String>,
+    pub commit_hash: Option<String>,
+    pub has_uncommitted_changes: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCommentDomAnchorOrdinalSegment {
+    pub tag: String,
+    pub index: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCommentDomAnchorLocator {
+    pub css_path: Option<String>,
+    pub xpath: Option<String>,
+    pub role: Option<String>,
+    pub accessible_name: Option<String>,
+    pub text_snippet: Option<String>,
+    pub test_id: Option<String>,
+    #[serde(default)]
+    pub ordinal_path: Vec<TaskCommentDomAnchorOrdinalSegment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCommentDomAnchorSnapshot {
+    pub tag_name: String,
+    pub id: Option<String>,
+    #[serde(default)]
+    pub class_list: Vec<String>,
+    pub text_preview: Option<String>,
+    #[serde(default)]
+    pub attributes: std::collections::BTreeMap<String, String>,
+    pub outer_html_snippet: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCommentDomAnchor {
+    pub browser_session_id: String,
+    pub url: String,
+    pub page_title: Option<String>,
+    pub dom_revision: i64,
+    pub locator: TaskCommentDomAnchorLocator,
+    pub snapshot: TaskCommentDomAnchorSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TaskCommentAnchor {
+    File(TaskCommentFileAnchor),
+    Dom(TaskCommentDomAnchor),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskComment {
     pub id: String,
     pub task_id: String,
@@ -1992,6 +2059,7 @@ pub struct TaskComment {
     pub selected_text: Option<String>,
     pub anchor_commit_hash: Option<String>,
     pub anchor_has_uncommitted_changes: Option<bool>,
+    pub anchor: Option<TaskCommentAnchor>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -2107,6 +2175,8 @@ pub struct TaskCommentInput {
     pub column_end: Option<i64>,
     #[serde(default)]
     pub selected_text: Option<String>,
+    #[serde(default)]
+    pub anchor: Option<TaskCommentAnchor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2296,6 +2366,23 @@ pub struct TaskDependency {
     pub blocker: TaskSummary,
     pub blocked: TaskSummary,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskBrowserSession {
+    pub id: String,
+    pub task_id: String,
+    pub window_label: String,
+    pub current_url: Option<String>,
+    pub page_title: Option<String>,
+    pub inspect_mode: bool,
+    pub dom_revision: i64,
+    pub last_mutation_at: Option<String>,
+    pub last_ready_state: Option<String>,
+    pub last_selected_anchor: Option<TaskCommentDomAnchor>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

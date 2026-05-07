@@ -4,6 +4,7 @@ import hljs from "highlight.js";
 import type { AgentSummary, RoleSummary, TaskComment, TaskCommentInput, TaskFileReference, TaskSummary } from "../types";
 import { buildTaskCommentThreads, type TaskCommentThread } from "../lib/taskCommentThreads";
 import { recordInputPerfRender } from "../lib/testInputPerformance";
+import { formatTaskCommentLineLabel, isTaskCommentAnchoredToReference, taskCommentTouchesLine } from "../lib/taskComments";
 import { TaskCommentComposer } from "./TaskCommentComposer";
 import { TaskCommentMessage } from "./TaskCommentMessage";
 
@@ -188,29 +189,9 @@ function buildSelectionCommentAction(
   };
 }
 
-function isCommentAnchoredToReference(comment: TaskComment, reference: TaskFileReference) {
-  return comment.repositoryId === reference.repositoryId && comment.relativePath === reference.relativePath;
-}
-
-function commentTouchesLine(comment: TaskComment, lineNumber: number) {
-  const start = comment.lineStart ?? 0;
-  const end = comment.lineEnd ?? start;
-  return start > 0 && lineNumber >= start && lineNumber <= end;
-}
-
-function formatLineLabel(comment: TaskComment) {
-  if (!comment.lineStart) {
-    return null;
-  }
-
-  return comment.lineEnd && comment.lineEnd !== comment.lineStart
-    ? `Lines ${comment.lineStart}-${comment.lineEnd}`
-    : `Line ${comment.lineStart}`;
-}
-
 function buildFileCommentThreads(comments: TaskComment[], reference: TaskFileReference) {
   return buildTaskCommentThreads(comments)
-    .filter(({ comment }) => isCommentAnchoredToReference(comment, reference));
+    .filter(({ comment }) => isTaskCommentAnchoredToReference(comment, reference));
 }
 
 function lineCommentCounts(threads: TaskCommentThread[]) {
@@ -492,7 +473,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
     if (!overlay) {
       return;
     }
-    const matchingThreads = fileCommentThreads.filter((thread) => commentTouchesLine(thread.comment, lineNumber));
+    const matchingThreads = fileCommentThreads.filter((thread) => taskCommentTouchesLine(thread.comment, lineNumber));
     if (!matchingThreads.length) {
       return;
     }
@@ -821,7 +802,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                   <div className="transcript-event__meta">
                     <span>{comment.author}</span>
                     <div className="transcript-event__meta-group">
-                      {formatLineLabel(comment) ? <span className="status-badge status-badge--accent">{formatLineLabel(comment)}</span> : null}
+                      {formatTaskCommentLineLabel(comment) ? <span className="status-badge status-badge--accent">{formatTaskCommentLineLabel(comment)}</span> : null}
                       <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
                     </div>
                   </div>

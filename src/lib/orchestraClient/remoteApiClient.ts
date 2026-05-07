@@ -1234,6 +1234,26 @@ export function createRemoteApiOrchestraClientBinding(
           path: `/api/v1/task-comments/${encodeURIComponent(commentId)}`,
         });
       },
+      showBrowser: async () => {
+        transport.assertCapability("tasks.showBrowser", bootstrap.capabilities.tasks.browser ?? { availability: "unavailable", reason: "Task browser is only available in the desktop Tauri shell." });
+        throw new Error("Task browser is only available in the desktop Tauri shell.");
+      },
+      getBrowserState: async () => {
+        transport.assertCapability("tasks.getBrowserState", bootstrap.capabilities.tasks.browser ?? { availability: "unavailable", reason: "Task browser is only available in the desktop Tauri shell." });
+        throw new Error("Task browser is only available in the desktop Tauri shell.");
+      },
+      navigateBrowser: async () => {
+        transport.assertCapability("tasks.navigateBrowser", bootstrap.capabilities.tasks.browser ?? { availability: "unavailable", reason: "Task browser is only available in the desktop Tauri shell." });
+        throw new Error("Task browser is only available in the desktop Tauri shell.");
+      },
+      setBrowserInspectMode: async () => {
+        transport.assertCapability("tasks.setBrowserInspectMode", bootstrap.capabilities.tasks.browser ?? { availability: "unavailable", reason: "Task browser is only available in the desktop Tauri shell." });
+        throw new Error("Task browser is only available in the desktop Tauri shell.");
+      },
+      revealBrowserDomAnchor: async () => {
+        transport.assertCapability("tasks.revealBrowserDomAnchor", bootstrap.capabilities.tasks.browser ?? { availability: "unavailable", reason: "Task browser is only available in the desktop Tauri shell." });
+        throw new Error("Task browser is only available in the desktop Tauri shell.");
+      },
       getCommentDeleteImpact: (commentId) => {
         transport.assertCapability("tasks.commentDeleteImpact", bootstrap.capabilities.tasks.commentDeleteImpact);
         return transport.requestJson<TaskCommentDeleteImpact>("tasks.commentDeleteImpact", {

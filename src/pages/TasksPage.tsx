@@ -6,6 +6,7 @@ import { retryOrchestraRead, useOrchestraClient } from "../lib/orchestraClient";
 import { useOrchestraConnection } from "../lib/orchestraData/connection";
 import { reportUiError, toUiErrorState, type UiErrorState } from "../lib/orchestraData/errors";
 import { useTaskAutoRefresh } from "../lib/orchestraData/tasks";
+import { formatTaskCommentAnchorLabel } from "../lib/taskComments";
 import { applyTaskListQuery } from "../lib/taskListQuery";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type {
@@ -325,9 +326,7 @@ export function TasksPage({
       kind: "comment",
       title: comment.parentCommentId ? `${comment.author} replied` : `${comment.author} commented`,
       description: [
-        comment.relativePath && comment.lineStart
-          ? `${comment.relativePath} · ${comment.lineStart === comment.lineEnd || !comment.lineEnd ? `line ${comment.lineStart}` : `lines ${comment.lineStart}-${comment.lineEnd}`}`
-          : null,
+        formatTaskCommentAnchorLabel(comment),
         comment.message,
       ].filter(Boolean).join("\n\n"),
       timestamp: comment.updatedAt,

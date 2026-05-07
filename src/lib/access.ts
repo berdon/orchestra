@@ -63,6 +63,8 @@ export const PERMISSION_OPTIONS: PermissionOption[] = [
   { key: "tasks.transition", group: "Tasks", label: "Advance task lanes", description: "Dispatch and transition workflow lanes.", risk: "sensitive" },
   { key: "tasks.dependencies.write", group: "Tasks", label: "Edit dependencies", description: "Add and remove task dependencies." },
   { key: "tasks.attachments.write", group: "Tasks", label: "Edit attachments", description: "Add and remove task attachments." },
+  { key: "tasks.browser.read", group: "Tasks", label: "View task browser state", description: "Inspect task-bound browser sessions, URLs, DOM revisions, and selected element anchors." },
+  { key: "tasks.browser.control", group: "Tasks", label: "Control task browser", description: "Open, navigate, reveal, and toggle inspect mode for task-bound browser sessions.", risk: "sensitive" },
 ];
 
 export function hasSupervisorAccess(policyIds?: string[] | null) {

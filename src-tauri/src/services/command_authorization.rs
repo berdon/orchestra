@@ -332,6 +332,31 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
         "tasks.read",
     ),
     (
+        "show_task_browser",
+        "Show or reveal the task browser surface",
+        "tasks.browser.control",
+    ),
+    (
+        "get_task_browser_state",
+        "Get the current task browser session state",
+        "tasks.browser.read",
+    ),
+    (
+        "navigate_task_browser",
+        "Navigate the task browser to a target URL",
+        "tasks.browser.control",
+    ),
+    (
+        "set_task_browser_inspect_mode",
+        "Enable or disable task browser inspect mode",
+        "tasks.browser.control",
+    ),
+    (
+        "reveal_task_browser_dom_anchor",
+        "Reveal a DOM anchor inside the task browser surface",
+        "tasks.browser.control",
+    ),
+    (
         "list_task_comments",
         "List task comments with reply threading metadata",
         "tasks.read",

@@ -7,10 +7,12 @@ import { useOrchestraBootstrap } from "../../lib/orchestraClient/provider";
 import { buildTaskCommentThreads, sortTaskCommentThreadsByLatestActivityDesc } from "../../lib/taskCommentThreads";
 import { useExplanatoryTooltipProps } from "../../lib/tooltips";
 import { getTaskCommentDeleteActionState, type TaskCommentDeleteActionState } from "../../lib/taskCommentDeleteAction";
+import { formatTaskCommentAnchorLabel, isTaskCommentAnchoredToReference } from "../../lib/taskComments";
 import { shouldShowUnreadCommentAttention } from "../../lib/taskUnreadCommentVisibility";
 import { AgentReferenceLink, RoleReferenceLink, SessionReferenceLink, TaskReferenceLink, WorkerReferenceLink, type EntityReferenceLookup } from "../../components/entity-links";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
+import { TaskBrowserPanel } from "../../components/TaskBrowserPanel";
 import { MarkdownContent } from "../../components/MarkdownContent";
 import { TaskCommentComposer } from "../../components/TaskCommentComposer";
 import { TaskCommentMessage } from "../../components/TaskCommentMessage";
@@ -57,6 +59,7 @@ type TaskDetailTab =
   | "runtime"
   | "hierarchy"
   | "dependencies"
+  | "browser"
   | "repo-files"
   | "attachments"
   | "todos"
@@ -555,23 +558,8 @@ function TaskDetailMobileActionMenu({
   );
 }
 
-function formatCommentAnchorLabel(comment: TaskComment) {
-  if (!comment.relativePath || !comment.lineStart) {
-    return null;
-  }
-
-  const lineLabel = comment.lineStart === comment.lineEnd || !comment.lineEnd
-    ? `line ${comment.lineStart}`
-    : `lines ${comment.lineStart}-${comment.lineEnd}`;
-
-  return `${comment.relativePath} · ${lineLabel}`;
-}
-
 function isAnchoredToReference(comment: TaskComment, reference: TaskFileReference | null) {
-  if (!reference) {
-    return false;
-  }
-  return comment.repositoryId === reference.repositoryId && comment.relativePath === reference.relativePath;
+  return isTaskCommentAnchoredToReference(comment, reference);
 }
 
 function laneLabelForTodo(task: TaskDetail, todo: TaskTodo) {
@@ -601,6 +589,7 @@ const TAB_OPTIONS: Array<{ id: TaskDetailTab; label: string }> = [
   { id: "runtime", label: "Runtime" },
   { id: "hierarchy", label: "Hierarchy" },
   { id: "dependencies", label: "Dependencies" },
+  { id: "browser", label: "Browser" },
   { id: "repo-files", label: "Repo files" },
   { id: "todos", label: "Todos" },
   { id: "attachments", label: "Attachments" },
@@ -1637,6 +1626,18 @@ export function TaskDetailPage({
             )}
           </section>
         );
+      case "browser":
+        return (
+          <section className="task-section" data-role="task-detail-tabpanel-browser">
+            <TaskBrowserPanel
+              task={task}
+              tasks={tasks}
+              agents={agents}
+              roles={roles}
+              onAddComment={onAddComment}
+            />
+          </section>
+        );
       case "repo-files":
         return (
           <section className="task-section" data-role="task-detail-tabpanel-repo-files" ref={repoFilesPanelRef}>
@@ -2459,7 +2460,7 @@ export function TaskDetailPage({
                           <span>{comment.author}</span>
                           <div className="transcript-event__meta-group">
                             {comment.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
-                            {formatCommentAnchorLabel(comment) ? <span className="status-badge status-badge--accent">{formatCommentAnchorLabel(comment)}</span> : null}
+                            {formatTaskCommentAnchorLabel(comment) ? <span className="status-badge status-badge--accent">{formatTaskCommentAnchorLabel(comment)}</span> : null}
                             {isAnchoredToReference(comment, defaultFile) ? <span className="status-badge status-badge--neutral">Default file</span> : null}
                             <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
                           </div>
@@ -2493,7 +2494,7 @@ export function TaskDetailPage({
                                 <span>{reply.author}</span>
                                 <div className="transcript-event__meta-group">
                                   {reply.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
-                                  {formatCommentAnchorLabel(reply) ? <span className="status-badge status-badge--accent">{formatCommentAnchorLabel(reply)}</span> : null}
+                                  {formatTaskCommentAnchorLabel(reply) ? <span className="status-badge status-badge--accent">{formatTaskCommentAnchorLabel(reply)}</span> : null}
                                   {isAnchoredToReference(reply, defaultFile) ? <span className="status-badge status-badge--neutral">Default file</span> : null}
                                   <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
                                 </div>

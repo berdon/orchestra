@@ -24,6 +24,7 @@ export interface OrchestraClientFeatureFlags {
   sessionControls: boolean;
   taskComments: boolean;
   taskFiles: boolean;
+  taskBrowser?: boolean;
   desktopWindows: boolean;
   agentTerminal: boolean;
 }
@@ -74,6 +75,7 @@ export interface OrchestraClientCapabilities {
     fileReferences: OrchestraCapabilityDescriptor;
     fileContents: OrchestraCapabilityDescriptor;
     schedules: OrchestraCapabilityDescriptor;
+    browser?: OrchestraCapabilityDescriptor;
   };
   inbox: {
     read: OrchestraCapabilityDescriptor;

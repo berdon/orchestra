@@ -635,6 +635,7 @@ mod tests {
                 column_start: None,
                 column_end: None,
                 selected_text: None,
+                anchor: None,
             },
         )
         .expect("comment should insert");
@@ -680,6 +681,7 @@ mod tests {
                 column_start: None,
                 column_end: None,
                 selected_text: None,
+                anchor: None,
             },
         )
         .expect("ambiguous comment should insert");
@@ -707,6 +709,7 @@ mod tests {
                 column_start: None,
                 column_end: None,
                 selected_text: None,
+                anchor: None,
             },
         )
         .expect("prefixed comment should insert");

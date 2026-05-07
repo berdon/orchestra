@@ -2276,15 +2276,16 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, author, message, and optionally interruptAgent and parentCommentId.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, author, message, and optionally interruptAgent, parentCommentId, and anchor.`,
       parameters: Type.Object({
         taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
         author: Type.String({ description: "Comment author name to record on the task." }),
         message: Type.String({ description: "Durable task comment text describing what happened and why." }),
         interruptAgent: Type.Optional(Type.Boolean({ description: "Whether this comment should interrupt an active worker immediately." })),
         parentCommentId: Type.Optional(Type.String({ description: "Existing top-level task comment id to reply to." })),
+        anchor: Type.Optional(Type.Any({ description: "Optional file or DOM anchor payload for the task comment." })),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; author: string; message: string; interruptAgent?: boolean; parentCommentId?: string }) {
+      async execute(_toolCallId: string, params: { taskId: string; author: string; message: string; interruptAgent?: boolean; parentCommentId?: string; anchor?: Record<string, unknown> }) {
         const payload = {
           taskId: params.taskId,
           input: {
@@ -2292,6 +2293,7 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
             message: params.message,
             interruptAgent: params.interruptAgent ?? false,
             parentCommentId: params.parentCommentId ?? null,
+            ...(params.anchor ? { anchor: params.anchor } : {}),
           },
         };
         const result = await invokeBridge(tool.name, payload);
@@ -2303,7 +2305,7 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     };
   }
 
-  if (["get_task_context", "get_task_repositories", "list_task_comments", "get_unread_task_comments", "list_task_file_references", "list_task_todos"].includes(tool.name)) {
+  if (["get_task_context", "get_task_repositories", "list_task_comments", "get_unread_task_comments", "list_task_file_references", "list_task_todos", "show_task_browser", "get_task_browser_state"].includes(tool.name)) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
@@ -2313,6 +2315,91 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       }),
       async execute(_toolCallId: string, params: { taskId: string }) {
         const payload = { taskId: params.taskId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "navigate_task_browser") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId and url.`,
+      parameters: Type.Object({
+        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        url: Type.String({ description: "Target http(s) URL for the task browser surface." }),
+      }),
+      async execute(_toolCallId: string, params: { taskId: string; url: string }) {
+        const payload = { taskId: params.taskId, url: params.url };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "set_task_browser_inspect_mode") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId and enabled.`,
+      parameters: Type.Object({
+        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        enabled: Type.Boolean({ description: "Whether inspect mode should be enabled." }),
+      }),
+      async execute(_toolCallId: string, params: { taskId: string; enabled: boolean }) {
+        const payload = { taskId: params.taskId, enabled: params.enabled };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "reveal_task_browser_dom_anchor") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId and anchor.`,
+      parameters: Type.Object({
+        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        anchor: Type.Object({
+          browserSessionId: Type.String({ description: "Task browser session id." }),
+          url: Type.String({ description: "Page URL captured for the DOM anchor." }),
+          pageTitle: Type.Optional(Type.String({ description: "Optional page title captured for the DOM anchor." })),
+          domRevision: Type.Number({ description: "DOM revision captured when the anchor was selected." }),
+          locator: Type.Object({
+            cssPath: Type.Optional(Type.String({ description: "Optional CSS locator path." })),
+            xpath: Type.Optional(Type.String({ description: "Optional XPath locator." })),
+            role: Type.Optional(Type.String({ description: "Optional ARIA role value." })),
+            accessibleName: Type.Optional(Type.String({ description: "Optional accessible-name hint." })),
+            textSnippet: Type.Optional(Type.String({ description: "Optional text snippet hint." })),
+            testId: Type.Optional(Type.String({ description: "Optional data-testid hint." })),
+            ordinalPath: Type.Optional(Type.Array(Type.Object({
+              tag: Type.String({ description: "Tag name segment." }),
+              index: Type.Number({ description: "Zero-based sibling index for the tag segment." }),
+            }))),
+          }),
+          snapshot: Type.Object({
+            tagName: Type.String({ description: "Selected DOM element tag name." }),
+            id: Type.Optional(Type.String({ description: "Optional element id." })),
+            classList: Type.Optional(Type.Array(Type.String({ description: "Captured element classes." }))),
+            textPreview: Type.Optional(Type.String({ description: "Optional text preview." })),
+            attributes: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Captured DOM attribute map." })),
+            outerHtmlSnippet: Type.Optional(Type.String({ description: "Optional outerHTML snippet." })),
+          }),
+        }),
+      }),
+      async execute(_toolCallId: string, params: { taskId: string; anchor: Record<string, unknown> }) {
+        const payload = { taskId: params.taskId, anchor: { kind: "dom", ...params.anchor } };
         const result = await invokeBridge(tool.name, payload);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],

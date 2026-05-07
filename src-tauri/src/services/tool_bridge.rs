@@ -23,14 +23,14 @@ use crate::{
         AuthorizationContext, BridgeCleanupEvent, BridgeClientDiagnostics, BridgeDiagnostics,
         BridgeInstanceDiagnostics, BridgeRequestDiagnostics, MarkMailboxMessagesReadInput,
         MarkTaskCommentsReadInput, NoteLocation, OrchestraToolDefinition, RoleQueueEntryInput,
-        SendMailboxMessageInput, TaskAttachmentInput, TaskCommentInput, TaskLaneAssignment,
-        TaskTodoInput, TaskUpsertInput,
+        SendMailboxMessageInput, TaskAttachmentInput, TaskCommentDomAnchor, TaskCommentInput,
+        TaskLaneAssignment, TaskTodoInput, TaskUpsertInput,
     },
     services::{
         agents, authorization, command_authorization, database, live_sessions, messages,
         pi_sessions, policies, project_notes, project_secrets, project_settings, projects,
         reminders, role_runtime, roles, session_management, session_ownership, task_attachments,
-        task_file_references, task_runtime, tasks, workflows,
+        task_browser, task_file_references, task_runtime, tasks, workflows,
     },
 };
 
@@ -154,6 +154,11 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "list_tasks",
     "get_task",
     "get_task_context",
+    "show_task_browser",
+    "get_task_browser_state",
+    "navigate_task_browser",
+    "set_task_browser_inspect_mode",
+    "reveal_task_browser_dom_anchor",
     "list_task_comments",
     "list_task_todos",
     "list_unfinished_task_todos",
@@ -1643,6 +1648,84 @@ fn invoke_bridge_command(
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             serde_json::to_value(tasks::get_task_context(connection, &task_id)?)
                 .map_err(|error| format!("Unable to serialize task context: {error}"))
+        }
+        "show_task_browser" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.browser.control",
+            )?;
+            let app = config.clone_app_handle().ok_or_else(|| {
+                "Orchestra app handle unavailable for task browser show".to_string()
+            })?;
+            serde_json::to_value(task_browser::show_task_browser(&app, &task_id)?)
+                .map_err(|error| format!("Unable to serialize task browser session: {error}"))
+        }
+        "get_task_browser_state" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.browser.read",
+            )?;
+            let mut writable = database::open_connection()?;
+            serde_json::to_value(task_browser::ensure_task_browser_session(
+                &mut writable,
+                &task_id,
+            )?)
+            .map_err(|error| format!("Unable to serialize task browser session: {error}"))
+        }
+        "navigate_task_browser" => {
+            let task_id = require_string(&payload, "taskId")?;
+            let url = require_string(&payload, "url")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.browser.control",
+            )?;
+            let app = config.clone_app_handle().ok_or_else(|| {
+                "Orchestra app handle unavailable for task browser navigation".to_string()
+            })?;
+            serde_json::to_value(task_browser::navigate_task_browser(&app, &task_id, &url)?)
+                .map_err(|error| format!("Unable to serialize task browser session: {error}"))
+        }
+        "set_task_browser_inspect_mode" => {
+            let task_id = require_string(&payload, "taskId")?;
+            let enabled = payload
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| "enabled: Boolean inspect-mode flag is required.".to_string())?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.browser.control",
+            )?;
+            let app = config.clone_app_handle().ok_or_else(|| {
+                "Orchestra app handle unavailable for task browser inspect mode".to_string()
+            })?;
+            serde_json::to_value(task_browser::set_task_browser_inspect_mode(
+                &app, &task_id, enabled,
+            )?)
+            .map_err(|error| format!("Unable to serialize task browser session: {error}"))
+        }
+        "reveal_task_browser_dom_anchor" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(
+                connection,
+                authorization,
+                "tasks.browser.control",
+            )?;
+            let anchor: TaskCommentDomAnchor =
+                serde_json::from_value(payload.get("anchor").cloned().unwrap_or(Value::Null))
+                    .map_err(|error| format!("Unable to parse task browser DOM anchor: {error}"))?;
+            let app = config.clone_app_handle().ok_or_else(|| {
+                "Orchestra app handle unavailable for task browser anchor reveal".to_string()
+            })?;
+            serde_json::to_value(task_browser::reveal_task_browser_dom_anchor(
+                &app, &task_id, &anchor,
+            )?)
+            .map_err(|error| format!("Unable to serialize task browser session: {error}"))
         }
         "list_task_comments" => {
             let task_id = require_string(&payload, "taskId")?;
@@ -4511,6 +4594,7 @@ mod tests {
                 column_start: None,
                 column_end: None,
                 selected_text: None,
+                anchor: None,
             },
         )
         .expect("comment should add");

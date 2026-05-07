@@ -201,6 +201,85 @@ export async function getCurrentUrl(sessionId: string) {
   return String(response?.value ?? "");
 }
 
+function extractElementId(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  return String(record["element-6066-11e4-a52e-4f735466cecf"] ?? record.ELEMENT ?? "") || null;
+}
+
+export async function waitForCurrentUrl(sessionId: string, expectedUrl: string, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastUrl = "";
+  while (Date.now() < deadline) {
+    lastUrl = await getCurrentUrl(sessionId);
+    if (lastUrl === expectedUrl) {
+      return lastUrl;
+    }
+    await sleep(250);
+  }
+  throw new Error(`Expected current URL ${expectedUrl}, got ${lastUrl}`);
+}
+
+export async function waitForElement(sessionId: string, selector: string, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "";
+  while (Date.now() < deadline) {
+    const response = await webdriverRequest(`/session/${sessionId}/element`, {
+      method: "POST",
+      body: JSON.stringify({ using: "css selector", value: selector }),
+    }, { retries: 1 }).catch((error) => {
+      lastError = error instanceof Error ? error.message : String(error);
+      return null;
+    });
+    const elementId = extractElementId(response?.value);
+    if (elementId) {
+      return elementId;
+    }
+    lastError = String(response?.value?.message ?? response?.value?.error ?? lastError);
+    await sleep(250);
+  }
+  throw new Error(`Unable to locate element ${selector}: ${lastError}`);
+}
+
+export async function clickCssElement(sessionId: string, selector: string, timeoutMs = 30_000) {
+  const elementId = await waitForElement(sessionId, selector, timeoutMs);
+  const response = await webdriverRequest(`/session/${sessionId}/element/${elementId}/click`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  }, { retries: 1 });
+  const errorMessage = String(response?.value?.message ?? response?.value?.error ?? "");
+  if (errorMessage) {
+    throw new Error(`Unable to click element ${selector}: ${JSON.stringify(response)}`);
+  }
+}
+
+export async function getElementText(sessionId: string, selector: string, timeoutMs = 30_000) {
+  const elementId = await waitForElement(sessionId, selector, timeoutMs);
+  const response = await webdriverRequest(`/session/${sessionId}/element/${elementId}/text`, {
+    method: "GET",
+  }, { retries: 1 });
+  const errorMessage = String(response?.value?.message ?? response?.value?.error ?? "");
+  if (errorMessage) {
+    throw new Error(`Unable to read text for element ${selector}: ${JSON.stringify(response)}`);
+  }
+  return String(response?.value ?? "");
+}
+
+export async function waitForElementText(sessionId: string, selector: string, expectedText: string, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastText = "";
+  while (Date.now() < deadline) {
+    lastText = await getElementText(sessionId, selector, Math.min(5_000, timeoutMs));
+    if (lastText.toLowerCase().includes(expectedText.toLowerCase())) {
+      return lastText;
+    }
+    await sleep(250);
+  }
+  throw new Error(`Expected text ${expectedText} in ${selector}, got ${lastText}`);
+}
+
 export async function navigateTo(sessionId: string, url: string) {
   const response = await webdriverRequest(`/session/${sessionId}/url`, {
     method: "POST",

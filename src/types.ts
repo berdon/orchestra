@@ -1435,6 +1435,55 @@ export type TaskStatus = "draft" | "ready" | "in_progress" | "blocked" | "in_rev
 export type TaskPriority = "P0" | "P1" | "P2" | "P3" | "P4";
 export type TaskAssigneeType = "user" | "agent" | "role" | "unassigned";
 
+export interface TaskCommentFileAnchor {
+  kind: "file";
+  repositoryId: string;
+  relativePath: string;
+  lineStart: number;
+  lineEnd: number;
+  columnStart?: number | null;
+  columnEnd?: number | null;
+  selectedText?: string | null;
+  commitHash?: string | null;
+  hasUncommittedChanges?: boolean | null;
+}
+
+export interface TaskCommentDomAnchorOrdinalSegment {
+  tag: string;
+  index: number;
+}
+
+export interface TaskCommentDomAnchorLocator {
+  cssPath?: string | null;
+  xpath?: string | null;
+  role?: string | null;
+  accessibleName?: string | null;
+  textSnippet?: string | null;
+  testId?: string | null;
+  ordinalPath?: TaskCommentDomAnchorOrdinalSegment[];
+}
+
+export interface TaskCommentDomAnchorSnapshot {
+  tagName: string;
+  id?: string | null;
+  classList?: string[];
+  textPreview?: string | null;
+  attributes?: Record<string, string>;
+  outerHtmlSnippet?: string | null;
+}
+
+export interface TaskCommentDomAnchor {
+  kind: "dom";
+  browserSessionId: string;
+  url: string;
+  pageTitle?: string | null;
+  domRevision: number;
+  locator: TaskCommentDomAnchorLocator;
+  snapshot: TaskCommentDomAnchorSnapshot;
+}
+
+export type TaskCommentAnchor = TaskCommentFileAnchor | TaskCommentDomAnchor;
+
 export interface TaskComment {
   id: string;
   taskId: string;
@@ -1453,6 +1502,7 @@ export interface TaskComment {
   selectedText?: string | null;
   anchorCommitHash?: string | null;
   anchorHasUncommittedChanges?: boolean | null;
+  anchor?: TaskCommentAnchor | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1472,6 +1522,7 @@ export interface TaskCommentInput {
   columnStart?: number | null;
   columnEnd?: number | null;
   selectedText?: string | null;
+  anchor?: TaskCommentAnchor | null;
 }
 
 export interface TaskCommentUpdateInput {
@@ -1698,6 +1749,21 @@ export interface TaskSummary {
   activeLaneAssignmentStatus?: string | null;
   readyForDispatch: boolean;
   tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskBrowserSession {
+  id: string;
+  taskId: string;
+  windowLabel: string;
+  currentUrl?: string | null;
+  pageTitle?: string | null;
+  inspectMode: boolean;
+  domRevision: number;
+  lastMutationAt?: string | null;
+  lastReadyState?: string | null;
+  lastSelectedAnchor?: TaskCommentDomAnchor | null;
   createdAt: string;
   updatedAt: string;
 }
