@@ -1048,6 +1048,146 @@ mod tests {
     }
 
     #[test]
+    fn rejects_duplicate_create_missing_value_and_missing_update_delete_paths() {
+        let (connection, root) = connection_with_project();
+        let store = TestProjectSecretStore::new("available");
+
+        let missing_value = write_project_secret_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            ProjectSecretUpsertInput {
+                secret_key: "OPENAI_API_KEY".into(),
+                description: Some("Primary provider key".into()),
+                value: None,
+            },
+            SecretWriteMode::Create,
+            &store,
+        )
+        .expect_err("create should require a secret value");
+        assert!(missing_value.contains("Secret value is required"));
+
+        write_project_secret_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            ProjectSecretUpsertInput {
+                secret_key: "OPENAI_API_KEY".into(),
+                description: Some("Primary provider key".into()),
+                value: Some("sk-test-1".into()),
+            },
+            SecretWriteMode::Create,
+            &store,
+        )
+        .expect("secret should create");
+
+        let duplicate = write_project_secret_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            ProjectSecretUpsertInput {
+                secret_key: "OPENAI_API_KEY".into(),
+                description: Some("Duplicate".into()),
+                value: Some("sk-test-2".into()),
+            },
+            SecretWriteMode::Create,
+            &store,
+        )
+        .expect_err("duplicate create should fail");
+        assert!(duplicate.contains("already exists"));
+
+        let missing_update = write_project_secret_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            ProjectSecretUpsertInput {
+                secret_key: "ANTHROPIC_API_KEY".into(),
+                description: Some("Missing".into()),
+                value: Some("sk-test-3".into()),
+            },
+            SecretWriteMode::Update,
+            &store,
+        )
+        .expect_err("update should fail when the secret does not exist");
+        assert!(missing_update.contains("was not found"));
+
+        let missing_delete = delete_project_secret_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            "ANTHROPIC_API_KEY",
+            &store,
+        )
+        .expect_err("delete should fail when the secret does not exist");
+        assert!(missing_delete.contains("was not found"));
+    }
+
+    #[test]
+    fn surfaces_store_write_and_delete_failures_without_losing_metadata_state() {
+        let (connection, root) = connection_with_project();
+        let store = TestProjectSecretStore::new("available");
+
+        *store.set_error.lock().expect("set error lock") = Some(SecretStoreError {
+            kind: SecretStoreErrorKind::Other,
+            message: "set failed".into(),
+        });
+        let create_error = write_project_secret_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            ProjectSecretUpsertInput {
+                secret_key: "OPENAI_API_KEY".into(),
+                description: Some("Primary provider key".into()),
+                value: Some("sk-test-1".into()),
+            },
+            SecretWriteMode::Create,
+            &store,
+        )
+        .expect_err("create should surface store write failures");
+        assert!(create_error.contains("set failed"));
+        assert!(
+            get_project_secrets_with_store(&connection, Some(&root), "test-project", &store)
+                .expect("state should load after failed create")
+                .secrets
+                .is_empty()
+        );
+
+        *store.set_error.lock().expect("set error lock") = None;
+        write_project_secret_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            ProjectSecretUpsertInput {
+                secret_key: "OPENAI_API_KEY".into(),
+                description: Some("Primary provider key".into()),
+                value: Some("sk-test-1".into()),
+            },
+            SecretWriteMode::Create,
+            &store,
+        )
+        .expect("secret should create once the store works");
+
+        *store.delete_error.lock().expect("delete error lock") = Some(SecretStoreError {
+            kind: SecretStoreErrorKind::Other,
+            message: "delete failed".into(),
+        });
+        let delete_error = delete_project_secret_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            "OPENAI_API_KEY",
+            &store,
+        )
+        .expect_err("delete should surface store delete failures");
+        assert!(delete_error.contains("delete failed"));
+        let state =
+            get_project_secrets_with_store(&connection, Some(&root), "test-project", &store)
+                .expect("state should still show the secret after failed delete");
+        assert_eq!(state.secrets.len(), 1);
+        assert_eq!(state.secrets[0].secret_key, "OPENAI_API_KEY");
+    }
+
+    #[test]
     fn cleanup_best_effort_collects_store_warnings() {
         let (connection, root) = connection_with_project();
         let account = secure_store_account(Some(&root), "project-1", "OPENAI_API_KEY");

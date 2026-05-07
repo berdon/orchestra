@@ -296,27 +296,27 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ),
     (
         "list_project_secrets",
-        "List project secret metadata",
+        "List project secret metadata without raw values",
         "projects.secrets.read",
     ),
     (
         "search_project_secrets",
-        "Search project secret metadata",
+        "Search project secret metadata without raw values",
         "projects.secrets.read",
     ),
     (
         "get_project_secret",
-        "Load a project secret value",
+        "Load a project secret into the session environment",
         "projects.secrets.use",
     ),
     (
         "add_project_secret",
-        "Create a project secret",
+        "Create a project secret from an env-sourced value",
         "projects.secrets.write",
     ),
     (
         "update_project_secret",
-        "Update a project secret",
+        "Update a project secret from an env-sourced value",
         "projects.secrets.write",
     ),
     (

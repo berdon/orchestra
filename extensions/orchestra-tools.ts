@@ -737,6 +737,14 @@ function requireSourceEnvVar(sourceEnvVar: string) {
   return { normalized, value };
 }
 
+function rejectDirectProjectSecretValueField(command: string, input: Record<string, unknown>) {
+  if (Object.prototype.hasOwnProperty.call(input, "value")) {
+    throw new Error(
+      `${command} does not accept a raw value argument. Put the secret into an existing session env var and pass sourceEnvVar instead.`,
+    );
+  }
+}
+
 async function executeProjectSecretList(params: {
   projectId?: string;
   projectSlug?: string;
@@ -809,21 +817,30 @@ async function executeProjectSecretWrite(
   command: "add_project_secret" | "update_project_secret",
   params: {
     secretKey: string;
-    sourceEnvVar: string;
+    sourceEnvVar?: string;
     description?: string;
     projectId?: string;
     projectSlug?: string;
     taskId?: string;
   },
 ) {
-  const { normalized, value } = requireSourceEnvVar(params.sourceEnvVar);
+  rejectDirectProjectSecretValueField(command, params as Record<string, unknown>);
+
+  let normalizedSourceEnvVar: string | undefined;
+  let value: string | undefined;
+  if (params.sourceEnvVar?.trim()) {
+    ({ normalized: normalizedSourceEnvVar, value } = requireSourceEnvVar(params.sourceEnvVar));
+  } else if (command === "add_project_secret") {
+    throw new Error("sourceEnvVar is required.");
+  }
+
   const payload = {
     projectId: params.projectId,
     projectSlug: params.projectSlug,
     taskId: params.taskId,
     secretKey: params.secretKey,
     description: params.description,
-    value,
+    ...(value !== undefined ? { value } : {}),
   };
   const result = await invokeBridge(command, payload);
   return {
@@ -833,7 +850,7 @@ async function executeProjectSecretWrite(
       taskId: params.taskId,
       secretKey: params.secretKey,
       description: params.description,
-      sourceEnvVar: normalized,
+      ...(normalizedSourceEnvVar !== undefined ? { sourceEnvVar: normalizedSourceEnvVar } : {}),
     },
     result,
   };
@@ -866,7 +883,7 @@ async function runSafeProjectSecretCommandForUi(command: string, payload: Record
   if (command === "add_project_secret" || command === "update_project_secret") {
     const { payload: safePayload, result } = await executeProjectSecretWrite(
       command,
-      payload as { secretKey: string; sourceEnvVar: string; description?: string; projectId?: string; projectSlug?: string; taskId?: string },
+      payload as { secretKey: string; sourceEnvVar?: string; description?: string; projectId?: string; projectSlug?: string; taskId?: string },
     );
     return JSON.stringify({ ok: true, command, payload: safePayload, result }, null, 2);
   }
@@ -1151,6 +1168,16 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Returns metadata only; secret values are never included.`,
+      helpNotes: [
+        'Metadata-only operation: results include secretKey, description, timestamps, and valueState, but never a raw secret value.',
+      ],
+      helpExamples: [
+        {
+          projectSlug: 'secret-project',
+          valueState: 'ready',
+          hasDescription: true,
+        },
+      ],
       parameters: Type.Object({
         ...projectSecretScopeSchema(),
         query: Type.Optional(Type.String({ description: "Optional substring query matched against metadata such as secretKey, description, and valueState." })),
@@ -1173,6 +1200,16 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Searches metadata only; secret values are never included.`,
+      helpNotes: [
+        'Searches only project-secret metadata. Raw secret values are never returned from this command.',
+      ],
+      helpExamples: [
+        {
+          projectSlug: 'secret-project',
+          query: 'openai',
+          valueState: 'ready',
+        },
+      ],
       parameters: Type.Object({
         ...projectSecretScopeSchema(),
         query: Type.Optional(Type.String({ description: "Optional substring query matched against metadata such as secretKey, description, and valueState." })),
@@ -1195,6 +1232,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Loads the secret into this session's environment instead of returning the raw value.`,
+      helpNotes: [
+        'This tool never returns the raw secret value in normal tool output.',
+        'The loaded value is materialized into the current session environment under targetEnvVar, or secretKey when targetEnvVar is omitted.',
+      ],
+      helpExamples: [
+        {
+          projectSlug: 'secret-project',
+          secretKey: 'OPENAI_API_KEY',
+          targetEnvVar: 'OPENAI_TOKEN',
+        },
+      ],
       parameters: Type.Object({
         ...projectSecretScopeSchema(),
         secretKey: Type.String({ description: "Project secret key to load." }),
@@ -1210,19 +1258,70 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     };
   }
 
-  if (["add_project_secret", "update_project_secret"].includes(tool.name)) {
+  if (tool.name === "add_project_secret") {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Reads the secret value from an existing session env var so the raw value is not passed in tool arguments or output.`,
+      helpNotes: [
+        'Put the raw secret value into an existing session env var first, then pass that env var name via sourceEnvVar.',
+        'Passing a raw value field is rejected so the normal tool and /orchestra-run paths do not encourage transcript-visible secret writes.',
+      ],
+      helpExamples: [
+        {
+          projectSlug: 'secret-project',
+          secretKey: 'OPENAI_API_KEY',
+          description: 'Primary provider key',
+          sourceEnvVar: 'OPENAI_SOURCE',
+        },
+      ],
       parameters: Type.Object({
         ...projectSecretScopeSchema(),
-        secretKey: Type.String({ description: "Project secret key to create or update." }),
+        secretKey: Type.String({ description: "Project secret key to create." }),
         description: Type.Optional(Type.String({ description: "Optional human-readable description." })),
         sourceEnvVar: Type.String({ description: "Existing env var name whose current value should be stored." }),
       }),
       async execute(_toolCallId: string, params: { secretKey: string; description?: string; sourceEnvVar: string; projectId?: string; projectSlug?: string; taskId?: string }) {
-        const { payload, result } = await executeProjectSecretWrite(tool.name as "add_project_secret" | "update_project_secret", params);
+        const { payload, result } = await executeProjectSecretWrite(tool.name, params);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "update_project_secret") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Rotates the secret from an existing session env var when sourceEnvVar is provided, or updates metadata only when it is omitted.`,
+      helpNotes: [
+        'Put the raw secret value into an existing session env var first, then pass that env var name via sourceEnvVar when you need to rotate the stored value.',
+        'You may omit sourceEnvVar for metadata-only updates such as changing description without loading or resupplying the current secret value.',
+        'Passing a raw value field is rejected so the normal tool and /orchestra-run paths do not encourage transcript-visible secret writes.',
+      ],
+      helpExamples: [
+        {
+          projectSlug: 'secret-project',
+          secretKey: 'OPENAI_API_KEY',
+          description: 'Primary provider key',
+          sourceEnvVar: 'OPENAI_SOURCE',
+        },
+        {
+          projectSlug: 'secret-project',
+          secretKey: 'OPENAI_API_KEY',
+          description: 'Primary provider key',
+        },
+      ],
+      parameters: Type.Object({
+        ...projectSecretScopeSchema(),
+        secretKey: Type.String({ description: "Project secret key to update." }),
+        description: Type.Optional(Type.String({ description: "Optional human-readable description." })),
+        sourceEnvVar: Type.Optional(Type.String({ description: "Existing env var name whose current value should be stored. Omit for metadata-only updates." })),
+      }),
+      async execute(_toolCallId: string, params: { secretKey: string; description?: string; sourceEnvVar?: string; projectId?: string; projectSlug?: string; taskId?: string }) {
+        const { payload, result } = await executeProjectSecretWrite(tool.name, params);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
           details: { command: tool.name, payload, result },
@@ -1236,6 +1335,15 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Deletes the stored secret value and metadata for the target project secret.`,
+      helpNotes: [
+        'Delete is a write operation because it removes both secure-store value material and metadata.',
+      ],
+      helpExamples: [
+        {
+          projectSlug: 'secret-project',
+          secretKey: 'OPENAI_API_KEY',
+        },
+      ],
       parameters: Type.Object({
         ...projectSecretScopeSchema(),
         secretKey: Type.String({ description: "Project secret key to delete." }),

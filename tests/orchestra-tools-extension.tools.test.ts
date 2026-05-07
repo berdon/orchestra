@@ -226,27 +226,27 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
       {
         name: "list_project_secrets",
-        description: "List project secret metadata",
+        description: "List project secret metadata without raw values",
         requiredPermission: "projects.secrets.read",
       },
       {
         name: "search_project_secrets",
-        description: "Search project secret metadata",
+        description: "Search project secret metadata without raw values",
         requiredPermission: "projects.secrets.read",
       },
       {
         name: "get_project_secret",
-        description: "Load a project secret value",
+        description: "Load a project secret into the session environment",
         requiredPermission: "projects.secrets.use",
       },
       {
         name: "add_project_secret",
-        description: "Create a project secret",
+        description: "Create a project secret from an env-sourced value",
         requiredPermission: "projects.secrets.write",
       },
       {
         name: "update_project_secret",
-        description: "Update a project secret",
+        description: "Update a project secret from an env-sourced value",
         requiredPermission: "projects.secrets.write",
       },
       {
@@ -1524,6 +1524,103 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(process.env.OPENAI_RUNTIME).toBe("sk-loaded-from-bridge");
   });
 
+  test("documents project-secret safety notes and examples in orchestra_help", async () => {
+    const registeredTools: Array<any> = [];
+    const fetchMock = vi.fn();
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    orchestraToolsExtension({
+      registerTool(tool: any) {
+        registeredTools.push(tool);
+      },
+      registerCommand() {},
+    } as any);
+
+    const helpTool = registeredTools.find((tool) => tool.name === "orchestra_help");
+    const addHelp = JSON.parse((await helpTool.execute("tool-call-1", { command: "add_project_secret" })).content[0]?.text ?? "{}");
+    const updateHelp = JSON.parse((await helpTool.execute("tool-call-2", { command: "update_project_secret" })).content[0]?.text ?? "{}");
+    const loadHelp = JSON.parse((await helpTool.execute("tool-call-3", { command: "get_project_secret" })).content[0]?.text ?? "{}");
+
+    expect(addHelp.requiredPermission).toBe("projects.secrets.write");
+    expect(addHelp.parameters.find((parameter: any) => parameter.name === "sourceEnvVar")).toEqual(
+      expect.objectContaining({ required: true }),
+    );
+    expect(updateHelp.requiredPermission).toBe("projects.secrets.write");
+    expect(updateHelp.notes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("sourceEnvVar"),
+        expect.stringContaining("omit sourceEnvVar"),
+        expect.stringContaining("raw value field is rejected"),
+      ]),
+    );
+    expect(updateHelp.examples).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          secretKey: "OPENAI_API_KEY",
+          sourceEnvVar: "OPENAI_SOURCE",
+        }),
+        expect.objectContaining({
+          secretKey: "OPENAI_API_KEY",
+          description: "Primary provider key",
+        }),
+      ]),
+    );
+    expect(updateHelp.parameters.find((parameter: any) => parameter.name === "sourceEnvVar")).toEqual(
+      expect.objectContaining({ required: false }),
+    );
+    expect(loadHelp.requiredPermission).toBe("projects.secrets.use");
+    expect(loadHelp.notes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("never returns the raw secret value"),
+        expect.stringContaining("targetEnvVar"),
+      ]),
+    );
+  });
+
+  test("rejects direct raw project-secret write values in tool and /orchestra-run inputs", async () => {
+    process.env.ORCHESTRA_ALLOWED_COMMANDS_JSON = JSON.stringify([
+      {
+        name: "update_project_secret",
+        description: "Update a project secret from an env-sourced value",
+        requiredPermission: "projects.secrets.write",
+      },
+    ]);
+
+    const registeredTools: Array<any> = [];
+    const registeredCommands = new Map<string, any>();
+    const fetchMock = vi.fn();
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    orchestraToolsExtension({
+      registerTool(tool: any) {
+        registeredTools.push(tool);
+      },
+      registerCommand(name: string, definition: any) {
+        registeredCommands.set(name, definition);
+      },
+    } as any);
+
+    const updateProjectSecretTool = registeredTools.find((tool) => tool.name === "update_project_secret");
+    await expect(
+      updateProjectSecretTool.execute("tool-call-update-secret", {
+        secretKey: "OPENAI_API_KEY",
+        sourceEnvVar: "SOURCE_SECRET",
+        value: "sk-inline",
+      } as any),
+    ).rejects.toThrow("does not accept a raw value argument");
+
+    const orchestraRun = registeredCommands.get("orchestra-run");
+    await expect(
+      orchestraRun.handler(
+        'update_project_secret {"secretKey":"OPENAI_API_KEY","sourceEnvVar":"SOURCE_SECRET","value":"sk-inline"}',
+        { ui: { notify: vi.fn() } },
+      ),
+    ).rejects.toThrow("does not accept a raw value argument");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   test("documents nested input structures and examples for wrapped Orchestra payloads", async () => {
     const registeredTools: Array<any> = [];
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
@@ -1628,11 +1725,90 @@ describe("orchestra tools extension bridge tool setup", () => {
     );
   });
 
+  test("supports metadata-only project secret updates in tool and /orchestra-run flows", async () => {
+    process.env.ORCHESTRA_ALLOWED_COMMANDS_JSON = JSON.stringify([
+      {
+        name: "update_project_secret",
+        description: "Update a project secret from an env-sourced value",
+        requiredPermission: "projects.secrets.write",
+      },
+    ]);
+
+    const registeredTools: Array<any> = [];
+    const registeredCommands = new Map<string, any>();
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
+      async json() {
+        return {
+          success: true,
+          data: {
+            projectSlug: "test-project",
+            availability: { status: "available", message: null },
+            secrets: [{ secretKey: "OPENAI_API_KEY", description: "Metadata only" }],
+          },
+        };
+      },
+    }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    orchestraToolsExtension({
+      registerTool(tool: any) {
+        registeredTools.push(tool);
+      },
+      registerCommand(name: string, definition: any) {
+        registeredCommands.set(name, definition);
+      },
+    } as any);
+
+    const updateProjectSecretTool = registeredTools.find((tool) => tool.name === "update_project_secret");
+    const result = await updateProjectSecretTool.execute("tool-call-update-secret", {
+      secretKey: "OPENAI_API_KEY",
+      description: "Metadata only",
+    });
+
+    expect(result.content[0]?.text).not.toContain("sk-");
+    expect(JSON.stringify(result.details)).not.toContain("sourceEnvVar");
+    const firstRequestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(firstRequestBody.command).toBe("update_project_secret");
+    expect(firstRequestBody.payload).toEqual({
+      secretKey: "OPENAI_API_KEY",
+      description: "Metadata only",
+    });
+    expect(result.details.payload).toEqual({
+      secretKey: "OPENAI_API_KEY",
+      description: "Metadata only",
+      projectId: undefined,
+      projectSlug: undefined,
+      taskId: undefined,
+    });
+
+    const orchestraRun = registeredCommands.get("orchestra-run");
+    const notify = vi.fn();
+    await orchestraRun.handler('update_project_secret {"secretKey":"OPENAI_API_KEY","description":"Metadata only"}', {
+      ui: { notify },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondRequestBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(secondRequestBody.command).toBe("update_project_secret");
+    expect(secondRequestBody.payload).toEqual({
+      secretKey: "OPENAI_API_KEY",
+      description: "Metadata only",
+    });
+    expect(notify).toHaveBeenCalledWith(expect.any(String), "info");
+    const notifyPayload = JSON.parse(String(notify.mock.calls[0]?.[0]));
+    expect(notifyPayload.payload).toEqual({
+      secretKey: "OPENAI_API_KEY",
+      description: "Metadata only",
+    });
+    expect(JSON.stringify(notifyPayload)).not.toContain("sourceEnvVar");
+  });
+
   test("writes project secrets from existing session env vars", async () => {
     process.env.ORCHESTRA_ALLOWED_COMMANDS_JSON = JSON.stringify([
       {
         name: "update_project_secret",
-        description: "Update a project secret",
+        description: "Update a project secret from an env-sourced value",
         requiredPermission: "projects.secrets.write",
       },
     ]);
@@ -1691,7 +1867,7 @@ describe("orchestra tools extension bridge tool setup", () => {
     process.env.ORCHESTRA_ALLOWED_COMMANDS_JSON = JSON.stringify([
       {
         name: "get_project_secret",
-        description: "Load a project secret value",
+        description: "Load a project secret into the session environment",
         requiredPermission: "projects.secrets.use",
       },
     ]);
