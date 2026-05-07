@@ -64,8 +64,16 @@ pub fn get_task_pull_request(
     let review_targets = load_review_targets(connection, task_id)?;
     let repositories = review_targets
         .into_iter()
-        .map(build_repository_pull_request_detail)
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(
+            |target| match build_repository_pull_request_detail(target.clone()) {
+                Ok(detail) => detail,
+                Err(error) => build_unavailable_repository(
+                    target,
+                    format!("Unable to inspect PR changes for this repo: {error}"),
+                ),
+            },
+        )
+        .collect::<Vec<_>>();
 
     Ok(TaskPullRequestDetail {
         task_id: task_id.to_string(),
@@ -139,27 +147,10 @@ fn build_repository_pull_request_detail(
 ) -> Result<TaskPullRequestRepository, String> {
     let review_root = select_review_root(&target);
     let Some((review_root_path, review_root_kind)) = review_root else {
-        return Ok(TaskPullRequestRepository {
-            repository_id: target.repository_id,
-            repository_name: target.repository_name,
-            repository_slug: target.repository_slug,
-            status: "unavailable".into(),
-            review_root_path: None,
-            review_root_kind: None,
-            unavailable_reason: Some(
-                "Neither the task worktree nor the managed repository path is available as a git checkout."
-                    .into(),
-            ),
-            default_branch: target.default_branch,
-            base_commit_hash: None,
-            head_commit_hash: None,
-            worktree_only: false,
-            has_uncommitted_changes: false,
-            committed_file_count: 0,
-            uncommitted_file_count: 0,
-            mixed_file_count: 0,
-            files: Vec::new(),
-        });
+        return Ok(build_unavailable_repository(
+            target,
+            "Neither the task worktree nor the managed repository path is available as a git checkout.",
+        ));
     };
 
     let review_root = PathBuf::from(&review_root_path);
@@ -169,20 +160,14 @@ fn build_repository_pull_request_detail(
         .clone()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "main".into());
-    let default_branch_ref = resolve_default_branch_ref(&review_root, &default_branch)?;
 
-    let (base_commit_hash, worktree_only) =
-        match (head_commit.as_deref(), default_branch_ref.as_deref()) {
-            (Some(head), Some(default_branch_ref)) => (
-                Some(git_trimmed_stdout(
-                    &review_root,
-                    &["merge-base", head, default_branch_ref],
-                )?),
-                false,
-            ),
-            (Some(head), None) => (Some(head.to_string()), true),
-            (None, _) => (Some(EMPTY_TREE_HASH.into()), false),
-        };
+    let (base_commit_hash, worktree_only) = match head_commit.as_deref() {
+        Some(head) => match resolve_merge_base_commit(&review_root, head, &default_branch)? {
+            Some(base_commit_hash) => (Some(base_commit_hash), false),
+            None => (Some(head.to_string()), true),
+        },
+        None => (Some(EMPTY_TREE_HASH.into()), false),
+    };
 
     let committed_entries = if let (Some(base_commit_hash), Some(head_commit)) =
         (base_commit_hash.as_deref(), head_commit.as_deref())
@@ -398,6 +383,30 @@ fn build_repository_pull_request_detail(
     })
 }
 
+fn build_unavailable_repository(
+    target: ReviewRepositoryTarget,
+    reason: impl Into<String>,
+) -> TaskPullRequestRepository {
+    TaskPullRequestRepository {
+        repository_id: target.repository_id,
+        repository_name: target.repository_name,
+        repository_slug: target.repository_slug,
+        status: "unavailable".into(),
+        review_root_path: None,
+        review_root_kind: None,
+        unavailable_reason: Some(reason.into()),
+        default_branch: target.default_branch,
+        base_commit_hash: None,
+        head_commit_hash: None,
+        worktree_only: false,
+        has_uncommitted_changes: false,
+        committed_file_count: 0,
+        uncommitted_file_count: 0,
+        mixed_file_count: 0,
+        files: Vec::new(),
+    }
+}
+
 fn select_review_root(target: &ReviewRepositoryTarget) -> Option<(String, &'static str)> {
     let candidates = [
         target
@@ -435,16 +444,17 @@ fn is_git_checkout(path: &Path) -> bool {
         .is_some_and(|output| output.status.success())
 }
 
-fn resolve_default_branch_ref(
+fn resolve_merge_base_commit(
     review_root: &Path,
+    head_commit: &str,
     default_branch: &str,
 ) -> Result<Option<String>, String> {
     for candidate in [
-        format!("refs/remotes/origin/{default_branch}"),
         format!("refs/heads/{default_branch}"),
+        format!("refs/remotes/origin/{default_branch}"),
         default_branch.to_string(),
     ] {
-        if git_command_succeeds(
+        if !git_command_succeeds(
             review_root,
             &[
                 "rev-parse",
@@ -453,7 +463,12 @@ fn resolve_default_branch_ref(
                 &format!("{candidate}^{{commit}}"),
             ],
         )? {
-            return Ok(Some(candidate));
+            continue;
+        }
+        if let Some(merge_base) =
+            git_optional_trimmed_stdout(review_root, &["merge-base", head_commit, &candidate])?
+        {
+            return Ok(Some(merge_base));
         }
     }
 
@@ -498,10 +513,6 @@ fn git_stdout(review_root: &Path, args: &[&str]) -> Result<String, String> {
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-fn git_trimmed_stdout(review_root: &Path, args: &[&str]) -> Result<String, String> {
-    Ok(git_stdout(review_root, args)?.trim().to_string())
 }
 
 fn git_optional_trimmed_stdout(
@@ -954,6 +965,91 @@ mod tests {
         assert_eq!(repo.status, "changed");
         assert_eq!(repo.files.len(), 1);
         assert_eq!(repo.files[0].origin, "mixed");
+    }
+
+    #[test]
+    fn falls_back_to_local_default_branch_when_remote_tracking_ref_has_no_merge_base() {
+        let connection = in_memory_connection();
+        seed_task(&connection, "task-pr-local-fallback");
+        let repo_root = init_git_repo("local-fallback");
+        fs::write(repo_root.join("file.txt"), "base\n").expect("base file should write");
+        git(&repo_root, &["add", "."]);
+        git(&repo_root, &["commit", "-m", "base"]);
+        let base_commit = git_stdout_trimmed(&repo_root, &["rev-parse", "HEAD"]);
+        git(&repo_root, &["checkout", "-b", "feature"]);
+        fs::write(repo_root.join("file.txt"), "base\ncommitted\n")
+            .expect("feature file should write");
+        git(&repo_root, &["add", "."]);
+        git(&repo_root, &["commit", "-m", "feature"]);
+        let feature_commit = git_stdout_trimmed(&repo_root, &["rev-parse", "HEAD"]);
+        git(&repo_root, &["checkout", "main"]);
+
+        git(&repo_root, &["checkout", "--orphan", "rewritten-main"]);
+        fs::write(repo_root.join("rewritten.txt"), "rewritten\n")
+            .expect("rewritten file should write");
+        git(&repo_root, &["add", "."]);
+        git(&repo_root, &["commit", "-m", "rewritten"]);
+        let rewritten_commit = git_stdout_trimmed(&repo_root, &["rev-parse", "HEAD"]);
+        git(
+            &repo_root,
+            &["update-ref", "refs/remotes/origin/main", &rewritten_commit],
+        );
+        git(&repo_root, &["checkout", "main"]);
+
+        let workspace_root = repo_root
+            .parent()
+            .expect("repo parent should exist")
+            .join(format!("task-workspace-{}", Uuid::new_v4().simple()));
+        let worktree_root = workspace_root.join("repos").join("repo-local-fallback");
+        fs::create_dir_all(
+            worktree_root
+                .parent()
+                .expect("worktree parent should exist"),
+        )
+        .expect("worktree parent should create");
+        git(
+            &repo_root,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                worktree_root.to_string_lossy().as_ref(),
+                &feature_commit,
+            ],
+        );
+
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-local-fallback', 'orchestra', 'repo-local-fallback', 'Repo Local Fallback', ?1, NULL, 'main', ?2, ?2)",
+                params![repo_root.display().to_string(), now.clone()],
+            )
+            .expect("repository should insert");
+        connection
+            .execute(
+                "INSERT INTO task_repositories (task_id, repository_id, created_at) VALUES ('task-pr-local-fallback', 'repo-local-fallback', ?1)",
+                [now.clone()],
+            )
+            .expect("task repository link should insert");
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-local-fallback', 'task-pr-local-fallback', 'workflow-dev', 'lane-implementation', 'role', 'developer', 'active', 'session-local-fallback', ?1, NULL, NULL, NULL, 0, NULL, ?2, NULL, ?2, ?2)",
+                params![workspace_root.display().to_string(), now.clone()],
+            )
+            .expect("assignment should insert");
+
+        let detail = get_task_pull_request(&connection, "task-pr-local-fallback")
+            .expect("PR detail should load");
+        let repo = &detail.repositories[0];
+        assert_eq!(repo.base_commit_hash.as_deref(), Some(base_commit.as_str()));
+        assert_eq!(
+            repo.head_commit_hash.as_deref(),
+            Some(feature_commit.as_str())
+        );
+        assert!(!repo.worktree_only);
+        assert_eq!(repo.status, "changed");
+        assert_eq!(repo.files.len(), 1);
+        assert_eq!(repo.files[0].origin, "committed");
     }
 
     #[test]

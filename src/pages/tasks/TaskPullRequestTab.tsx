@@ -129,7 +129,7 @@ export function TaskPullRequestTab({
         <div>
           <p className="eyebrow">PR</p>
           <h4>Cross-repo review</h4>
-          <p className="supporting-copy">This live review tab compares each task-associated repository against the merge-base of the task worktree HEAD and the repository default branch, then overlays current workspace edits on top.</p>
+          <p className="supporting-copy">This live review tab compares each task-associated repository against the best available merge-base between the task worktree HEAD and the repository default-branch refs, then overlays current workspace edits on top. If no shared base can be found, the repo falls back to a worktree-only review instead of failing the whole tab.</p>
         </div>
         <button className="secondary-button" data-role="task-pr-refresh" type="button" onClick={() => void loadPullRequest(true)}>
           {refreshing ? "Refreshing…" : "Refresh"}

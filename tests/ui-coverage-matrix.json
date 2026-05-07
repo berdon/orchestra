@@ -66,6 +66,16 @@
       ]
     },
     {
+      "id": "task-pr-review",
+      "surface": "Tasks",
+      "journey": "Review task-scoped cross-repo diffs from the PR tab",
+      "requiredHarnesses": ["desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/desktop-e2e/task-pr-tab.test.ts"
+      ]
+    },
+    {
       "id": "task-schedules",
       "surface": "Tasks",
       "journey": "Create and inspect scheduled or recurring task automation",

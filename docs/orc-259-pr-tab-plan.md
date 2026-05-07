@@ -40,13 +40,13 @@ This keeps the review source aligned with task-scoped execution when a task work
 Per reviewed repo:
 - `headCommit` = `HEAD` in the selected review root, when it exists
 - `defaultBranch` = repository-configured default branch
-- resolve the default-branch ref in this order:
-  1. `refs/remotes/origin/<defaultBranch>`
-  2. `refs/heads/<defaultBranch>`
+- try default-branch refs in this order:
+  1. `refs/heads/<defaultBranch>`
+  2. `refs/remotes/origin/<defaultBranch>`
   3. `<defaultBranch>`
-- if both `HEAD` and the default-branch ref exist, `baseCommit = merge-base(HEAD, defaultBranchRef)`
+- if `HEAD` and one of those refs produce a merge-base, use that merge-base as `baseCommit`
 - if the repo has no commits yet, use the empty tree as the base
-- if `HEAD` exists but no default-branch ref can be resolved, fall back to `baseCommit = HEAD` and explicitly mark the repo as `worktree-only` so only uncommitted changes are reviewable
+- if `HEAD` exists but no default-branch ref can be resolved **or** none of the candidates yield a usable merge-base, fall back to `baseCommit = HEAD` and explicitly mark the repo as `worktree-only` so only uncommitted changes are reviewable instead of failing the whole PR tab
 
 This makes detached worktrees safe and keeps the semantics stable even when no feature branch name exists.
 
@@ -266,8 +266,8 @@ Outdated comments:
 - The shipped PR tab is still a live derived read model. It does **not** persist a PR object; it recomputes from the task-associated repositories whenever the tab is opened/refreshed.
 - Review roots are resolved per repo with task-worktree-first precedence, then managed-repository fallback. If neither path is a valid checkout, the repo is surfaced as `Unavailable` in the PR tab.
 - Base semantics are implemented as:
-  - if `HEAD` and the default-branch ref both exist: `merge-base(HEAD, defaultBranchRef)`
-  - if `HEAD` exists but the default branch ref does not: base falls back to `HEAD` and the repo is flagged `worktree-only`
+  - if `HEAD` exists, Orchestra tries `refs/heads/<defaultBranch>`, `refs/remotes/origin/<defaultBranch>`, then `<defaultBranch>` and uses the first candidate that yields a merge-base with `HEAD`
+  - if `HEAD` exists but no default-branch candidate yields a usable merge-base: base falls back to `HEAD` and the repo is flagged `worktree-only`
   - if the repo has no commits yet: the empty tree is used as the base
 - The rendered diff is `base -> current workspace` per repo, so committed task changes and tracked workspace edits are shown together. Untracked files are injected as synthetic added files.
 - File origin badges come from separate classification passes:
