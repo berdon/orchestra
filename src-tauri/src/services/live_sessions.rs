@@ -2321,6 +2321,7 @@ mod tests {
             pending: Mutex::new(HashMap::new()),
             subscribed: Mutex::new(false),
             current_run_id: Mutex::new(active_prompt.then(|| "run-1".into())),
+            current_prompt_message: Mutex::new(active_prompt.then(|| "Test prompt".into())),
             closed: Mutex::new(false),
             last_non_prompt_delivery_at: Mutex::new(None),
             reload_capability: Mutex::new(unknown_control_capability()),

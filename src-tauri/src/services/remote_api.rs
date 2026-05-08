@@ -344,9 +344,17 @@ struct ProjectSecretQuery {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ProjectSecretUpsertApiInput {
+struct ProjectSecretCreateApiInput {
     project_slug: Option<String>,
     secret_key: String,
+    description: Option<String>,
+    value: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectSecretPatchApiInput {
+    project_slug: Option<String>,
     description: Option<String>,
     value: Option<String>,
 }
@@ -919,6 +927,8 @@ mod tests {
         process::Command,
         time::{SystemTime, UNIX_EPOCH},
     };
+    #[cfg(not(target_os = "macos"))]
+    use std::sync::Arc;
     use tower::ServiceExt;
 
     struct RemoteApiParityFixture {
@@ -1211,6 +1221,124 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn remote_api_project_secret_patch_accepts_path_key_and_preserves_rotated_values() {
+        let _probe_lock = crate::test_support::global_test_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        #[cfg(target_os = "macos")]
+        {
+            eprintln!("skipping project-secret remote API parity route test on macOS because tao test apps must be created on the main thread");
+            return;
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _secret_store = crate::services::project_secrets::ScopedTestProjectSecretStore::install(
+                Arc::new(crate::services::project_secrets::TestProjectSecretStore::new(
+                    "available",
+                )),
+            );
+            let fixture = build_remote_api_parity_fixture("project-secret-patch")
+                .expect("remote api fixture should build");
+            let project_slug = projects::resolve_default_project_slug(
+                &database::open_connection().expect("database should open"),
+            )
+            .expect("default project slug should resolve")
+            .expect("default project slug should exist");
+
+            let create_uri = format!("/api/v1/project-settings/secrets?projectSlug={project_slug}");
+            let create_body = json!({
+                "projectSlug": project_slug,
+                "secretKey": "OPENAI_API_KEY",
+                "description": "Primary",
+                "value": "sk-create"
+            });
+            let (create_status, create_response) = perform_authenticated_json_request_with_options(
+                &fixture.app,
+                &fixture.auth_header,
+                "POST",
+                "/api/v1/project-settings/secrets",
+                &[],
+                Some(create_body),
+            )
+            .expect("project secret create should succeed");
+            assert_eq!(create_status, StatusCode::OK);
+            assert_eq!(
+                create_response["secrets"][0]["secretKey"].as_str(),
+                Some("OPENAI_API_KEY")
+            );
+
+            let metadata_only_body = json!({
+                "projectSlug": project_slug,
+                "description": "Metadata only"
+            });
+            let (metadata_status, metadata_response) = perform_authenticated_json_request_with_options(
+                &fixture.app,
+                &fixture.auth_header,
+                "PATCH",
+                "/api/v1/project-settings/secrets/OPENAI_API_KEY",
+                &[],
+                Some(metadata_only_body),
+            )
+            .expect("metadata-only patch should succeed without secretKey in the body");
+            assert_eq!(metadata_status, StatusCode::OK);
+            assert_eq!(
+                metadata_response["secrets"][0]["description"].as_str(),
+                Some("Metadata only")
+            );
+            let metadata_value = crate::services::project_secrets::get_project_secret_value(
+                &project_slug,
+                "OPENAI_API_KEY",
+            )
+            .expect("metadata-only patch should preserve stored value");
+            assert_eq!(metadata_value.value, "sk-create");
+
+            let rotate_body = json!({
+                "projectSlug": project_slug,
+                "description": "Rotated",
+                "value": "sk-rotate"
+            });
+            let (rotate_status, rotate_response) = perform_authenticated_json_request_with_options(
+                &fixture.app,
+                &fixture.auth_header,
+                "PATCH",
+                "/api/v1/project-settings/secrets/OPENAI_API_KEY",
+                &[],
+                Some(rotate_body),
+            )
+            .expect("value rotation patch should succeed without secretKey in the body");
+            assert_eq!(rotate_status, StatusCode::OK);
+            assert_eq!(
+                rotate_response["secrets"][0]["description"].as_str(),
+                Some("Rotated")
+            );
+
+            let list_response = perform_authenticated_json_request(
+                &fixture.app,
+                &fixture.auth_header,
+                &create_uri,
+            )
+            .expect("project secret list should succeed");
+            assert_eq!(
+                list_response["secrets"][0]["description"].as_str(),
+                Some("Rotated")
+            );
+            assert_eq!(
+                list_response["secrets"][0]["valueState"].as_str(),
+                Some("ready")
+            );
+
+            let rotated_value = crate::services::project_secrets::get_project_secret_value(
+                &project_slug,
+                "OPENAI_API_KEY",
+            )
+            .expect("rotated project secret value should load");
+            assert_eq!(rotated_value.value, "sk-rotate");
+        }
     }
 
     #[test]
@@ -2344,6 +2472,121 @@ pub fn run_remote_api_route_probe(case: &str) -> Result<(), String> {
                         return Err(format!(
                             "hosted-web frontend-route probe returned unexpected HTML: {}",
                             frontend_html
+                        ));
+                    }
+                    Ok(())
+                }
+                "project_secret_patch" => {
+                    let project_slug = projects::resolve_default_project_slug(
+                        &database::open_connection()
+                            .map_err(|error| format!("project secret probe could not open database: {error}"))?,
+                    )
+                    .map_err(|error| format!("project secret probe could not resolve project slug: {error}"))?
+                    .ok_or_else(|| "project secret probe default project slug was missing".to_string())?;
+
+                    let create_response = client
+                        .post(format!("{base_url}/api/v1/project-settings/secrets"))
+                        .header("content-type", "application/json")
+                        .header("authorization", &auth_header)
+                        .json(&json!({
+                            "projectSlug": project_slug,
+                            "secretKey": "OPENAI_API_KEY",
+                            "description": "Primary",
+                            "value": "sk-create"
+                        }))
+                        .send()
+                        .await
+                        .map_err(|error| format!("project secret create probe request failed: {error}"))?;
+                    if create_response.status() != StatusCode::OK {
+                        return Err(format!(
+                            "project secret create probe returned {}",
+                            create_response.status()
+                        ));
+                    }
+
+                    let metadata_response = client
+                        .patch(format!("{base_url}/api/v1/project-settings/secrets/OPENAI_API_KEY"))
+                        .header("content-type", "application/json")
+                        .header("authorization", &auth_header)
+                        .json(&json!({
+                            "projectSlug": project_slug,
+                            "description": "Metadata only"
+                        }))
+                        .send()
+                        .await
+                        .map_err(|error| format!("project secret metadata probe request failed: {error}"))?;
+                    if metadata_response.status() != StatusCode::OK {
+                        return Err(format!(
+                            "project secret metadata probe returned {}",
+                            metadata_response.status()
+                        ));
+                    }
+                    let metadata_value = crate::services::project_secrets::get_project_secret_value(
+                        &project_slug,
+                        "OPENAI_API_KEY",
+                    )
+                    .map_err(|error| format!("project secret metadata probe could not reload value: {error}"))?;
+                    if metadata_value.value != "sk-create" {
+                        return Err(format!(
+                            "project secret metadata probe preserved unexpected value: {}",
+                            metadata_value.value
+                        ));
+                    }
+
+                    let rotate_response = client
+                        .patch(format!("{base_url}/api/v1/project-settings/secrets/OPENAI_API_KEY"))
+                        .header("content-type", "application/json")
+                        .header("authorization", &auth_header)
+                        .json(&json!({
+                            "projectSlug": project_slug,
+                            "description": "Rotated",
+                            "value": "sk-rotate"
+                        }))
+                        .send()
+                        .await
+                        .map_err(|error| format!("project secret rotate probe request failed: {error}"))?;
+                    if rotate_response.status() != StatusCode::OK {
+                        return Err(format!(
+                            "project secret rotate probe returned {}",
+                            rotate_response.status()
+                        ));
+                    }
+
+                    let listed_response = client
+                        .get(format!(
+                            "{base_url}/api/v1/project-settings/secrets?projectSlug={project_slug}"
+                        ))
+                        .header("authorization", &auth_header)
+                        .send()
+                        .await
+                        .map_err(|error| format!("project secret list probe request failed: {error}"))?;
+                    if listed_response.status() != StatusCode::OK {
+                        return Err(format!(
+                            "project secret list probe returned {}",
+                            listed_response.status()
+                        ));
+                    }
+                    let listed_body: Value = listed_response.json().await.map_err(|error| {
+                        format!("project secret list probe body failed to deserialize: {error}")
+                    })?;
+                    if listed_body["secrets"][0]["description"] != "Rotated"
+                        || listed_body["secrets"][0]["valueState"] != "ready"
+                    {
+                        return Err(format!(
+                            "project secret list probe returned unexpected payload: {}",
+                            listed_body
+                        ));
+                    }
+
+                    let rotated_value = crate::services::project_secrets::get_project_secret_value(
+                        &project_slug,
+                        "OPENAI_API_KEY",
+                    )
+                    .map_err(|error| format!("project secret rotate probe could not reload value: {error}"))?;
+                    if rotated_value.value != "sk-rotate" {
+                        return Err(format!(
+                            "project secret rotate probe returned unexpected value: {}",
+                            rotated_value.value
                         ));
                     }
                     Ok(())
@@ -4498,7 +4741,7 @@ async fn get_project_secrets_settings(
 async fn post_project_secret_settings(
     AxumState(context): AxumState<RemoteApiContext>,
     headers: HeaderMap,
-    Json(input): Json<ProjectSecretUpsertApiInput>,
+    Json(input): Json<ProjectSecretCreateApiInput>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     project_setting_commands::create_project_secret(
@@ -4518,7 +4761,7 @@ async fn patch_project_secret_settings(
     AxumState(context): AxumState<RemoteApiContext>,
     headers: HeaderMap,
     Path(secret_key): Path<String>,
-    Json(input): Json<ProjectSecretUpsertApiInput>,
+    Json(input): Json<ProjectSecretPatchApiInput>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     project_setting_commands::update_project_secret(

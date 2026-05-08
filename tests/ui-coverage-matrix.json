@@ -180,6 +180,17 @@
       ]
     },
     {
+      "id": "project-secrets-settings",
+      "surface": "Settings",
+      "journey": "Save, rotate, reload, and later use project-scoped secrets from the settings surface",
+      "requiredHarnesses": ["browser", "desktop"],
+      "status": "covered",
+      "specs": [
+        "tests/e2e/projects.spec.ts",
+        "tests/desktop-e2e/project-secrets-persistence.test.ts"
+      ]
+    },
+    {
       "id": "roles-and-workflows-settings",
       "surface": "Settings",
       "journey": "Manage roles and workflows in the settings surfaces",

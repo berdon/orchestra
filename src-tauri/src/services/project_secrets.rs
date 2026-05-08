@@ -1,4 +1,6 @@
 use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::{io::Write, process::{Command, Stdio}};
 #[cfg(test)]
 use std::{collections::HashMap, sync::Arc, sync::LazyLock, sync::Mutex, sync::MutexGuard};
 
@@ -174,6 +176,117 @@ impl KeyringProjectSecretStore {
     }
 }
 
+#[cfg(target_os = "linux")]
+struct SecretToolProjectSecretStore;
+
+#[cfg(target_os = "linux")]
+impl SecretToolProjectSecretStore {
+    fn available() -> bool {
+        Command::new("secret-tool")
+            .arg("lookup")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .is_ok()
+    }
+
+    fn secret_tool_attributes(service: &str, account: &str) -> Vec<String> {
+        vec![
+            "service".into(),
+            service.into(),
+            "username".into(),
+            account.into(),
+            "target".into(),
+            "default".into(),
+            "application".into(),
+            "rust-keyring".into(),
+        ]
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl ProjectSecretStore for SecretToolProjectSecretStore {
+    fn availability(&self) -> ProjectSecretsAvailability {
+        if Self::available() {
+            availability("available", None)
+        } else {
+            availability("unsupported", Some("secret-tool is not available on PATH".into()))
+        }
+    }
+
+    fn get_value(&self, service: &str, account: &str) -> Result<Option<String>, SecretStoreError> {
+        let output = Command::new("secret-tool")
+            .arg("lookup")
+            .args(Self::secret_tool_attributes(service, account))
+            .output()
+            .map_err(|error| classify_store_error(format!("Unable to run secret-tool lookup: {error}")))?;
+        if output.status.success() {
+            return Ok(Some(
+                String::from_utf8_lossy(&output.stdout)
+                    .trim_end_matches(['\r', '\n'])
+                    .to_string(),
+            ));
+        }
+        if output.stdout.is_empty() && output.stderr.is_empty() {
+            return Ok(None);
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            Ok(None)
+        } else {
+            Err(classify_store_error(stderr))
+        }
+    }
+
+    fn set_value(&self, service: &str, account: &str, value: &str) -> Result<(), SecretStoreError> {
+        let mut child = Command::new("secret-tool")
+            .arg("store")
+            .arg("--label=Orchestra project secret")
+            .args(Self::secret_tool_attributes(service, account))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| classify_store_error(format!("Unable to run secret-tool store: {error}")))?;
+        if let Some(stdin) = child.stdin.as_mut() {
+            stdin
+                .write_all(value.as_bytes())
+                .map_err(|error| classify_store_error(format!("Unable to write secret-tool input: {error}")))?;
+        }
+        let output = child
+            .wait_with_output()
+            .map_err(|error| classify_store_error(format!("Unable to finish secret-tool store: {error}")))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(classify_store_error(if stderr.is_empty() {
+                format!("secret-tool store exited with status {}", output.status)
+            } else {
+                stderr
+            }))
+        }
+    }
+
+    fn delete_value(&self, service: &str, account: &str) -> Result<(), SecretStoreError> {
+        let output = Command::new("secret-tool")
+            .arg("clear")
+            .args(Self::secret_tool_attributes(service, account))
+            .output()
+            .map_err(|error| classify_store_error(format!("Unable to run secret-tool clear: {error}")))?;
+        if output.status.success() || (output.stdout.is_empty() && output.stderr.is_empty()) {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                Ok(())
+            } else {
+                Err(classify_store_error(stderr))
+            }
+        }
+    }
+}
+
 impl ProjectSecretStore for KeyringProjectSecretStore {
     fn availability(&self) -> ProjectSecretsAvailability {
         match self.entry(PROJECT_SECRET_SERVICE, "availability-probe") {
@@ -234,6 +347,11 @@ fn current_project_secret_store() -> std::sync::Arc<dyn ProjectSecretStore> {
         .clone()
     {
         return store;
+    }
+
+    #[cfg(target_os = "linux")]
+    if SecretToolProjectSecretStore::available() {
+        return std::sync::Arc::new(SecretToolProjectSecretStore);
     }
 
     std::sync::Arc::new(KeyringProjectSecretStore)
@@ -347,9 +465,9 @@ fn get_project_secrets_with_store(
     let secrets = metadata
         .into_iter()
         .map(|entry| {
-            let account = secure_store_account(orchestra_root, &project.id, &entry.secret_key);
+            let accounts = secure_store_accounts(orchestra_root, &project.id, &entry.secret_key);
             let (value_state, value_state_message) =
-                match store.get_value(PROJECT_SECRET_SERVICE, &account) {
+                match load_value_from_accounts(store, &accounts) {
                     Ok(Some(_)) => ("ready".to_string(), None),
                     Ok(None) => ("missing_value".to_string(), None),
                     Err(error) => {
@@ -493,9 +611,8 @@ fn get_project_secret_value_with_store(
             )
         },
     )?;
-    let account = secure_store_account(orchestra_root, &project.id, &normalized_key);
-    let value = store
-        .get_value(PROJECT_SECRET_SERVICE, &account)
+    let accounts = secure_store_accounts(orchestra_root, &project.id, &normalized_key);
+    let value = load_value_from_accounts(store, &accounts)
         .map_err(|error| error.message)?
         .ok_or_else(|| format!("Project secret {normalized_key} is missing a stored value."))?;
     Ok(ProjectSecretValueResult {
@@ -518,9 +635,8 @@ pub(crate) fn cleanup_project_secrets_for_project_id(
     metadata
         .into_iter()
         .filter_map(|entry| {
-            let account = secure_store_account(orchestra_root, project_id, &entry.secret_key);
-            store
-                .delete_value(PROJECT_SECRET_SERVICE, &account)
+            let accounts = secure_store_accounts(orchestra_root, project_id, &entry.secret_key);
+            delete_value_from_accounts(store.as_ref(), &accounts)
                 .err()
                 .map(|error| format!("{}: {}", entry.secret_key, error.message))
         })
@@ -562,14 +678,14 @@ fn write_project_secret_with_store(
     }
 
     let now = Utc::now().to_rfc3339();
-    let account = secure_store_account(orchestra_root, &project.id, &normalized_key);
+    let primary_account = secure_store_account(orchestra_root, &project.id, &normalized_key);
     let created_at = existing
         .as_ref()
         .map(|entry| entry.created_at.clone())
         .unwrap_or_else(|| now.clone());
     let last_rotated_at = if let Some(next_value) = value.as_deref() {
         store
-            .set_value(PROJECT_SECRET_SERVICE, &account, next_value)
+            .set_value(PROJECT_SECRET_SERVICE, &primary_account, next_value)
             .map_err(|error| error.message)?;
         now.clone()
     } else {
@@ -628,10 +744,8 @@ fn delete_project_secret_with_store(
     let normalized_key = normalize_secret_key(secret_key)?;
     let existing = load_project_secret_metadata_entry(connection, &project.id, &normalized_key)?
         .ok_or_else(|| format!("Project secret {normalized_key} was not found."))?;
-    let account = secure_store_account(orchestra_root, &project.id, &normalized_key);
-    store
-        .delete_value(PROJECT_SECRET_SERVICE, &account)
-        .map_err(|error| error.message)?;
+    let accounts = secure_store_accounts(orchestra_root, &project.id, &normalized_key);
+    delete_value_from_accounts(store, &accounts).map_err(|error| error.message)?;
     connection
         .execute(
             "DELETE FROM project_secret_metadata WHERE id = ?1",
@@ -827,7 +941,79 @@ fn secure_store_account(
     let fingerprint = orchestra_root
         .map(root_fingerprint)
         .unwrap_or_else(|| "memory".into());
-    format!("scope:{fingerprint}:project:{project_id}:secret:{secret_key}",)
+    let mut hasher = Sha256::new();
+    hasher.update(b"project-secret-v2");
+    hasher.update([0]);
+    hasher.update(fingerprint.as_bytes());
+    hasher.update([0]);
+    hasher.update(project_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(secret_key.as_bytes());
+    format!("project-secret-v2:{}", hex::encode(hasher.finalize()))
+}
+
+fn legacy_secure_store_account(
+    orchestra_root: Option<&Path>,
+    project_id: &str,
+    secret_key: &str,
+) -> String {
+    let fingerprint = orchestra_root
+        .map(root_fingerprint)
+        .unwrap_or_else(|| "memory".into());
+    format!("scope:{fingerprint}:project:{project_id}:secret:{secret_key}")
+}
+
+fn secure_store_accounts(
+    orchestra_root: Option<&Path>,
+    project_id: &str,
+    secret_key: &str,
+) -> Vec<String> {
+    let primary = secure_store_account(orchestra_root, project_id, secret_key);
+    let legacy = legacy_secure_store_account(orchestra_root, project_id, secret_key);
+    if primary == legacy {
+        vec![primary]
+    } else {
+        vec![primary, legacy]
+    }
+}
+
+fn load_value_from_accounts(
+    store: &dyn ProjectSecretStore,
+    accounts: &[String],
+) -> Result<Option<String>, SecretStoreError> {
+    let mut first_error = None;
+    for account in accounts {
+        match store.get_value(PROJECT_SECRET_SERVICE, account) {
+            Ok(Some(value)) => return Ok(Some(value)),
+            Ok(None) => {}
+            Err(error) if first_error.is_none() => first_error = Some(error),
+            Err(_) => {}
+        }
+    }
+    if let Some(error) = first_error {
+        Err(error)
+    } else {
+        Ok(None)
+    }
+}
+
+fn delete_value_from_accounts(
+    store: &dyn ProjectSecretStore,
+    accounts: &[String],
+) -> Result<(), SecretStoreError> {
+    let mut first_error = None;
+    for account in accounts {
+        match store.delete_value(PROJECT_SECRET_SERVICE, account) {
+            Ok(()) => {}
+            Err(error) if first_error.is_none() => first_error = Some(error),
+            Err(_) => {}
+        }
+    }
+    if let Some(error) = first_error {
+        Err(error)
+    } else {
+        Ok(())
+    }
 }
 
 fn root_fingerprint(orchestra_root: &Path) -> String {
@@ -1185,6 +1371,44 @@ mod tests {
                 .expect("state should still show the secret after failed delete");
         assert_eq!(state.secrets.len(), 1);
         assert_eq!(state.secrets[0].secret_key, "OPENAI_API_KEY");
+    }
+
+    #[test]
+    fn secure_store_account_uses_a_compact_hashed_identifier() {
+        let root = unique_temp_dir("account-id");
+        let account = secure_store_account(Some(&root), "project-123", "OPENAI_API_KEY");
+        assert!(account.starts_with("project-secret-v2:"));
+        assert!(account.len() < 100, "account should stay short for provider compatibility");
+    }
+
+    #[test]
+    fn legacy_secure_store_account_values_still_load() {
+        let (connection, root) = connection_with_project();
+        let store = TestProjectSecretStore::new("available");
+        let legacy_account = legacy_secure_store_account(Some(&root), "project-1", "OPENAI_API_KEY");
+        store.values.lock().expect("values lock").insert(
+            TestProjectSecretStore::key(PROJECT_SECRET_SERVICE, &legacy_account),
+            "sk-legacy".into(),
+        );
+        connection
+            .execute(
+                "INSERT INTO project_secret_metadata (id, project_id, secret_key, description, created_at, updated_at, last_rotated_at) VALUES ('secret-1', 'project-1', 'OPENAI_API_KEY', 'Key', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z')",
+                [],
+            )
+            .expect("metadata should insert");
+
+        let state = get_project_secrets_with_store(&connection, Some(&root), "test-project", &store)
+            .expect("state should load legacy value");
+        assert_eq!(state.secrets[0].value_state, "ready");
+        let loaded = get_project_secret_value_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            "OPENAI_API_KEY",
+            &store,
+        )
+        .expect("legacy value should load");
+        assert_eq!(loaded.value, "sk-legacy");
     }
 
     #[test]

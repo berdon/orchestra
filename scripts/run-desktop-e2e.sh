@@ -137,6 +137,38 @@ run_inner() {
     unset PI_CODING_AGENT_DIR PI_PACKAGE_DIR ORCHESTRA_PI_EXECUTABLE ORCHESTRA_BUNDLED_PI_RUNTIME_ROOT
   fi
   mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
+
+  DBUS_SESSION_BUS_PID=""
+  GNOME_KEYRING_PID=""
+  if command -v dbus-daemon >/dev/null 2>&1; then
+    dbus_session_info="$(dbus-daemon --session --fork --print-address=1 --print-pid=1)"
+    export DBUS_SESSION_BUS_ADDRESS="$(printf '%s\n' "${dbus_session_info}" | sed -n '1p')"
+    DBUS_SESSION_BUS_PID="$(printf '%s\n' "${dbus_session_info}" | sed -n '2p')"
+    echo "[desktop-e2e-runner] started dbus session bus ${DBUS_SESSION_BUS_ADDRESS} pid=${DBUS_SESSION_BUS_PID}"
+  fi
+  if command -v gnome-keyring-daemon >/dev/null 2>&1; then
+    mkdir -p "${XDG_DATA_HOME}/keyrings"
+    keyring_env="$(printf '\n' | gnome-keyring-daemon --unlock --components=secrets 2>/dev/null || gnome-keyring-daemon --start --components=secrets 2>/dev/null || true)"
+    if [[ -n "${keyring_env}" ]]; then
+      eval "${keyring_env}"
+      GNOME_KEYRING_PID="${GNOME_KEYRING_PID:-}"
+      echo "[desktop-e2e-runner] started gnome-keyring-daemon pid=${GNOME_KEYRING_PID:-unknown} control=${GNOME_KEYRING_CONTROL:-unset}"
+    else
+      echo "[desktop-e2e-runner] warning: gnome-keyring-daemon did not emit session env; project-secret persistence may be unavailable" >&2
+    fi
+  fi
+  if command -v secret-tool >/dev/null 2>&1; then
+    probe_attr_name="orchestra-desktop-e2e-probe"
+    probe_attr_value="$(date +%s)-$$"
+    if ! printf 'probe-value' | secret-tool store --label='Orchestra desktop E2E probe' "${probe_attr_name}" "${probe_attr_value}" >/dev/null 2>&1; then
+      echo "[desktop-e2e-runner] secret-tool probe store failed; secure-store desktop E2E coverage will be unreliable" >&2
+    else
+      probe_lookup="$(secret-tool lookup "${probe_attr_name}" "${probe_attr_value}" 2>/dev/null || true)"
+      echo "[desktop-e2e-runner] secret-tool probe lookup=${probe_lookup:-<empty>}"
+      secret-tool clear "${probe_attr_name}" "${probe_attr_value}" >/dev/null 2>&1 || true
+    fi
+  fi
+
   ensure_preview_assets
   rm -rf "${TEST_HOME}/.pi"
   if [[ -d "${REAL_HOME}/.pi" ]]; then
@@ -238,6 +270,14 @@ run_inner() {
     if [[ -n "${PREVIEW_PGID:-}" ]]; then
       kill -TERM -- "-${PREVIEW_PGID}" 2>/dev/null || true
       wait "${PREVIEW_PID}" 2>/dev/null || true
+    fi
+    if [[ -n "${GNOME_KEYRING_PID:-}" ]] && kill -0 "${GNOME_KEYRING_PID}" 2>/dev/null; then
+      kill "${GNOME_KEYRING_PID}" 2>/dev/null || true
+      wait "${GNOME_KEYRING_PID}" 2>/dev/null || true
+    fi
+    if [[ -n "${DBUS_SESSION_BUS_PID:-}" ]] && kill -0 "${DBUS_SESSION_BUS_PID}" 2>/dev/null; then
+      kill "${DBUS_SESSION_BUS_PID}" 2>/dev/null || true
+      wait "${DBUS_SESSION_BUS_PID}" 2>/dev/null || true
     fi
   }
   trap cleanup EXIT

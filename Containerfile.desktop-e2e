@@ -25,6 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   npm \
   python3 \
   dbus-x11 \
+  gnome-keyring \
+  libsecret-tools \
   webkitgtk-webdriver \
   libgtk-3-dev \
   libayatana-appindicator3-dev \
