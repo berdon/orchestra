@@ -2,13 +2,13 @@
 
 ## tl;dr
 - Keep the primary Send action and Ctrl/⌘+Enter mapped to today’s default behavior.
-- Add a visible send-options trigger beside Send; do not rely on long-press as the only affordance.
+- Add a visible composite Send control with a primary left segment and a send-options right segment; do not rely on long-press as the only affordance.
 - Expose one-shot `Queue` and `Interrupt` send actions in the shared chat/session composers.
 - Extend session send plumbing so the UI can explicitly request default vs queue vs interrupt delivery.
 - Add browser + desktop regression coverage for default send, menu open, queue, interrupt, and resulting delivery behavior.
 
 ## Executive summary
-The cleanest product change is a split-send affordance. The main Send button should remain the current/default path, while a small adjacent trigger opens a menu for alternate delivery modes. That keeps ordinary send unchanged, makes alternate steering discoverable on desktop and mobile, and avoids sticky-mode surprises. Long-press can open the same menu as an accelerator if it proves low-risk, but it should not be the primary or only UX because it is weak for discoverability, keyboard users, and accessibility.
+The cleanest product change is a composite send affordance. The main Send action should remain the current/default path, while a compact right-side segment on the same control opens a menu for alternate delivery modes. That keeps ordinary send unchanged, makes alternate steering discoverable on desktop and mobile, avoids sticky-mode surprises, and keeps the control from visually wrapping into a separate second button. Long-press can open the same menu as an accelerator if it proves low-risk, but it should not be the primary or only UX because it is weak for discoverability, keyboard users, and accessibility.
 
 Backend support is already close: `send_session_message` currently preserves default Orchestra behavior by sending a `prompt` when idle and auto-queueing a `follow_up` when the session is already active, and the live runtime already supports `steer` deliveries. The implementation should therefore add an explicit send-mode parameter end to end and keep the default path backward-compatible.
 
@@ -29,15 +29,15 @@ Backend support is already close: `send_session_message` currently preserves def
 
 ## Recommended UX
 
-### 1. Use a visible split-send control
-Add a compact send-options trigger beside the existing Send button on:
+### 1. Use a visible composite send control
+Add a single composite send control with a primary left segment and a compact send-options right segment on:
 - Chat page (`SessionChatPanel`)
 - Sessions page (`SessionChatPanel`)
 - Supervisor quick chat (`SupervisorQuickChatModal`)
 
 Recommended behavior:
-- primary Send button => default behavior
-- adjacent trigger => open menu with alternate send actions
+- left/primary Send segment => default behavior
+- right/options segment => open menu with alternate send actions
 - Ctrl/⌘+Enter => default behavior only
 
 This keeps the existing fast path unchanged and makes alternate steering explicit.
@@ -137,9 +137,9 @@ This helper should also drive logging so desktop regressions can distinguish fol
 
 ### 3. Add the shared send-options UI
 In `src/components/SessionChatPanel.tsx`:
-- keep the current submit button as the default action,
-- add an adjacent send-options trigger,
-- open a small menu reusing the existing lightweight dropdown pattern already used for session actions,
+- keep the current submit button semantics as the default action,
+- restyle the send control into a single composite control with left/right segments,
+- open a small menu from the right segment reusing the existing lightweight dropdown pattern already used for session actions,
 - wire menu actions to `onSendMessage(mode)` or equivalent.
 
 Mirror the same pattern in `src/components/SupervisorQuickChatModal.tsx` so quick chat stays behaviorally consistent.

@@ -92,9 +92,9 @@ export function SessionSendControls({
 
   return (
     <div className="session-send-menu" ref={rootRef}>
-      <div className="session-send-menu__group">
+      <div className="session-send-menu__group" role="group" aria-label="Send controls">
         <button
-          className="primary-button"
+          className="primary-button session-send-menu__segment session-send-menu__segment--primary"
           data-role={sendButtonDataRole}
           type="submit"
           aria-label={sendButtonLabel}
@@ -106,7 +106,7 @@ export function SessionSendControls({
           ↗
         </button>
         <button
-          className="secondary-button session-actions-menu__trigger session-send-menu__trigger"
+          className="secondary-button session-actions-menu__trigger session-send-menu__segment session-send-menu__segment--trigger"
           data-role={optionsTriggerDataRole}
           type="button"
           aria-haspopup="menu"

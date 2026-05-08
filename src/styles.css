@@ -3089,17 +3089,35 @@ strong {
 .session-send-menu {
   position: relative;
   display: inline-flex;
+  flex: 0 0 auto;
 }
 
 .session-send-menu__group {
   display: inline-flex;
   align-items: stretch;
-  gap: 6px;
+  flex-wrap: nowrap;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-.session-send-menu__trigger {
+.session-send-menu__segment {
+  min-height: 42px;
+  border-radius: 0;
+}
+
+.session-send-menu__segment + .session-send-menu__segment {
+  margin-left: -1px;
+}
+
+.session-send-menu__segment--primary {
+  min-width: 42px;
+}
+
+.session-send-menu__segment--trigger {
   min-width: 36px;
   width: 36px;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .session-send-menu__dropdown {
