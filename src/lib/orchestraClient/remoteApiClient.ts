@@ -55,6 +55,7 @@ import type {
   SendMailboxMessageInput,
   SessionModel,
   SessionModelState,
+  SessionSendMode,
   SessionRecord,
   SessionRuntimeDetails,
   SessionStats,
@@ -1680,7 +1681,7 @@ export function createRemoteApiOrchestraClientBinding(
           path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/reload`,
         });
       },
-      sendMessage: (sessionId, message, runId) => {
+      sendMessage: (sessionId, message, runId, sendMode?: SessionSendMode) => {
         transport.assertCapability("sessions.sendMessage", bootstrap.capabilities.sessions.write);
         return transport.requestJson<QueuedSessionMessage>("sessions.sendMessage", {
           method: "POST",
@@ -1688,6 +1689,7 @@ export function createRemoteApiOrchestraClientBinding(
           body: {
             message,
             runId,
+            sendMode,
           },
         });
       },

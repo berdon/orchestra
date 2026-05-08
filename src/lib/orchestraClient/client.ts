@@ -53,6 +53,7 @@ import type {
   SessionModelState,
   SessionRecord,
   SessionRuntimeDetails,
+  SessionSendMode,
   SessionStats,
   SkillBindingInput,
   SkillDetail,
@@ -153,6 +154,7 @@ export type {
   SessionModelState,
   SessionRecord,
   SessionRuntimeDetails,
+  SessionSendMode,
   SessionStats,
   SkillBindingInput,
   SkillDetail,
@@ -417,7 +419,7 @@ export interface OrchestraSessionService {
   setModel(sessionId: string, provider: string, modelId: string): Promise<SessionModelState>;
   compact(sessionId: string, customInstructions?: string | null): Promise<SessionRecord>;
   reload(sessionId: string): Promise<SessionRecord>;
-  sendMessage(sessionId: string, message: string, runId: string): Promise<QueuedSessionMessage>;
+  sendMessage(sessionId: string, message: string, runId: string, sendMode?: SessionSendMode): Promise<QueuedSessionMessage>;
 }
 
 export interface OrchestraEventService {

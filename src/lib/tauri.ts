@@ -62,6 +62,7 @@ import type {
   SessionChangeEvent,
   SessionEvent,
   SessionModel,
+  SessionSendMode,
   SessionModelState,
   SessionRecord,
   SessionRuntimeDetails,
@@ -4660,10 +4661,33 @@ export async function reloadSession(sessionId: string): Promise<SessionRecord> {
   return invoke<SessionRecord>("reload_session", { sessionId });
 }
 
+function resolveMockSessionDeliveryMode(
+  sessionId: string,
+  sendMode: SessionSendMode,
+): "prompt" | "follow_up" | "steer" {
+  const sessionBusy = (getMockActiveSessionRuns()[sessionId] ?? []).length > 0;
+  if (!sessionBusy) {
+    return "prompt";
+  }
+  return sendMode === "interrupt" ? "steer" : "follow_up";
+}
+
+function describeMockSessionDeliveryMode(deliveryMode: "prompt" | "follow_up" | "steer") {
+  switch (deliveryMode) {
+    case "follow_up":
+      return { target: "sessions.message.follow_up", message: "Queued follow-up message" };
+    case "steer":
+      return { target: "sessions.message.steer", message: "Queued interrupt steer message" };
+    default:
+      return { target: "sessions.message.start", message: "Sent prompt" };
+  }
+}
+
 export async function sendSessionMessage(
   sessionId: string,
   message: string,
   runId: string,
+  sendMode: SessionSendMode = "default",
 ): Promise<QueuedSessionMessage> {
   const trimmedMessage = message.trim();
   if (!trimmedMessage) {
@@ -4671,6 +4695,7 @@ export async function sendSessionMessage(
   }
 
   if (!isTauriAvailable()) {
+    const deliveryMode = resolveMockSessionDeliveryMode(sessionId, sendMode);
     const queued: QueuedSessionMessage = {
       sessionId,
       runId,
@@ -4743,6 +4768,13 @@ export async function sendSessionMessage(
       sessionIds: [sessionId],
       reason: "sessions.message.queued",
     });
+
+    const deliveryLog = describeMockSessionDeliveryMode(deliveryMode);
+    appendMockLog(
+      "info",
+      deliveryLog.target,
+      `${deliveryLog.message} for session ${sessionId}`,
+    );
 
     const assistantReply = generateAssistantReply(trimmedMessage);
     const chunks = assistantReply.split(/(\s+)/).filter(Boolean);
@@ -4984,11 +5016,6 @@ export async function sendSessionMessage(
           }
           setMockActiveSessionRuns(nextRuns);
 
-          appendMockLog(
-            "info",
-            "sessions.message",
-            `Sent message to session ${session.id}`,
-          );
           emitMockSessionStream(
             createMockSessionEnvelope(sessionId, runId, { type: "agent_end" }),
           );
@@ -5004,6 +5031,7 @@ export async function sendSessionMessage(
     sessionId,
     message: trimmedMessage,
     runId,
+    sendMode,
   });
 }
 

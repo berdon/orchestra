@@ -173,6 +173,7 @@ struct FileContentQuery {
 struct SessionMessageInput {
     message: String,
     run_id: Option<String>,
+    send_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1631,7 +1632,7 @@ where
     S: Clone + Send + Sync + 'static,
     R: Runtime,
     SessionSender:
-        Fn(String, String, Option<String>) -> SessionFuture + Clone + Send + Sync + 'static,
+        Fn(String, String, Option<String>, Option<String>) -> SessionFuture + Clone + Send + Sync + 'static,
     SessionFuture:
         std::future::Future<Output = Result<QueuedSessionMessage, String>> + Send + 'static,
 {
@@ -1660,9 +1661,9 @@ where
                             headers,
                             session_id,
                             input,
-                            move |session_id, message, run_id| {
+                            move |session_id, message, run_id, send_mode| {
                                 let sender = sender.clone();
-                                async move { sender(session_id, message, run_id).await }
+                                async move { sender(session_id, message, run_id, send_mode).await }
                             },
                         )
                         .await
@@ -2216,12 +2217,12 @@ fn build_remote_api_context(app: AppHandle) -> Router {
     register_frontend_bootstrap_and_session_routes(
         router,
         app,
-        move |session_id, message, run_id| {
+        move |session_id, message, run_id, send_mode| {
             let app = app_for_session_sender.clone();
             async move {
                 let state_app = app.clone();
                 let state = state_app.state::<AppState>();
-                send_session_message_internal(app, state.inner(), session_id, message, run_id).await
+                send_session_message_internal(app, state.inner(), session_id, message, run_id, send_mode).await
             }
         },
     )
@@ -4267,7 +4268,7 @@ fn prepare_session_message_request<R: Runtime>(
     headers: &HeaderMap,
     session_id: &str,
     input: SessionMessageInput,
-) -> Result<(String, Option<String>), (StatusCode, Json<ApiError>)> {
+) -> Result<(String, Option<String>, Option<String>), (StatusCode, Json<ApiError>)> {
     let _device = resolve_remote_auth(app, headers, None)?;
     let trimmed_message = session_commands::validate_session_message_request(
         app.state::<AppState>().inner(),
@@ -4275,7 +4276,7 @@ fn prepare_session_message_request<R: Runtime>(
         input.message,
     )
     .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))?;
-    Ok((trimmed_message, input.run_id))
+    Ok((trimmed_message, input.run_id, input.send_mode))
 }
 
 fn load_remote_session_record(state: &AppState, session_id: &str) -> Result<SessionRecord, String> {
@@ -4313,6 +4314,7 @@ async fn send_session_message_internal(
     session_id: String,
     message: String,
     requested_run_id: Option<String>,
+    send_mode: Option<String>,
 ) -> Result<QueuedSessionMessage, String> {
     session_commands::send_session_message_with_optional_run_id(
         app,
@@ -4320,6 +4322,7 @@ async fn send_session_message_internal(
         session_id,
         message,
         requested_run_id,
+        send_mode,
     )
     .await
 }
@@ -7310,12 +7313,12 @@ async fn session_message_response_with_sender<R, Sender, Fut>(
 ) -> Result<Json<QueuedSessionMessage>, (StatusCode, Json<ApiError>)>
 where
     R: Runtime,
-    Sender: FnOnce(String, String, Option<String>) -> Fut,
+    Sender: FnOnce(String, String, Option<String>, Option<String>) -> Fut,
     Fut: std::future::Future<Output = Result<QueuedSessionMessage, String>>,
 {
-    let (trimmed_message, run_id) =
+    let (trimmed_message, run_id, send_mode) =
         prepare_session_message_request(app, &headers, &session_id, input)?;
-    sender(session_id, trimmed_message, run_id)
+    sender(session_id, trimmed_message, run_id, send_mode)
         .await
         .map(Json)
         .map_err(|error| api_error(StatusCode::BAD_REQUEST, error))
@@ -7373,6 +7376,7 @@ async fn post_supervisor_message(
         session_id,
         input.message,
         input.run_id,
+        input.send_mode,
     )
     .await
     .map(Json)

@@ -3039,6 +3039,11 @@ strong {
   margin-left: auto;
 }
 
+.composer__send-summary {
+  margin: 0;
+  flex: 1 1 220px;
+}
+
 .session-actions-menu {
   position: relative;
   display: inline-flex;
@@ -3079,6 +3084,47 @@ strong {
 
 .session-actions-menu__item {
   justify-content: flex-start;
+}
+
+.session-send-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.session-send-menu__group {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.session-send-menu__trigger {
+  min-width: 36px;
+  width: 36px;
+}
+
+.session-send-menu__dropdown {
+  min-width: min(320px, calc(100vw - 28px));
+}
+
+.session-send-menu__header {
+  margin: 0;
+  padding: 4px 2px 6px;
+}
+
+.session-send-menu__item {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+
+.session-send-menu__item-label {
+  font-weight: 600;
+}
+
+.session-send-menu__item-description {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  white-space: normal;
 }
 
 .session-detail__meta--footer {
@@ -6055,7 +6101,8 @@ strong {
   }
 
   .composer__meta,
-  .composer__actions {
+  .composer__actions,
+  .composer__send-summary {
     width: 100%;
   }
 
@@ -6106,8 +6153,12 @@ strong {
     min-width: 44px;
   }
 
-  .session-chat-panel[data-surface="page-mobile-detail"] .session-transcript {
+  .session-chat-panel[data-surface="page-mobile-detail"] .session-transcript-wrap {
     flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .session-chat-panel[data-surface="page-mobile-detail"] .session-transcript {
     min-height: 0;
   }
 
@@ -6153,6 +6204,12 @@ strong {
     display: none;
   }
 
+  .composer__send-summary {
+    display: block;
+    order: -1;
+    flex: 0 0 auto;
+  }
+
   .session-actions-menu,
   .session-actions-menu__trigger {
     width: 42px;
@@ -6162,6 +6219,12 @@ strong {
     left: 0;
     right: auto;
     max-width: min(calc(100vw - 28px), 240px);
+  }
+
+  .session-chat-panel[data-surface="page-mobile-detail"] .session-send-menu__dropdown {
+    left: auto;
+    right: 0;
+    max-width: min(calc(100vw - 28px), 320px);
   }
 
   .session-model-field--composer {
@@ -6280,7 +6343,16 @@ strong {
   width: min(760px, calc(100vw - 48px));
   max-height: min(84vh, 820px);
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 16px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.quick-chat-modal__header-block {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
 }
 
 .file-content-viewer {
@@ -6761,8 +6833,8 @@ strong {
 }
 
 .quick-chat-transcript {
-  min-height: 260px;
-  max-height: min(48vh, 420px);
+  min-height: 0;
+  max-height: none;
 }
 
 @media (max-width: 900px) {

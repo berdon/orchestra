@@ -138,6 +138,7 @@ import type {
   SessionMessageability,
   SessionModelState,
   SessionRecord,
+  SessionSendMode,
   SessionStats,
   SessionScrollState,
   SessionStatus,
@@ -5093,7 +5094,7 @@ export function App() {
     (
       sessionId: string,
       message: string,
-      options?: { clearDraft?: boolean },
+      options?: { clearDraft?: boolean; sendMode?: SessionSendMode },
     ) => {
       const session = sessions.find((entry) => entry.id === sessionId);
       if (!session) {
@@ -5114,6 +5115,7 @@ export function App() {
       }
 
       const clearDraft = options?.clearDraft ?? false;
+      const sendMode = options?.sendMode ?? "default";
       const previousDraft = draftMessages[sessionId] ?? "";
       const runId = createClientId("run");
       const timestamp = nowIso();
@@ -5135,7 +5137,7 @@ export function App() {
       );
 
       void orchestraClient.sessions
-        .sendMessage(sessionId, trimmedMessage, runId)
+        .sendMessage(sessionId, trimmedMessage, runId, sendMode)
         .catch(async (error) => {
           patchSessionRecord(sessionId, (record) => ({
             ...record,
@@ -5149,9 +5151,9 @@ export function App() {
           setSessionActionError(
             await reportUiError(
               orchestraClient,
-              "ui.sessions.message.queue",
+              "ui.sessions.message.send",
               error,
-              "Unable to queue message.",
+              "Unable to send message.",
             ),
           );
         });
@@ -5168,13 +5170,13 @@ export function App() {
   );
 
   const handleSendMessage = useCallback(
-    (sessionId: string) => {
+    (sessionId: string, sendMode: SessionSendMode = "default") => {
       const trimmedMessage = (draftMessages[sessionId] ?? "").trim();
       if (!trimmedMessage) {
         return;
       }
 
-      queueSessionMessage(sessionId, trimmedMessage, { clearDraft: true });
+      queueSessionMessage(sessionId, trimmedMessage, { clearDraft: true, sendMode });
     },
     [draftMessages, queueSessionMessage],
   );
@@ -5317,12 +5319,12 @@ export function App() {
     },
     [selectedSession?.id, updateDraftMessage],
   );
-  const handleSelectedSessionSend = useCallback(() => {
+  const handleSelectedSessionSend = useCallback((sendMode: SessionSendMode = "default") => {
     if (selectedSession?.terminalAttached) {
       return;
     }
     if (selectedSession) {
-      handleSendMessage(selectedSession.id);
+      handleSendMessage(selectedSession.id, sendMode);
     }
   }, [
     handleSendMessage,
@@ -6386,7 +6388,7 @@ export function App() {
                       updateDraftMessage(chatSession.id, value);
                     }
                   }}
-                  onSendMessage={() => {
+                  onSendMessage={(sendMode = "default") => {
                     if (
                       chatSession?.terminalAttached ||
                       (chatSession && !isSessionMessageable(chatSession))
@@ -6394,7 +6396,7 @@ export function App() {
                       return;
                     }
                     if (chatSession) {
-                      handleSendMessage(chatSession.id);
+                      handleSendMessage(chatSession.id, sendMode);
                     }
                   }}
                   onStopSession={() => {
@@ -6608,12 +6610,12 @@ export function App() {
               onOpenTask={navigateToTask}
               onOpenAgent={navigateToChatAgent}
               onOpenRole={navigateToRole}
-              onSend={() => {
+              onSend={(sendMode = "default") => {
                 const targetSessionId =
                   supervisorSessionId ??
                   lastKnownSupervisorSessionIdRef.current;
                 if (targetSessionId) {
-                  handleSendMessage(targetSessionId);
+                  handleSendMessage(targetSessionId, sendMode);
                 }
               }}
               open={supervisorQuickChatOpen}

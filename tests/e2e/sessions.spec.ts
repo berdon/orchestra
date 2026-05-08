@@ -1037,6 +1037,39 @@ test("sessions composer stays enabled while earlier messages are still pending",
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Second queued message", { timeout: 10_000 });
 });
 
+test("sessions send options menu exposes queue and interrupt while keeping default send unchanged", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await page.locator('[data-role="create-session"]').click();
+
+  const startCountBefore = await readSessionLogCount(page, "sessions.message.start");
+  await page.locator('[data-role="composer-input"]').fill("Default send should still start immediately");
+  await page.locator('[data-role="send-message"]').click();
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Default send should still start immediately", { timeout: 10_000 });
+  await expect.poll(async () => (await readSessionLogCount(page, "sessions.message.start")) > startCountBefore).toBe(true);
+
+  await expect(page.locator('[data-role="session-send-summary"]')).toContainText("Default: queue behind current work");
+  await page.locator('[data-role="composer-input"]').fill("Queue send from the menu");
+  await page.locator('[data-role="session-send-options-trigger"]').click();
+  await expect(page.locator('[data-role="session-send-options-menu"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-send-options-menu"]')).toContainText("Queue");
+  await expect(page.locator('[data-role="session-send-options-menu"]')).toContainText("Interrupt");
+  const followUpCountBefore = await readSessionLogCount(page, "sessions.message.follow_up");
+  await page.locator('[data-role="session-send-mode-queue"]').click();
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Queue send from the menu", { timeout: 10_000 });
+  await expect.poll(async () => (await readSessionLogCount(page, "sessions.message.follow_up")) > followUpCountBefore).toBe(true);
+
+  await page.locator('[data-role="composer-input"]').fill("Interrupt send from the menu");
+  await page.locator('[data-role="session-send-options-trigger"]').click();
+  const steerCountBefore = await readSessionLogCount(page, "sessions.message.steer");
+  await page.locator('[data-role="session-send-mode-interrupt"]').click();
+  await expect(page.locator('[data-role="session-transcript"]')).toContainText("Interrupt send from the menu", { timeout: 10_000 });
+  await expect.poll(async () => (await readSessionLogCount(page, "sessions.message.steer")) > steerCountBefore).toBe(true);
+});
+
 test("sessions stop button stops an active mock run", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -2730,6 +2763,33 @@ test("ctrl+t opens a persistent supervisor quick chat modal", async ({ page }) =
   await triggerShortcut(page, "t");
   await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
   await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Acknowledged: Check the current project status");
+});
+
+test("ctrl+t quick supervisor chat exposes queue and interrupt send options", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+
+  await page.goto("/");
+  await triggerShortcut(page, "t");
+  await expect(page.locator('[data-role="supervisor-quick-chat"]')).toBeVisible();
+  await expect(page.locator('[data-role="supervisor-send-options-trigger"]')).toBeVisible();
+
+  const longMessage = "Supervisor default send should stay on the normal path while this longer mock response keeps the session busy. ".repeat(18).trim();
+  await page.locator('[data-role="supervisor-composer-input"]').fill(longMessage);
+  await page.locator('[data-role="supervisor-send-message"]').click();
+  await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText(longMessage, { timeout: 10_000 });
+  await expect(page.locator('[data-role="supervisor-send-summary"]')).toContainText("Default: queue behind current work");
+
+  await page.locator('[data-role="supervisor-composer-input"]').fill("Interrupt the supervisor next");
+  await page.locator('[data-role="supervisor-send-options-trigger"]').click();
+  await expect(page.locator('[data-role="supervisor-send-options-menu"]')).toBeVisible();
+  await expect(page.locator('[data-role="supervisor-send-options-menu"]')).toContainText("Queue");
+  await expect(page.locator('[data-role="supervisor-send-options-menu"]')).toContainText("Interrupt");
+  const steerCountBefore = await readSessionLogCount(page, "sessions.message.steer");
+  await page.locator('[data-role="supervisor-send-mode-interrupt"]').click();
+  await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText("Interrupt the supervisor next", { timeout: 10_000 });
+  await expect.poll(async () => (await readSessionLogCount(page, "sessions.message.steer")) > steerCountBefore).toBe(true);
 });
 
 test("ctrl+t quick supervisor chat autocompletes canonical project tags", async ({ page }) => {

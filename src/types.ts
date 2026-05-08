@@ -1073,6 +1073,8 @@ export interface OrchestraToolDefinition {
   requiredPermission: string;
 }
 
+export type SessionSendMode = "default" | "queue" | "interrupt";
+
 export interface QueuedSessionMessage {
   sessionId: string;
   runId: string;

@@ -13,6 +13,7 @@ import type {
   SessionEvent,
   SessionModelState,
   SessionRecord,
+  SessionSendMode,
   SessionStats,
   SessionScrollState,
   SessionStatus,
@@ -55,7 +56,7 @@ interface AgentChatPageProps {
   getEventTone: (kind: SessionEvent["kind"]) => string;
   onModelChange: (value: string) => void;
   onDraftChange: (value: string) => void;
-  onSendMessage: () => void;
+  onSendMessage: (mode?: SessionSendMode) => void;
   onStopSession: () => void;
   onOpenTask: (taskId: string, projectId?: string | null) => void;
   onOpenAgent: (agentId: string) => void;

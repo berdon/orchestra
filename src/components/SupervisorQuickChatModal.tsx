@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
 
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
+import { SessionSendControls, formatSessionDefaultSendSummary } from "./SessionSendControls";
 import { TranscriptEventCard } from "./TranscriptEventCard";
 import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, searchProjectTagAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
-import type { AgentSummary, RoleSummary, SessionEvent, SessionRecord, TaskSummary } from "../types";
+import type { AgentSummary, RoleSummary, SessionEvent, SessionRecord, SessionSendMode, TaskSummary } from "../types";
 
 function resolveMentionAction(
   reference: ProjectMentionLink | null | undefined,
@@ -56,7 +57,7 @@ interface SupervisorQuickChatModalProps {
   referenceRoles: RoleSummary[];
   formatTimestamp: (timestamp: string) => string;
   onDraftChange: (value: string) => void;
-  onSend: () => void;
+  onSend: (mode?: SessionSendMode) => void;
   onClose: () => void;
   onOpenFullSession: () => void;
   onOpenTask: (taskId: string) => void;
@@ -85,6 +86,10 @@ export function SupervisorQuickChatModal({
 }: SupervisorQuickChatModalProps) {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const sessionBusy = pending
+    || session?.activityState === "thinking"
+    || session?.activityState === "tool_running"
+    || session?.activityState === "streaming";
   const projectMentionLookup = useMemo(
     () => buildProjectMentionLookup({ tasks: referenceTasks, agents: referenceAgents, roles: referenceRoles }),
     [referenceAgents, referenceRoles, referenceTasks],
@@ -121,23 +126,25 @@ export function SupervisorQuickChatModal({
   return (
     <div className="quick-chat-overlay" data-role="supervisor-quick-chat-overlay" onClick={onClose}>
       <section className="quick-chat-modal panel" data-role="supervisor-quick-chat" onClick={(event) => event.stopPropagation()}>
-        <div className="panel__header panel__header--session-detail">
-          <div>
-            <p className="eyebrow">Supervisor quick chat</p>
-            <h3>{session?.title ?? "Loading supervisor session…"}</h3>
-            <p className="muted-copy">Persistent floating operator chat. Close and reopen without losing context.</p>
+        <div className="quick-chat-modal__header-block">
+          <div className="panel__header panel__header--session-detail">
+            <div>
+              <p className="eyebrow">Supervisor quick chat</p>
+              <h3>{session?.title ?? "Loading supervisor session…"}</h3>
+              <p className="muted-copy">Persistent floating operator chat. Close and reopen without losing context.</p>
+            </div>
+            <div className="action-cluster">
+              <button className="secondary-button" type="button" onClick={onOpenFullSession}>
+                Open in Sessions
+              </button>
+              <button className="secondary-button" type="button" onClick={onClose}>
+                Close
+              </button>
+            </div>
           </div>
-          <div className="action-cluster">
-            <button className="secondary-button" type="button" onClick={onOpenFullSession}>
-              Open in Sessions
-            </button>
-            <button className="secondary-button" type="button" onClick={onClose}>
-              Close
-            </button>
-          </div>
-        </div>
 
-        {error ? <p className="error-copy">{error}</p> : null}
+          {error ? <p className="error-copy">{error}</p> : null}
+        </div>
 
         <div className="quick-chat-transcript session-transcript session-transcript--wrapped" data-role="supervisor-transcript" ref={transcriptRef} role="log" aria-live="polite">
           {events.map((event) => (
@@ -190,17 +197,21 @@ export function SupervisorQuickChatModal({
             />
           </label>
           <div className="composer__footer">
-            <p className="muted-copy">Press Ctrl+Enter or ⌘+Enter to send. Ctrl+T reopens this chat any time.</p>
-            <button
-              className="primary-button"
-              data-role="supervisor-send-message"
-              type="submit"
-              aria-label="Send message to supervisor"
-              title="Send message to supervisor"
-              disabled={pending}
-            >
-              ↗
-            </button>
+            <div>
+              <p className="muted-copy">Press Ctrl+Enter or ⌘+Enter to send. Ctrl+T reopens this chat any time.</p>
+              <p className="composer__send-summary muted-copy" data-role="supervisor-send-summary">{formatSessionDefaultSendSummary(sessionBusy)}</p>
+            </div>
+            <SessionSendControls
+              busy={sessionBusy}
+              disabled={!session}
+              onSendWithMode={onSend}
+              sendButtonDataRole="supervisor-send-message"
+              optionsTriggerDataRole="supervisor-send-options-trigger"
+              optionsMenuDataRole="supervisor-send-options-menu"
+              queueOptionDataRole="supervisor-send-mode-queue"
+              interruptOptionDataRole="supervisor-send-mode-interrupt"
+              sendButtonLabel="Send message to supervisor with the default behavior"
+            />
           </div>
         </form>
       </section>

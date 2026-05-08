@@ -112,6 +112,7 @@ import type {
   SessionModelState,
   SessionRecord,
   SessionRuntimeDetails,
+  SessionSendMode,
   SessionStats,
   SkillBindingInput,
   SkillDetail,
@@ -450,7 +451,7 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
     compact: (sessionId, customInstructions) =>
       invokeTauri<SessionRecord>("compact_session", { sessionId, customInstructions: customInstructions ?? null }),
     reload: (sessionId) => invokeTauri<SessionRecord>("reload_session", { sessionId }),
-    sendMessage: (sessionId, message, runId) =>
-      invokeTauri<QueuedSessionMessage>("send_session_message", { sessionId, message, runId }),
+    sendMessage: (sessionId, message, runId, sendMode) =>
+      invokeTauri<QueuedSessionMessage>("send_session_message", { sessionId, message, runId, sendMode: sendMode ?? null }),
   },
 };

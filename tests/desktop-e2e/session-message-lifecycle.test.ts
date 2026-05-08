@@ -398,6 +398,92 @@ describe("desktop session message lifecycle", () => {
     }
   }, 300_000);
 
+  it.skipIf(!isDesktopE2E)("delivers explicit interrupt sends ahead of queued follow-ups after the current turn finishes", async () => {
+    const webdriverSessionId = await createReadyWebdriverSession();
+
+    try {
+      await ensureReactReady(webdriverSessionId);
+      await waitForSelector(webdriverSessionId, '[data-role="create-session"]');
+
+      const sessionId = await createFreshSession(webdriverSessionId);
+      const baselineRecord = await invokeCommand<SessionRecordLike>(webdriverSessionId, "get_session_record", { sessionId });
+      const runToken = Date.now().toString(36);
+      const initialToken = `ORC273-BASE-${runToken}`;
+      const queuedToken = `ORC273-QUEUE-${runToken}`;
+      const interruptToken = `ORC273-INTERRUPT-${runToken}`;
+      const firstPrompt = [
+        "Use the bash tool exactly once and wait for it to finish before replying.",
+        `Run this exact shell command: sh -lc 'sleep 8; printf "${initialToken}"'`,
+        "After the command completes, reply with only the printed token.",
+      ].join(" ");
+      const queuedPrompt = `Reply with exactly ${queuedToken} and nothing else.`;
+      const interruptPrompt = `Reply with exactly ${interruptToken} and nothing else.`;
+
+      await sendComposerMessage(webdriverSessionId, firstPrompt);
+      await waitForPendingAssistant(webdriverSessionId, sessionId);
+
+      await invokeCommand<{ sessionId: string; runId: string; message: string }>(webdriverSessionId, "send_session_message", {
+        sessionId,
+        message: queuedPrompt,
+        runId: `queue-${runToken}`,
+        sendMode: "queue",
+      });
+      await waitForConditionWithDiagnostics(
+        webdriverSessionId,
+        sessionId,
+        () => invokeCommand<Array<{ target?: string; message?: string }>>(webdriverSessionId, "get_logs"),
+        (logs) => logs.some((entry) => entry.target === "sessions.message.follow_up" && (entry.message ?? "").includes(sessionId)),
+        "explicit queue send to log a follow_up delivery while the session is busy",
+        45_000,
+        250,
+      );
+
+      await invokeCommand<{ sessionId: string; runId: string; message: string }>(webdriverSessionId, "send_session_message", {
+        sessionId,
+        message: interruptPrompt,
+        runId: `interrupt-${runToken}`,
+        sendMode: "interrupt",
+      });
+      await waitForConditionWithDiagnostics(
+        webdriverSessionId,
+        sessionId,
+        () => invokeCommand<Array<{ target?: string; message?: string }>>(webdriverSessionId, "get_logs"),
+        (logs) => logs.some((entry) => entry.target === "sessions.message.steer" && (entry.message ?? "").includes(sessionId)),
+        "explicit interrupt send to log a steer delivery while the session is busy",
+        45_000,
+        250,
+      );
+
+      const settled = await waitForSessionSettled(
+        webdriverSessionId,
+        sessionId,
+        userMessageCount(baselineRecord) + 3,
+        assistantMessageCount(baselineRecord) + 2,
+      );
+
+      const rows = settled.record.events ?? [];
+      const initialUserIndex = rows.findIndex(
+        (event) => event.kind === "user" && normalizeComparableText(event.message).includes(initialToken),
+      );
+      const initialToolResultIndex = rows.findIndex(
+        (event) => event.kind === "system" && normalizeComparableText(event.message).includes(initialToken),
+      );
+      const interruptIndex = rows.findIndex(
+        (event) => event.kind === "assistant" && normalizeComparableText(event.message).includes(interruptToken),
+      );
+      const queuedIndex = rows.findIndex(
+        (event) => event.kind === "assistant" && normalizeComparableText(event.message).includes(queuedToken),
+      );
+
+      expect(initialUserIndex).toBeGreaterThanOrEqual(0);
+      expect(initialToolResultIndex).toBeGreaterThan(initialUserIndex);
+      expect(interruptIndex).toBeGreaterThan(initialToolResultIndex);
+      expect(queuedIndex).toBeGreaterThan(interruptIndex);
+    } finally {
+      await deleteWebdriverSession(webdriverSessionId);
+    }
+  }, 300_000);
+
   it.skipIf(!isDesktopE2E)("clears pending message state after stopping an in-flight response", async () => {
     const webdriverSessionId = await createReadyWebdriverSession();
 

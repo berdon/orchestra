@@ -1,12 +1,13 @@
 import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type RefObject, type UIEvent } from "react";
 
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
+import { SessionSendControls, formatSessionDefaultSendSummary } from "./SessionSendControls";
 import { TranscriptEventCard } from "./TranscriptEventCard";
 import { buildProjectMentionLookup, mapTaskFileMentionAutocompleteCandidates, searchProjectReferenceAutocompleteCandidates, searchProjectTagAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
 import { useTaskCommentFileMentions } from "../lib/orchestraData/tasks";
 import { recordInputPerfRender } from "../lib/testInputPerformance";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
-import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
+import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionSendMode, SessionStats, SessionStatus, TaskSummary } from "../types";
 
 function formatControlOperationLabel(session: SessionRecord) {
   const operation = session.controlOperation;
@@ -169,7 +170,7 @@ interface SessionChatPanelProps {
   getEventTone: (kind: SessionEvent["kind"]) => string;
   onModelChange: (value: string) => void;
   onDraftChange: (value: string) => void;
-  onSendMessage: () => void;
+  onSendMessage: (mode?: SessionSendMode) => void;
   onStopSession: () => void;
   onOpenTask: (taskId: string, projectId?: string | null) => void;
   onOpenAgent: (agentId: string) => void;
@@ -202,7 +203,7 @@ interface SessionComposerProps {
   formatModelOptionLabel: (state: SessionModelState | undefined) => string;
   onModelChange: (value: string) => void;
   onDraftChange: (value: string) => void;
-  onSendMessage: () => void;
+  onSendMessage: (mode?: SessionSendMode) => void;
   onStopSession: () => void;
   onCreateNewSession?: () => void;
   onOpenPiSettings?: () => void;
@@ -372,6 +373,10 @@ function SessionComposer({
 }: SessionComposerProps) {
   const [showSessionActions, setShowSessionActions] = useState(false);
   const sessionControlBusy = session.controlOperation?.status === "running";
+  const sessionBusy = sessionPending
+    || session.activityState === "thinking"
+    || session.activityState === "tool_running"
+    || session.activityState === "streaming";
   const composerDisabled = sessionReadOnly || !sessionMessageable;
   const sessionActionsDisabled = sessionReadOnly || sessionPending || sessionControlBusy;
   const canCreateNewSession = Boolean(onCreateNewSession) && !sessionReadOnly;
@@ -482,6 +487,9 @@ function SessionComposer({
               <span>Updated {formatDateTime(session.updatedAt)}</span>
             </div>
           </div>
+          <p className="composer__send-summary muted-copy" data-role="session-send-summary">
+            {formatSessionDefaultSendSummary(sessionBusy)}
+          </p>
           <div className="composer__actions">
             {onCreateNewSession || onCompactSession || onReloadSession ? (
               <div className="session-actions-menu">
@@ -590,15 +598,17 @@ function SessionComposer({
             >
               Stop
             </button>
-            <button
-              className="primary-button"
-              data-role="send-message"
-              type="submit"
-              aria-label="Send message"
-              title="Send message"
-            >
-              ↗
-            </button>
+            <SessionSendControls
+              busy={sessionBusy}
+              disabled={composerDisabled}
+              onSendWithMode={onSendMessage}
+              sendButtonDataRole="send-message"
+              optionsTriggerDataRole="session-send-options-trigger"
+              optionsMenuDataRole="session-send-options-menu"
+              queueOptionDataRole="session-send-mode-queue"
+              interruptOptionDataRole="session-send-mode-interrupt"
+              sendButtonLabel="Send message with the default behavior"
+            />
           </div>
         </div>
       </form>

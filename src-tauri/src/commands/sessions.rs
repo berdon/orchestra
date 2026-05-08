@@ -2905,14 +2905,66 @@ pub(crate) fn validate_session_message_request(
     Ok(trimmed_message)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionSendMode {
+    Default,
+    Queue,
+    Interrupt,
+}
+
+impl SessionSendMode {
+    fn parse(value: Option<String>) -> Result<Self, String> {
+        match value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            None | Some("default") => Ok(Self::Default),
+            Some("queue") => Ok(Self::Queue),
+            Some("interrupt") => Ok(Self::Interrupt),
+            Some(other) => Err(format!("Unsupported session send mode: {other}")),
+        }
+    }
+}
+
+fn resolve_session_delivery_mode(send_mode: SessionSendMode, session_busy: bool) -> &'static str {
+    if !session_busy {
+        return "prompt";
+    }
+
+    match send_mode {
+        SessionSendMode::Interrupt => "steer",
+        SessionSendMode::Default | SessionSendMode::Queue => "follow_up",
+    }
+}
+
+fn describe_session_delivery_mode(delivery_mode: &str, session_id: &str) -> (&'static str, String) {
+    match delivery_mode {
+        "follow_up" => (
+            "sessions.message.follow_up",
+            format!("Queued follow-up message for live pi RPC session {}", session_id),
+        ),
+        "steer" => (
+            "sessions.message.steer",
+            format!("Queued interrupt steer message for live pi RPC session {}", session_id),
+        ),
+        _ => (
+            "sessions.message.start",
+            format!("Sent prompt to live pi RPC session {}", session_id),
+        ),
+    }
+}
+
 pub async fn send_session_message_with_optional_run_id(
     app: AppHandle,
     state: &AppState,
     session_id: String,
     message: String,
     requested_run_id: Option<String>,
+    send_mode: Option<String>,
 ) -> Result<QueuedSessionMessage, String> {
     let trimmed_message = validate_session_message_request(state, &session_id, message)?;
+    let send_mode = SessionSendMode::parse(send_mode)?;
 
     let session_id_for_task = session_id.clone();
     let (project_root, session_dir) =
@@ -2954,21 +3006,21 @@ pub async fn send_session_message_with_optional_run_id(
         );
     }
 
-    let mut delivery_mode = "prompt";
+    let mut session_busy = false;
     let mut owns_prompt_run = false;
 
     match state.begin_session_run(&session_id, &run_id) {
         Ok(()) => {
             if runtime.has_active_prompt() {
                 let _ = state.end_session_run(&session_id, &run_id);
-                delivery_mode = "follow_up";
+                session_busy = true;
             } else {
                 owns_prompt_run = true;
             }
         }
         Err(error) if error == "This session is already processing a message" => {
             if runtime.has_active_prompt() {
-                delivery_mode = "follow_up";
+                session_busy = true;
             } else {
                 state.clear_active_session_run(&session_id)?;
                 state.begin_session_run(&session_id, &run_id)?;
@@ -2977,6 +3029,8 @@ pub async fn send_session_message_with_optional_run_id(
         }
         Err(error) => return Err(error),
     }
+
+    let delivery_mode = resolve_session_delivery_mode(send_mode, session_busy);
 
     let queued = QueuedSessionMessage {
         session_id: session_id.clone(),
@@ -2995,19 +3049,8 @@ pub async fn send_session_message_with_optional_run_id(
     .map_err(|error| format!("Unable to join send_session_message runtime task: {error}"))?
     {
         Ok(()) => {
-            let log_target = if delivery_mode == "prompt" {
-                "sessions.message.start"
-            } else {
-                "sessions.message.follow_up"
-            };
-            let log_message = if delivery_mode == "prompt" {
-                format!("Sent prompt to live pi RPC session {}", session_id)
-            } else {
-                format!(
-                    "Queued follow-up message for live pi RPC session {}",
-                    session_id
-                )
-            };
+            let (log_target, log_message) =
+                describe_session_delivery_mode(delivery_mode, &session_id);
             state.log("info", log_target, &log_message);
             state.log_authorized_action(
                 "auth.audit",
@@ -3035,9 +3078,17 @@ pub async fn send_session_message(
     session_id: String,
     message: String,
     run_id: String,
+    send_mode: Option<String>,
 ) -> Result<QueuedSessionMessage, String> {
-    send_session_message_with_optional_run_id(app, state.inner(), session_id, message, Some(run_id))
-        .await
+    send_session_message_with_optional_run_id(
+        app,
+        state.inner(),
+        session_id,
+        message,
+        Some(run_id),
+        send_mode,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -3052,6 +3103,16 @@ mod tests {
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[test]
+    fn resolves_session_delivery_mode_matrix() {
+        assert_eq!(resolve_session_delivery_mode(SessionSendMode::Default, false), "prompt");
+        assert_eq!(resolve_session_delivery_mode(SessionSendMode::Queue, false), "prompt");
+        assert_eq!(resolve_session_delivery_mode(SessionSendMode::Interrupt, false), "prompt");
+        assert_eq!(resolve_session_delivery_mode(SessionSendMode::Default, true), "follow_up");
+        assert_eq!(resolve_session_delivery_mode(SessionSendMode::Queue, true), "follow_up");
+        assert_eq!(resolve_session_delivery_mode(SessionSendMode::Interrupt, true), "steer");
+    }
 
     fn make_session_record(session_id: &str) -> SessionRecord {
         SessionRecord {

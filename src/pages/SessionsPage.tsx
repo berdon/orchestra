@@ -9,7 +9,7 @@ import type { UiErrorState } from "../lib/orchestraData/errors";
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
 import { recordInputPerfRender } from "../lib/testInputPerformance";
 import { useExplanatoryTooltipProps, type ExplanatoryTooltipProps } from "../lib/tooltips";
-import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionStats, SessionStatus, TaskSummary } from "../types";
+import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionSendMode, SessionStats, SessionStatus, TaskSummary } from "../types";
 
 function formatListControlLabel(session: SessionRecord) {
   if (session.controlOperation?.status !== "running") {
@@ -192,7 +192,7 @@ interface SessionsPageProps {
   onDeleteClosedSessions: () => void;
   onModelChange: (value: string) => void;
   onDraftChange: (value: string) => void;
-  onSendMessage: () => void;
+  onSendMessage: (mode?: SessionSendMode) => void;
   onStopSession: () => void;
   onOpenTask: (taskId: string, projectId?: string | null) => void;
   onOpenAgent: (agentId: string) => void;

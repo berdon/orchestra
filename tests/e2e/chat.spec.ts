@@ -722,6 +722,12 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
   await expect(page.locator('[data-role="session-chat-panel"] > .panel__header')).toBeHidden();
   await expect(page.locator('[data-role="composer-resize-handle"]')).toHaveCount(0);
   await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
+  await expect(page.locator('[data-role="session-send-options-trigger"]')).toBeVisible();
+  await page.locator('[data-role="session-send-options-trigger"]').click();
+  await expect(page.locator('[data-role="session-send-options-menu"]')).toBeVisible();
+  await expect(page.locator('[data-role="session-send-options-menu"]')).toContainText("Queue");
+  await expect(page.locator('[data-role="session-send-options-menu"]')).toContainText("Interrupt");
+  await page.locator('[data-role="session-send-mode-queue"]').click();
 
   await page.locator('[data-role="session-mobile-transcript-controls-trigger"]').click();
   await expect(page.locator('[data-role="session-mobile-transcript-controls-menu"]')).toBeVisible();
