@@ -21,6 +21,7 @@ interface TaskPullRequestTabProps {
   agents: AgentSummary[];
   roles: RoleSummary[];
   commentAuthor: string;
+  initialDetail?: TaskPullRequestDetail | null;
   onAddComment: (draft: TaskCommentInput) => Promise<boolean>;
   onOpenFileReference: (reference: TaskFileReference) => void;
   onOpenTask: (taskId: string) => void;
@@ -30,6 +31,10 @@ interface TaskPullRequestTabProps {
 
 function selectedFileKey(file: TaskPullRequestFile) {
   return `${file.repositoryId}:${file.oldPath ?? ""}:${file.newPath ?? ""}:${file.displayPath}`;
+}
+
+function filePickerLabel(file: TaskPullRequestFile) {
+  return `${file.displayPath} (${file.repositorySlug})`;
 }
 
 function repoCommentPathSet(repository: TaskPullRequestDetail["repositories"][number]) {
@@ -44,6 +49,7 @@ export function TaskPullRequestTab({
   agents,
   roles,
   commentAuthor,
+  initialDetail = null,
   onAddComment,
   onOpenFileReference,
   onOpenTask,
@@ -51,11 +57,16 @@ export function TaskPullRequestTab({
   onOpenRole,
 }: TaskPullRequestTabProps) {
   const orchestraClient = useOrchestraClient();
-  const [detail, setDetail] = useState<TaskPullRequestDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const initialChangedFiles = initialDetail?.repositories
+    .filter((repository) => repository.status === "changed")
+    .flatMap((repository) => repository.files) ?? [];
+  const initialSelectedFile = initialChangedFiles[0] ?? null;
+  const [detail, setDetail] = useState<TaskPullRequestDetail | null>(initialDetail);
+  const [loading, setLoading] = useState(!initialDetail);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(initialSelectedFile ? selectedFileKey(initialSelectedFile) : null);
+  const [filePickerValue, setFilePickerValue] = useState(initialSelectedFile ? filePickerLabel(initialSelectedFile) : "");
 
   const loadPullRequest = useCallback(async (silent = false) => {
     if (!silent) {
@@ -76,8 +87,10 @@ export function TaskPullRequestTab({
   }, [orchestraClient, task.id]);
 
   useEffect(() => {
-    void loadPullRequest();
-  }, [loadPullRequest]);
+    if (!initialDetail) {
+      void loadPullRequest();
+    }
+  }, [initialDetail, loadPullRequest]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -108,7 +121,20 @@ export function TaskPullRequestTab({
     setSelectedKey(selectedFileKey(nextSelected));
   }, [changedFiles, selectedKey]);
 
+  const filePickerOptions = useMemo(
+    () => changedFiles.map((file) => ({
+      key: selectedFileKey(file),
+      label: filePickerLabel(file),
+      file,
+    })),
+    [changedFiles],
+  );
   const selectedFile = changedFiles.find((file) => selectedFileKey(file) === selectedKey) ?? null;
+
+  useEffect(() => {
+    setFilePickerValue(selectedFile ? filePickerLabel(selectedFile) : "");
+  }, [selectedFile]);
+
   const prComments = useMemo(
     () => task.comments.filter((comment) => comment.diffAnchor?.kind === "task_pr"),
     [task.comments],
@@ -122,6 +148,20 @@ export function TaskPullRequestTab({
     uncommittedFileCount: repositories.reduce((total, repository) => total + repository.uncommittedFileCount, 0),
     mixedFileCount: repositories.reduce((total, repository) => total + repository.mixedFileCount, 0),
   }), [changedFiles.length, changedRepositories.length, repositories]);
+  const filePickerListId = `${task.id}-task-pr-file-options`;
+
+  function handleFilePickerChange(value: string) {
+    setFilePickerValue(value);
+    const normalized = value.trim().toLowerCase();
+    const exactMatch = filePickerOptions.find(({ label, file }) => {
+      const candidates = [label, file.displayPath, `${file.repositorySlug}/${file.displayPath}`]
+        .map((candidate) => candidate.toLowerCase());
+      return candidates.includes(normalized);
+    });
+    if (exactMatch) {
+      setSelectedKey(exactMatch.key);
+    }
+  }
 
   return (
     <section className="task-section" data-role="task-detail-tabpanel-pr">
@@ -155,6 +195,39 @@ export function TaskPullRequestTab({
       {error ? <p className="error-copy">{error}</p> : null}
       {!loading && !error && repositories.length === 0 ? <p className="supporting-copy">No repositories are linked to this task.</p> : null}
 
+      {!loading && !error && changedFiles.length ? (
+        <article className="task-history-card task-pr-file-picker" data-role="task-pr-file-picker">
+          <label className="field-group task-pr-file-picker__field">
+            <span className="field-group__label">Review file</span>
+            <input
+              className="task-pr-file-picker__input"
+              data-role="task-pr-file-input"
+              list={filePickerListId}
+              placeholder="Start typing a repository path or repo slug"
+              type="text"
+              value={filePickerValue}
+              onChange={(event) => handleFilePickerChange(event.currentTarget.value)}
+            />
+            <datalist id={filePickerListId}>
+              {filePickerOptions.map(({ key, label, file }) => (
+                <option key={key} value={label}>{`${file.changeType} · ${file.origin}`}</option>
+              ))}
+            </datalist>
+            <span className="field-group__hint muted-copy">
+              Type a path or repo slug to jump directly to a changed file. Suggestions stay editable instead of forcing you through a long button list.
+            </span>
+          </label>
+          {selectedFile ? (
+            <div className="workforce-meta-grid muted-copy task-pr-file-picker__selection" data-role="task-pr-file-selection-meta">
+              <span>Repo: {selectedFile.repositoryName}</span>
+              <span>Path: {selectedFile.displayPath}</span>
+              <span>Change: {selectedFile.changeType}</span>
+              <span>Origin: {selectedFile.origin}</span>
+            </div>
+          ) : null}
+        </article>
+      ) : null}
+
       {!loading && !error ? (
         <div className="task-section-list" data-role="task-pr-repositories">
           {[...changedRepositories, ...cleanRepositories, ...unavailableRepositories].map((repository) => {
@@ -185,29 +258,14 @@ export function TaskPullRequestTab({
                   <span>Source: {repository.reviewRootKind ?? "Unavailable"}</span>
                   <span>Base: {repository.baseCommitHash ?? "Unavailable"}</span>
                   <span>HEAD: {repository.headCommitHash ?? "Unavailable"}</span>
+                  <span>{repository.files.length} reviewable files</span>
                 </div>
                 {repository.unavailableReason ? <p className="error-copy">{repository.unavailableReason}</p> : null}
                 {repository.status === "clean" ? <p className="supporting-copy">No changes are currently associated with this repo for the PR view.</p> : null}
-                {repository.files.length ? (
-                  <div className="task-section-list" data-role="task-pr-files">
-                    {repository.files.map((file) => {
-                      const key = selectedFileKey(file);
-                      const active = key === selectedKey;
-                      return (
-                        <button
-                          className="secondary-button task-relane-menu__option"
-                          data-role="task-pr-file-button"
-                          data-active={active ? "true" : "false"}
-                          key={key}
-                          type="button"
-                          onClick={() => setSelectedKey(key)}
-                        >
-                          <strong>{file.displayPath}</strong>
-                          <span className="muted-copy">{file.changeType} · {file.origin} · +{file.additions} / -{file.deletions}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                {repository.status === "changed" && repository.files.length ? (
+                  <p className="supporting-copy" data-role="task-pr-repository-file-hint">
+                    Use the file picker above to jump directly into this repo’s changed files.
+                  </p>
                 ) : null}
                 {repoOutdatedThreads.length ? (
                   <div className="task-section-list" data-role="task-pr-repo-outdated-comments">

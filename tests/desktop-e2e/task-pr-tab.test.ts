@@ -146,24 +146,36 @@ describe("desktop task PR tab", () => {
 
       await clickByText(sessionId, '[role="tab"]', 'PR');
       await waitForCondition(
-        () => executeScript<{ fileButtons: string[]; hasError: boolean; hasWorktreeOnly: boolean; repositoryText: string }>(sessionId, `
+        () => executeScript<{ fileOptions: string[]; selectedFile: string; selectionMetaText: string; hasError: boolean; hasWorktreeOnly: boolean; repositoryText: string }>(sessionId, `
           const panel = document.querySelector('[data-role="task-detail-tabpanel-pr"]');
           const repositoryCard = panel?.querySelector('[data-role="task-pr-repository-card"]');
+          const input = panel?.querySelector('[data-role="task-pr-file-input"]');
+          const selectionMeta = panel?.querySelector('[data-role="task-pr-file-selection-meta"]');
+          const listId = input?.getAttribute('list');
+          const optionRoot = listId ? document.getElementById(listId) : null;
           return {
-            fileButtons: Array.from(panel?.querySelectorAll('[data-role="task-pr-file-button"]') ?? []).map((button) => (button.textContent || '').trim()),
+            fileOptions: Array.from(optionRoot?.querySelectorAll('option') ?? []).map((option) => option.getAttribute('value') || ''),
+            selectedFile: input instanceof HTMLInputElement ? input.value : '',
+            selectionMetaText: (selectionMeta?.textContent || '').replace(/\s+/g, ' ').trim(),
             hasError: Boolean(panel?.querySelector('.error-copy')),
             hasWorktreeOnly: Array.from(repositoryCard?.querySelectorAll('.status-badge') ?? []).some((badge) => (badge.textContent || '').trim() === 'worktree-only'),
             repositoryText: (repositoryCard?.textContent || '').replace(/\s+/g, ' ').trim(),
           };
         `),
-        (value) => value.fileButtons.some((text) => text.includes("file.txt")) && !value.hasError,
+        (value) => value.fileOptions.some((text) => text.includes("file.txt")) && value.selectedFile.includes("file.txt") && !value.hasError,
       );
 
-      const prState = await executeScript<{ fileButtons: string[]; hasError: boolean; hasWorktreeOnly: boolean; repositoryText: string }>(sessionId, `
+      const prState = await executeScript<{ fileOptions: string[]; selectedFile: string; selectionMetaText: string; hasError: boolean; hasWorktreeOnly: boolean; repositoryText: string }>(sessionId, `
         const panel = document.querySelector('[data-role="task-detail-tabpanel-pr"]');
         const repositoryCard = panel?.querySelector('[data-role="task-pr-repository-card"]');
+        const input = panel?.querySelector('[data-role="task-pr-file-input"]');
+        const selectionMeta = panel?.querySelector('[data-role="task-pr-file-selection-meta"]');
+        const listId = input?.getAttribute('list');
+        const optionRoot = listId ? document.getElementById(listId) : null;
         return {
-          fileButtons: Array.from(panel?.querySelectorAll('[data-role="task-pr-file-button"]') ?? []).map((button) => (button.textContent || '').trim()),
+          fileOptions: Array.from(optionRoot?.querySelectorAll('option') ?? []).map((option) => option.getAttribute('value') || ''),
+          selectedFile: input instanceof HTMLInputElement ? input.value : '',
+          selectionMetaText: (selectionMeta?.textContent || '').replace(/\s+/g, ' ').trim(),
           hasError: Boolean(panel?.querySelector('.error-copy')),
           hasWorktreeOnly: Array.from(repositoryCard?.querySelectorAll('.status-badge') ?? []).some((badge) => (badge.textContent || '').trim() === 'worktree-only'),
           repositoryText: (repositoryCard?.textContent || '').replace(/\s+/g, ' ').trim(),
@@ -172,9 +184,11 @@ describe("desktop task PR tab", () => {
 
       expect(prState.hasError).toBe(false);
       expect(prState.hasWorktreeOnly).toBe(false);
-      expect(prState.fileButtons.some((text) => text.includes("file.txt"))).toBe(true);
+      expect(prState.fileOptions.some((text) => text.includes("file.txt"))).toBe(true);
+      expect(prState.selectedFile).toContain("file.txt");
+      expect(prState.selectionMetaText).toContain("PR Tab Repo");
+      expect(prState.selectionMetaText).toContain("uncommitted");
       expect(prState.repositoryText).toContain("PR Tab Repo");
-      expect(prState.repositoryText).toContain("uncommitted");
     } finally {
       await deleteWebdriverSession(sessionId);
     }

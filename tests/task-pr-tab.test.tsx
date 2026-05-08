@@ -7,7 +7,7 @@ import { OrchestraClientProvider } from "../src/lib/orchestraClient";
 import { createMockOrchestraClientBinding } from "../src/lib/orchestraClient/mockClient";
 import { mockOrchestraClientServiceBindings } from "../src/lib/orchestraClient/mockBindings";
 import { TaskPullRequestTab } from "../src/pages/tasks/TaskPullRequestTab";
-import type { TaskComment, TaskDetail, TaskPullRequestFile } from "../src/types";
+import type { TaskComment, TaskDetail, TaskPullRequestDetail, TaskPullRequestFile } from "../src/types";
 
 function createTaskDetail(overrides: Partial<TaskDetail> = {}): TaskDetail {
   return {
@@ -53,6 +53,56 @@ function createTaskDetail(overrides: Partial<TaskDetail> = {}): TaskDetail {
     todos: [],
     laneRuns: [],
     activeLaneAssignment: null,
+    ...overrides,
+  };
+}
+
+function createPullRequestDetail(overrides: Partial<TaskPullRequestDetail> = {}): TaskPullRequestDetail {
+  return {
+    taskId: "task-1",
+    generatedAt: "2026-05-06T00:00:00Z",
+    repositories: [
+      {
+        repositoryId: "repo-1",
+        repositoryName: "Repo 1",
+        repositorySlug: "repo-1",
+        status: "changed",
+        reviewRootPath: "/tmp/worktree-repo-1",
+        reviewRootKind: "task_worktree",
+        unavailableReason: null,
+        defaultBranch: "main",
+        baseCommitHash: "base-1",
+        headCommitHash: "head-1",
+        worktreeOnly: false,
+        hasUncommittedChanges: true,
+        committedFileCount: 0,
+        uncommittedFileCount: 1,
+        mixedFileCount: 0,
+        files: [
+          {
+            repositoryId: "repo-1",
+            repositoryName: "Repo 1",
+            repositorySlug: "repo-1",
+            changeType: "modified",
+            oldPath: "src/example.ts",
+            newPath: "src/example.ts",
+            displayPath: "src/example.ts",
+            origin: "uncommitted",
+            additions: 2,
+            deletions: 1,
+            isBinary: false,
+            patch: [
+              "diff --git a/src/example.ts b/src/example.ts",
+              "@@ -1,2 +1,3 @@",
+              " line one",
+              "-line two",
+              "+line two changed",
+              "+line three",
+            ].join("\n"),
+          },
+        ],
+      },
+    ],
     ...overrides,
   };
 }
@@ -138,6 +188,34 @@ describe("task PR tab", () => {
     expect(html).toContain("task-pr-refresh");
   });
 
+  it("renders an editable autosuggest file picker for changed files", () => {
+    const task = createTaskDetail();
+    const detail = createPullRequestDetail();
+    const binding = createMockOrchestraClientBinding(mockOrchestraClientServiceBindings);
+    const html = renderToString(
+      <OrchestraClientProvider binding={binding}>
+        <TaskPullRequestTab
+          task={task}
+          tasks={[]}
+          agents={[]}
+          roles={[]}
+          commentAuthor="User"
+          initialDetail={detail}
+          onAddComment={vi.fn(async () => true)}
+          onOpenFileReference={vi.fn()}
+          onOpenTask={vi.fn()}
+          onOpenAgent={vi.fn()}
+          onOpenRole={vi.fn()}
+        />
+      </OrchestraClientProvider>,
+    );
+
+    expect(html).toContain("task-pr-file-input");
+    expect(html).toContain("src/example.ts (repo-1)");
+    expect(html).toContain("Type a path or repo slug");
+    expect(html).toContain("task-pr-file-selection-meta");
+  });
+
   it("renders diff review comments and only exposes inline comment affordances on changed lines", () => {
     const file: TaskPullRequestFile = {
       repositoryId: "repo-1",
@@ -184,6 +262,9 @@ describe("task PR tab", () => {
     expect(html).toContain("Looks good");
     expect(html).toContain("Outdated comments");
     expect(html).toContain("Outdated now");
+    expect(html).toContain("task-pr-diff-split-table__header-cell");
+    expect(html).toContain("Base");
+    expect(html).toContain("Current");
     expect(html.match(/data-role="task-pr-comment-line"/g)).toHaveLength(3);
     expect(html).toContain("task-pr-diff-line__comment-button");
     expect(html).not.toContain(">Comment<");
