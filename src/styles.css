@@ -3111,12 +3111,12 @@ strong {
 }
 
 .session-send-menu__segment--primary {
-  min-width: 42px;
+  min-width: 46px;
 }
 
 .session-send-menu__segment--trigger {
-  min-width: 36px;
-  width: 36px;
+  min-width: 32px;
+  width: 32px;
   padding-left: 0;
   padding-right: 0;
 }
