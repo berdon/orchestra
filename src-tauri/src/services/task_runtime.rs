@@ -7250,6 +7250,14 @@ mod tests {
         assert_eq!(reactivated_task.assignee_type, "role");
         assert_eq!(reactivated_task.lane_runs.len(), 2);
         assert!(reactivated_task.lane_runs[1].completed_at.is_none());
+        assert!(reactivated_task.lane_runs[1].summary.is_none());
+        assert_eq!(
+            reactivated_task
+                .active_lane_assignment
+                .as_ref()
+                .and_then(|entry| entry.completion_summary.as_deref()),
+            None
+        );
         let running_ops = role_runtime::get_role_operations(&connection, &role.id)
             .expect("role operations should load after reactivation");
         assert_eq!(running_ops.active_instance_count, 1);
@@ -7467,6 +7475,14 @@ mod tests {
         assert_eq!(resumed_task.assignee_type, "role");
         assert_eq!(resumed_task.lane_runs.len(), 2);
         assert!(resumed_task.lane_runs[1].completed_at.is_none());
+        assert!(resumed_task.lane_runs[1].summary.is_none());
+        assert_eq!(
+            resumed_task
+                .active_lane_assignment
+                .as_ref()
+                .and_then(|entry| entry.completion_summary.as_deref()),
+            None
+        );
         let running_ops = role_runtime::get_role_operations(&connection, &role.id)
             .expect("role operations should load after resume");
         assert_eq!(running_ops.active_instance_count, 1);

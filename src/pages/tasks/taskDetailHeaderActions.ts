@@ -68,7 +68,7 @@ export function buildTaskDetailHeaderActions({
       onClick: onSendBackForWork,
       variant: "secondary",
       dataRole: "send-task-back-for-work",
-      tooltip: "Send this lane back for more work without closing the task.",
+      tooltip: "Send this lane back for more work without closing the task or asking for a new lane summary.",
     });
     actions.push({
       id: "stop-pending-review",
@@ -85,7 +85,7 @@ export function buildTaskDetailHeaderActions({
       onClick: onSendBackForWork,
       variant: "primary",
       dataRole: "resume-task-lane",
-      tooltip: "Resume the paused lane and keep work moving in the same assignment.",
+      tooltip: "Resume the paused lane and keep work moving in the same assignment without asking for a new lane summary.",
     });
     actions.push({
       id: "stop-paused-lane",

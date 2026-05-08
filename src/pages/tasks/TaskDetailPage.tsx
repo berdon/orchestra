@@ -1236,14 +1236,14 @@ export function TaskDetailPage({
                 </div>
                 {effectiveActiveLaneAssignmentStatus === "awaiting_user_approval" ? (
                   <p className="muted-copy" data-role="task-awaiting-approval-note">
-                    This lane reported success and is paused for user approval before the workflow continues.
+                    This lane reported success and is paused for user approval before the workflow continues. Use Needs work to keep the current lane active without asking for a fresh lane summary.
                     {task.activeLaneAssignment.completionSummary ? ` Lane summary: ${task.activeLaneAssignment.completionSummary}` : ""}
                     {task.activeLaneAssignment.completionNotes ? ` Worker notes: ${task.activeLaneAssignment.completionNotes}` : ""}
                   </p>
                 ) : null}
                 {effectiveActiveLaneAssignmentStatus === "awaiting_user_intervention" ? (
                   <p className="muted-copy" data-role="task-awaiting-user-intervention-note">
-                    This lane asked for user intervention and is paused until you decide how to continue it.
+                    This lane asked for user intervention and is paused until you decide how to continue it. Use Resume to keep the current lane active without asking for a fresh lane summary.
                     {task.activeLaneAssignment.completionSummary ? ` Lane summary: ${task.activeLaneAssignment.completionSummary}` : ""}
                     {task.activeLaneAssignment.completionNotes ? ` Worker notes: ${task.activeLaneAssignment.completionNotes}` : ""}
                   </p>
