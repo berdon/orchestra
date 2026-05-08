@@ -250,6 +250,46 @@ describe("sessionTranscriptReducer", () => {
     expect(failed?.refreshFromBackend).toBe(true);
   });
 
+  it("preserves normalized model-auth failures from streamed assistant errors", () => {
+    const session = makeSession();
+    const reduced = reduceSessionTranscriptEvent(session, undefined, {
+      sessionId: session.id,
+      runId: "run-auth",
+      receivedAt: "2026-04-08T00:04:00Z",
+      event: {
+        type: "message_update",
+        normalizedError: {
+          kind: "model_auth_required",
+          code: "model_auth_required",
+          reason: "missing",
+          providerId: "openai-codex",
+          providerName: "OpenAI Codex",
+          modelId: "gpt-5.4",
+          message: "The selected model can’t run because OpenAI Codex isn’t connected in Harness.",
+          detail: "Reconnect OpenAI Codex in Settings → Harness → Setup, then retry.",
+          settingsTab: "harness",
+          settingsDetailTab: "setup",
+          rawMessage: "OpenAI Codex missing credential in auth.json",
+        },
+        message: {
+          role: "assistant",
+          content: [],
+        },
+        assistantMessageEvent: {
+          type: "error",
+          error: "OpenAI Codex missing credential in auth.json",
+        },
+      },
+    });
+
+    expect(reduced?.session.status).toBe("failed");
+    expect(reduced?.sessionActionError).toMatchObject({
+      kind: "model_auth_required",
+      providerId: "openai-codex",
+      settingsDetailTab: "setup",
+    });
+  });
+
   it("keeps a queued follow-up row separate from the active streaming run", () => {
     const run1 = createPendingUserRun("run-1", "first message", "2026-04-08T00:05:00Z");
     const run2 = createPendingUserRun("run-2", "follow-up message", "2026-04-08T00:05:01Z");

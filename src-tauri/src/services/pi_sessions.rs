@@ -25,7 +25,7 @@ use crate::{
             configured_project_root, default_orchestra_root, discover_dev_checkout_root,
             infer_project_slug, pi_agent_dir, project_session_dir, sanitize_slug,
         },
-        projects, session_records,
+        pi_auth_failures, projects, session_records,
     },
 };
 
@@ -2248,7 +2248,11 @@ where
                 if payload.get("id").and_then(Value::as_str) == Some(PROMPT_REQUEST_ID) {
                     saw_prompt_response = true;
                     if payload.get("success").and_then(Value::as_bool) != Some(true) {
-                        rpc_error = Some(extract_rpc_error(payload));
+                        rpc_error = Some(pi_auth_failures::encode_embedded_model_auth_error(
+                            &extract_rpc_error(payload),
+                            None,
+                            None,
+                        ));
                     }
                 }
             }
@@ -2259,7 +2263,11 @@ where
                     .unwrap_or_default();
 
                 if event_type == "error" {
-                    rpc_error = Some(extract_rpc_error(payload));
+                    rpc_error = Some(pi_auth_failures::encode_embedded_model_auth_error(
+                        &extract_rpc_error(payload),
+                        None,
+                        None,
+                    ));
                 }
 
                 if event_type == "thinking_start" {
@@ -2909,7 +2917,11 @@ fn require_successful_response<'a>(
         .ok_or_else(|| format!("pi RPC process did not respond to {command}"))?;
 
     if response.get("success").and_then(Value::as_bool) != Some(true) {
-        return Err(extract_rpc_error(response));
+        return Err(pi_auth_failures::encode_embedded_model_auth_error(
+            &extract_rpc_error(response),
+            None,
+            None,
+        ));
     }
 
     Ok(response)

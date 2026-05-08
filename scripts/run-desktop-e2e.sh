@@ -181,9 +181,19 @@ run_inner() {
 
   local managed_pi_dir="${TEST_HOME}/.orchestra/runtime/pi/agent"
   local legacy_pi_dir="${TEST_HOME}/.pi/agent"
+  if [[ "${TEST_FILE}" == "tests/desktop-e2e/session-model-auth-error.test.ts" ]]; then
+    export ORCHESTRA_PI_EXECUTABLE="${ROOT_DIR}/tests/desktop-e2e/fixtures/fake-pi-model-auth-fixture.mjs"
+    export ORCHESTRA_FAKE_PI_MODEL_AUTH_LOG_PATH="${RUN_DIR}/model-auth-fixture.log"
+    export ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_AUTH=0
+    export ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS=0
+    export ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_SETTINGS=0
+    rm -f "${ORCHESTRA_FAKE_PI_MODEL_AUTH_LOG_PATH}"
+    echo "[desktop-e2e-runner] using fake Pi model-auth fixture ${ORCHESTRA_PI_EXECUTABLE}"
+  fi
   local import_legacy_auth="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_AUTH:-1}"
   local import_legacy_models="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS:-1}"
   local import_legacy_settings="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_SETTINGS:-0}"
+
   if [[ -d "${legacy_pi_dir}" ]]; then
     mkdir -p "${managed_pi_dir}"
     chmod 700 "${TEST_HOME}/.orchestra" "${TEST_HOME}/.orchestra/runtime" "${TEST_HOME}/.orchestra/runtime/pi" "${managed_pi_dir}" 2>/dev/null || true

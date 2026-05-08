@@ -22,6 +22,7 @@ pub mod messages;
 pub mod model_limits;
 pub mod notifications;
 pub mod orchestra_paths;
+pub mod pi_auth_failures;
 pub mod pi_launch;
 pub mod pi_oauth;
 pub mod pi_package_sources;

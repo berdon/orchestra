@@ -5,6 +5,10 @@ import { SessionSendControls } from "./SessionSendControls";
 import { TranscriptEventCard } from "./TranscriptEventCard";
 import { buildProjectMentionLookup, mapTaskFileMentionAutocompleteCandidates, searchProjectReferenceAutocompleteCandidates, searchProjectTagAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
 import { useTaskCommentFileMentions } from "../lib/orchestraData/tasks";
+import {
+  getModelAuthFailureDetails,
+  type UiErrorState,
+} from "../lib/orchestraData/errors";
 import { recordInputPerfRender } from "../lib/testInputPerformance";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionSendMode, SessionStats, SessionStatus, TaskSummary } from "../types";
@@ -158,6 +162,7 @@ interface SessionChatPanelProps {
   changingModelSessionId: string | null;
   draftMessage: string;
   piSetupState?: PiSetupState | null;
+  actionError?: UiErrorState | null;
   transcriptRef: RefObject<HTMLDivElement | null>;
   scrollState: SessionScrollState;
   wrapTranscript: boolean;
@@ -199,6 +204,7 @@ interface SessionComposerProps {
   changingModelSessionId: string | null;
   draftMessage: string;
   piSetupState?: PiSetupState | null;
+  actionError?: UiErrorState | null;
   formatDateTime: (timestamp: string) => string;
   formatModelOptionLabel: (state: SessionModelState | undefined) => string;
   onModelChange: (value: string) => void;
@@ -359,6 +365,7 @@ function SessionComposer({
   changingModelSessionId,
   draftMessage,
   piSetupState,
+  actionError,
   formatDateTime,
   formatModelOptionLabel,
   onModelChange,
@@ -378,6 +385,7 @@ function SessionComposer({
     || session.activityState === "tool_running"
     || session.activityState === "streaming";
   const composerDisabled = sessionReadOnly || !sessionMessageable;
+  const modelAuthFailure = getModelAuthFailureDetails(actionError);
   const sessionActionsDisabled = sessionReadOnly || sessionPending || sessionControlBusy;
   const canCreateNewSession = Boolean(onCreateNewSession) && !sessionReadOnly;
   const canCompactSession = Boolean(onCompactSession)
@@ -449,6 +457,27 @@ function SessionComposer({
           </div>
           {onOpenPiSettings ? (
             <button className="secondary-button" type="button" onClick={onOpenPiSettings}>
+              Open Settings → Harness
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {modelAuthFailure ? (
+        <div className="session-readonly-banner" data-role="session-model-auth-error">
+          <div>
+            <strong>Harness setup required.</strong> {actionError?.message}
+            {actionError?.detail ? (
+              <div className="muted-copy">{actionError.detail}</div>
+            ) : null}
+          </div>
+          {onOpenPiSettings ? (
+            <button
+              className="secondary-button"
+              data-role="session-model-auth-open-settings"
+              type="button"
+              onClick={onOpenPiSettings}
+            >
               Open Settings → Harness
             </button>
           ) : null}
@@ -738,6 +767,7 @@ export function SessionChatPanel({
   changingModelSessionId,
   draftMessage,
   piSetupState,
+  actionError,
   transcriptRef,
   scrollState,
   wrapTranscript,
@@ -853,6 +883,7 @@ export function SessionChatPanel({
             changingModelSessionId={changingModelSessionId}
             draftMessage={draftMessage}
             piSetupState={piSetupState}
+            actionError={actionError}
             formatDateTime={formatDateTime}
             formatModelOptionLabel={formatModelOptionLabel}
             onModelChange={onModelChange}

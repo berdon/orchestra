@@ -4,7 +4,10 @@ import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
 import { SessionChatPanel } from "../components/SessionChatPanel";
 import { SessionTranscriptMobileControlsMenu } from "../components/SessionTranscriptMobileControlsMenu";
 import type { OrchestraConnectionSnapshot } from "../lib/orchestraClient";
-import type { UiErrorState } from "../lib/orchestraData/errors";
+import {
+  getModelAuthFailureDetails,
+  type UiErrorState,
+} from "../lib/orchestraData/errors";
 import type {
   AgentDefinition,
   AgentSummary,
@@ -158,7 +161,8 @@ export function AgentChatPage({
     emptyStateDescription = "Restoring the agent’s main session and chat controls…";
   }
 
-  const panelStackClassName = error
+  const bannerError = getModelAuthFailureDetails(error) ? null : error;
+  const panelStackClassName = bannerError
     ? "panel-stack panel-stack--sessions panel-stack--sessions-layout panel-stack--sessions-layout--with-error agent-chat-page"
     : "panel-stack panel-stack--sessions panel-stack--sessions-layout agent-chat-page";
 
@@ -166,7 +170,7 @@ export function AgentChatPage({
     <section className={panelStackClassName}>
       <ResourceStatusBanner
         connection={connection}
-        error={error}
+        error={bannerError}
         hasData={Boolean(session)}
         onRetry={onRetrySessionLoad}
         retryLabel="Retry chat"
@@ -262,6 +266,7 @@ export function AgentChatPage({
           changingModelSessionId={changingModelSessionId}
           draftMessage={draftMessage}
           piSetupState={piSetupState}
+          actionError={error}
           transcriptRef={transcriptRef}
           scrollState={scrollState}
           wrapTranscript={wrapTranscript}

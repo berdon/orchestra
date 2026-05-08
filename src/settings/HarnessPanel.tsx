@@ -14,6 +14,8 @@ import type {
 } from "../types";
 
 type HarnessPanelProps = Omit<ComponentProps<typeof PiPanel>, "mode"> & {
+  activeDetailTab?: "runtime" | "setup" | "models";
+  onDetailTabChange?: (tabId: string) => void;
   harnessModelLimitsSnapshot: HarnessModelLimitsSnapshot | null;
   piRuntimeSettings: PiRuntimeSettings | null;
   piRuntimeDiagnostics: PiRuntimeDiagnostics | null;
@@ -171,6 +173,8 @@ function statusLabel(state: HarnessModelLimitState | null, hasPolicy: boolean) {
 }
 
 export function HarnessPanel({
+  activeDetailTab,
+  onDetailTabChange,
   harnessModelLimitsSnapshot,
   piRuntimeSettings,
   piRuntimeDiagnostics,
@@ -650,6 +654,8 @@ export function HarnessPanel({
       ariaLabel="Harness settings sections"
       dataRolePrefix="harness-detail"
       initialTabId="runtime"
+      activeTabId={activeDetailTab}
+      onTabChange={onDetailTabChange}
       header={(
         <div className="panel__header panel__header--stacked">
           <div>

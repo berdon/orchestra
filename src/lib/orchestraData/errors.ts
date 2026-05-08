@@ -1,4 +1,5 @@
 import type { OrchestraClient } from "../orchestraClient";
+import type { JsonValue, SettingsTab } from "../../types";
 import {
   OrchestraClientError,
   type OrchestraClientErrorCode,
@@ -6,16 +7,39 @@ import {
   toOrchestraClientError,
 } from "../orchestraClient";
 
+const MODEL_AUTH_ERROR_PREFIX = "__ORCHESTRA_MODEL_AUTH_ERROR__:";
+
 export type UiErrorKind =
   | "offline"
   | "unsupported"
   | "authorization"
+  | "setup_required"
   | "validation"
   | "not_found"
   | "conflict"
   | "timeout"
   | "transport"
   | "unknown";
+
+export interface SettingsNavigationTarget {
+  tab: SettingsTab;
+  detailTab?: string | null;
+  providerId?: string | null;
+}
+
+export interface ModelAuthFailureDetails {
+  kind: "model_auth_required";
+  code: "model_auth_required";
+  reason: "missing" | "expired" | "invalid" | "unknown" | string;
+  providerId?: string | null;
+  providerName?: string | null;
+  modelId?: string | null;
+  message: string;
+  detail: string;
+  settingsTab: SettingsTab;
+  settingsDetailTab: string;
+  rawMessage: string;
+}
 
 export interface UiErrorState {
   kind: UiErrorKind;
@@ -25,6 +49,82 @@ export interface UiErrorState {
   retryable: boolean;
   code: OrchestraClientErrorCode;
   error: OrchestraClientErrorShape;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseEmbeddedModelAuthFailureMessage(message: string) {
+  const trimmed = message.trim();
+  if (!trimmed.startsWith(MODEL_AUTH_ERROR_PREFIX)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed.slice(MODEL_AUTH_ERROR_PREFIX.length));
+    return isModelAuthFailureDetails(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isModelAuthFailureDetails(value: unknown): value is ModelAuthFailureDetails {
+  if (!isObject(value)) {
+    return false;
+  }
+
+  return value.kind === "model_auth_required"
+    && value.code === "model_auth_required"
+    && typeof value.message === "string"
+    && typeof value.detail === "string"
+    && typeof value.settingsTab === "string"
+    && typeof value.settingsDetailTab === "string"
+    && typeof value.rawMessage === "string";
+}
+
+function extractModelAuthFailureDetails(error: unknown): ModelAuthFailureDetails | null {
+  if (error instanceof OrchestraClientError && isModelAuthFailureDetails(error.details)) {
+    return error.details;
+  }
+
+  if (typeof error === "string") {
+    return parseEmbeddedModelAuthFailureMessage(error);
+  }
+
+  if (error instanceof Error) {
+    return parseEmbeddedModelAuthFailureMessage(error.message);
+  }
+
+  if (isModelAuthFailureDetails(error)) {
+    return error;
+  }
+
+  if (isObject(error) && isModelAuthFailureDetails(error.details)) {
+    return error.details;
+  }
+
+  return null;
+}
+
+export function getModelAuthFailureDetails(error: UiErrorState | unknown): ModelAuthFailureDetails | null {
+  if (isObject(error) && isObject((error as { error?: unknown }).error)) {
+    return extractModelAuthFailureDetails((error as { error?: unknown }).error);
+  }
+  return extractModelAuthFailureDetails(error);
+}
+
+export function getModelAuthFailureSettingsTarget(error: UiErrorState | unknown): SettingsNavigationTarget | null {
+  const details = getModelAuthFailureDetails(error);
+  if (!details) {
+    return null;
+  }
+
+  return {
+    tab: details.settingsTab,
+    detailTab: details.settingsDetailTab,
+    providerId: details.providerId ?? null,
+  };
 }
 
 function mapUiErrorKind(code: OrchestraClientErrorCode): UiErrorKind {
@@ -122,6 +222,28 @@ export function toUiErrorState(error: unknown, fallback: string): UiErrorState {
         source: "frontend",
         fallbackMessage: fallback,
       });
+  const modelAuthFailure = extractModelAuthFailureDetails(error)
+    ?? extractModelAuthFailureDetails(normalized);
+
+  if (modelAuthFailure) {
+    const decoratedError = new OrchestraClientError({
+      ...normalized,
+      code: "unauthorized",
+      userMessage: modelAuthFailure.message,
+      retryable: false,
+      details: modelAuthFailure as unknown as JsonValue,
+    });
+
+    return {
+      kind: "setup_required",
+      title: "Harness setup required",
+      message: modelAuthFailure.message,
+      detail: modelAuthFailure.detail,
+      retryable: false,
+      code: decoratedError.code,
+      error: decoratedError,
+    };
+  }
 
   return {
     kind: mapUiErrorKind(normalized.code),

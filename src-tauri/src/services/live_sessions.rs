@@ -22,6 +22,7 @@ use crate::{
     },
     services::{
         app_events, database, harness_settings,
+        pi_auth_failures,
         pi_sessions::get_session_path,
         runtime_skills,
         session_compaction::{
@@ -486,7 +487,11 @@ impl SessionRuntime {
                         let result = if success {
                             Ok(payload)
                         } else {
-                            Err(extract_rpc_error(&payload))
+                            Err(pi_auth_failures::encode_embedded_model_auth_error(
+                                &extract_rpc_error(&payload),
+                                None,
+                                None,
+                            ))
                         };
                         let _ = sender.send(result);
                         return;
@@ -527,7 +532,17 @@ impl SessionRuntime {
             "sessions.rpc.event",
             &format!("Session {} received {}", self.session_id, event_type),
         );
-        self.emit_stream_event(payload.clone());
+
+        let mut event_payload = payload.clone();
+        if let Some(raw_error) = extract_rpc_error_message(&payload) {
+            let _ = pi_auth_failures::attach_normalized_model_auth_error(
+                &mut event_payload,
+                &raw_error,
+                None,
+                None,
+            );
+        }
+        self.emit_stream_event(event_payload);
 
         if event_type == "turn_end" {
             if let Some(run_id) = self.current_run_id() {
@@ -634,11 +649,18 @@ impl SessionRuntime {
             let _ = crate::services::role_dispatch::fail_role_run(&self.session_id, &error_message);
             let _ =
                 crate::services::channels::fail_channel_response_for_run(&run_id, &error_message);
-            self.emit_stream_event(json!({
+            let mut event = json!({
                 "type": "error",
                 "message": error_message,
                 "source": "orchestra",
-            }));
+            });
+            let _ = pi_auth_failures::attach_normalized_model_auth_error(
+                &mut event,
+                &error_message,
+                None,
+                None,
+            );
+            self.emit_stream_event(event);
         }
 
         self.teardown_process();
@@ -2885,7 +2907,7 @@ mod tests {
     }
 }
 
-fn extract_rpc_error(payload: &Value) -> String {
+fn extract_rpc_error_message(payload: &Value) -> Option<String> {
     payload
         .get("error")
         .and_then(Value::as_str)
@@ -2902,5 +2924,8 @@ fn extract_rpc_error(payload: &Value) -> String {
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned)
         })
-        .unwrap_or_else(|| "pi reported an RPC error".into())
+}
+
+fn extract_rpc_error(payload: &Value) -> String {
+    extract_rpc_error_message(payload).unwrap_or_else(|| "pi reported an RPC error".into())
 }

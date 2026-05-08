@@ -13,7 +13,7 @@ export interface SessionTranscriptReduction {
   pendingRun?: PendingSessionRun;
   clearPendingRun?: boolean;
   refreshFromBackend?: boolean;
-  sessionActionError?: string;
+  sessionActionError?: unknown;
 }
 
 function isObject(value: JsonValue | undefined | null): value is Record<string, JsonValue> {
@@ -58,6 +58,27 @@ function extractRpcMessageText(message: JsonValue | undefined | null) {
 
 function extractRpcThinkingText(message: JsonValue | undefined | null) {
   return extractRpcMessageBlocks(message, "thinking", "thinking");
+}
+
+function extractNormalizedSessionError(value: JsonValue | undefined | null): JsonValue | null {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const direct = value.normalizedError;
+  if (isObject(direct) && asString(direct.kind) === "model_auth_required") {
+    return direct;
+  }
+
+  const assistantMessageEvent = value.assistantMessageEvent;
+  if (!isObject(assistantMessageEvent)) {
+    return null;
+  }
+
+  const nested = assistantMessageEvent.normalizedError;
+  return isObject(nested) && asString(nested.kind) === "model_auth_required"
+    ? nested
+    : null;
 }
 
 function getRpcEventType(envelope: SessionStreamEnvelope) {
@@ -773,7 +794,10 @@ export function reduceSessionTranscriptEvent(
             updatedAt: eventTimestamp,
             events: current.events.filter((event) => event.runId !== runId),
           })),
-          sessionActionError: asString(delta?.message) || extractRpcMessageText(message) || "Session action failed.",
+          sessionActionError: extractNormalizedSessionError(payload.event)
+            || asString(delta?.message)
+            || extractRpcMessageText(message)
+            || "Session action failed.",
         };
       default:
         return null;
@@ -1031,7 +1055,9 @@ export function reduceSessionTranscriptEvent(
         updatedAt: eventTimestamp,
         events: current.events.filter((event) => event.runId !== runId),
       })),
-      sessionActionError: asString(rpcEvent?.message) || "Session action failed.",
+      sessionActionError: extractNormalizedSessionError(payload.event)
+        || asString(rpcEvent?.message)
+        || "Session action failed.",
     };
   }
 

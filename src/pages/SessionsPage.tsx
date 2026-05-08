@@ -5,7 +5,10 @@ import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
 import { SessionChatPanel } from "../components/SessionChatPanel";
 import { SessionTranscriptMobileControlsMenu } from "../components/SessionTranscriptMobileControlsMenu";
 import type { OrchestraConnectionSnapshot } from "../lib/orchestraClient";
-import type { UiErrorState } from "../lib/orchestraData/errors";
+import {
+  getModelAuthFailureDetails,
+  type UiErrorState,
+} from "../lib/orchestraData/errors";
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
 import { recordInputPerfRender } from "../lib/testInputPerformance";
 import { useExplanatoryTooltipProps, type ExplanatoryTooltipProps } from "../lib/tooltips";
@@ -417,7 +420,7 @@ export function SessionsPage({
       <>
         <ResourceStatusBanner
           connection={connection}
-          error={sessionActionError}
+          error={bannerError}
           hasData={sessions.length > 0}
           refreshing={refreshingSessions}
           onRetry={onRetrySessions}
@@ -442,6 +445,9 @@ export function SessionsPage({
     );
   }
 
+  const bannerError = getModelAuthFailureDetails(sessionActionError)
+    ? null
+    : sessionActionError;
   const selectedSessionPickerLabel = selectedSession ? getSessionListTitle(selectedSession) : `Choose ${sessionFilter} session`;
   const showCreateSessionFab = Boolean(onCreateSession && (!compactSessionLayout || mobileSessionPickerOpen || !selectedSession));
 
@@ -520,6 +526,7 @@ export function SessionsPage({
             changingModelSessionId={changingModelSessionId}
             draftMessage={draftMessage}
             piSetupState={piSetupState}
+            actionError={sessionActionError}
             transcriptRef={transcriptRef}
             scrollState={scrollState}
             wrapTranscript={wrapTranscript}

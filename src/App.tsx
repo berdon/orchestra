@@ -70,6 +70,7 @@ import {
 } from "./lib/orchestraData/appShell";
 import { useOrchestraConnection } from "./lib/orchestraData/connection";
 import {
+  getModelAuthFailureSettingsTarget,
   reportUiError,
   toUiErrorState,
   type UiErrorState,
@@ -151,6 +152,7 @@ import type {
 const COMMAND_PALETTE_SOURCE_TIMEOUT_MS = 4_000;
 
 type PendingSessionRunsBySession = Record<string, PendingSessionRunsById>;
+type HarnessSettingsDetailTab = "runtime" | "setup" | "models";
 
 function hasPendingSessionRuns(pendingRuns?: PendingSessionRunsById) {
   return Boolean(
@@ -1175,6 +1177,9 @@ export function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(
     initialRouteState.settingsTab ?? "projects",
   );
+  const [harnessSettingsDetailTab, setHarnessSettingsDetailTab] = useState<
+    HarnessSettingsDetailTab | null
+  >(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeProjectId, setActiveProjectIdState] = useState<string | null>(
     initialRouteState.projectId,
@@ -1262,8 +1267,29 @@ export function App() {
   >(null);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [refreshingSessions, setRefreshingSessions] = useState(false);
-  const [sessionActionError, setSessionActionError] =
+  const [sessionActionError, setSessionActionErrorState] =
     useState<UiErrorState | null>(null);
+  const [sessionActionErrorSessionId, setSessionActionErrorSessionId] =
+    useState<string | null>(null);
+  function setSessionActionError(
+    value:
+      | UiErrorState
+      | null
+      | ((current: UiErrorState | null) => UiErrorState | null),
+    options?: { sessionId?: string | null },
+  ) {
+    if (typeof value === "function") {
+      setSessionActionErrorState((current) => {
+        const next = value(current);
+        setSessionActionErrorSessionId(next ? options?.sessionId ?? null : null);
+        return next;
+      });
+      return;
+    }
+
+    setSessionActionErrorSessionId(value ? options?.sessionId ?? null : null);
+    setSessionActionErrorState(value);
+  }
   const [draftMessages, setDraftMessages] = useState<Record<string, string>>(
     {},
   );
@@ -1875,6 +1901,35 @@ export function App() {
   const supervisorPendingRuns = supervisorSessionId
     ? pendingRuns[supervisorSessionId]
     : undefined;
+
+  function resolveVisibleSessionActionError(sessionId?: string | null) {
+    if (!sessionActionError) {
+      return null;
+    }
+    if (!sessionActionErrorSessionId) {
+      return sessionActionError;
+    }
+    return sessionId === sessionActionErrorSessionId
+      ? sessionActionError
+      : null;
+  }
+
+  function openSessionErrorSettings(error: UiErrorState | null | undefined) {
+    const target = error ? getModelAuthFailureSettingsTarget(error) : null;
+    navigateToHarnessSettings({
+      detailTab: target?.tab === "harness" ? "setup" : "setup",
+    });
+  }
+
+  const visibleSelectedSessionActionError = resolveVisibleSessionActionError(
+    selectedSession?.id ?? null,
+  );
+  const visibleChatSessionActionError = resolveVisibleSessionActionError(
+    chatSession?.id ?? null,
+  );
+  const visibleSupervisorSessionActionError = resolveVisibleSessionActionError(
+    supervisorSession?.id ?? null,
+  );
 
   const suppressPassiveSessionLoadError = useCallback(
     (
@@ -2835,6 +2890,7 @@ export function App() {
     setPiSetupState(
       await hostAdminExtension.harness.setProviderApiKey(providerId, apiKey),
     );
+    setSessionActionError(null);
     await refreshPiSetupState({ includeModelsJson: true });
   }
 
@@ -2845,6 +2901,7 @@ export function App() {
     setPiSetupState(
       await hostAdminExtension.harness.removeProviderCredential(providerId),
     );
+    setSessionActionError(null);
     await refreshPiSetupState({ includeModelsJson: true });
   }
 
@@ -2884,6 +2941,7 @@ export function App() {
     setPiOAuthFlowState(
       await hostAdminExtension.harness.startOAuthFlow(providerId, methodId),
     );
+    setSessionActionError(null);
   }
 
   async function handleSubmitPiOAuthFlowInput(value: string) {
@@ -3298,6 +3356,7 @@ export function App() {
             reduction.sessionActionError,
             "Session action failed.",
           ),
+          { sessionId: payload.sessionId },
         );
       }
 
@@ -3315,6 +3374,7 @@ export function App() {
             removePendingRun(payload.sessionId, runId);
             setSessionActionError(
               toUiErrorState(error, "Unable to refresh session."),
+              { sessionId: payload.sessionId },
             );
           });
       }
@@ -4581,9 +4641,12 @@ export function App() {
     setTasksOverviewToken((current) => current + 1);
   }
 
-  function navigateToHarnessSettings() {
+  function navigateToHarnessSettings(options?: {
+    detailTab?: HarnessSettingsDetailTab | null;
+  }) {
     setActivePage("settings");
     setSettingsTab(canManageHarnessSettings ? "harness" : "general");
+    setHarnessSettingsDetailTab(options?.detailTab ?? null);
   }
 
   function navigateToAgent(agentId: string) {
@@ -4671,6 +4734,9 @@ export function App() {
   function handleSettingsTabSelection(tabId: SettingsTab) {
     setActivePage("settings");
     setSettingsTab(tabId);
+    if (tabId !== "harness") {
+      setHarnessSettingsDetailTab(null);
+    }
     closeMobileNavigation({ restoreFocus: false });
   }
 
@@ -5016,6 +5082,7 @@ export function App() {
       case "navigate-settings":
         setActivePage("settings");
         setSettingsTab(item.action.tab);
+        setHarnessSettingsDetailTab(null);
         return;
       case "open-task":
         navigateToTask(item.action.taskId);
@@ -5155,6 +5222,7 @@ export function App() {
               error,
               "Unable to send message.",
             ),
+            { sessionId },
           );
         });
     },
@@ -6068,7 +6136,7 @@ export function App() {
                     <button
                       className="secondary-button"
                       type="button"
-                      onClick={navigateToHarnessSettings}
+                      onClick={() => navigateToHarnessSettings()}
                     >
                       Open Settings → Harness
                     </button>
@@ -6099,7 +6167,7 @@ export function App() {
                   <button
                     className="secondary-button"
                     type="button"
-                    onClick={navigateToHarnessSettings}
+                    onClick={() => navigateToHarnessSettings()}
                   >
                     Open Harness settings
                   </button>
@@ -6120,7 +6188,7 @@ export function App() {
                   <button
                     className="secondary-button"
                     type="button"
-                    onClick={navigateToHarnessSettings}
+                    onClick={() => navigateToHarnessSettings()}
                   >
                     Review Harness settings
                   </button>
@@ -6189,6 +6257,10 @@ export function App() {
                   />
                 ) : activeSettingsTab === "harness" ? (
                   <HarnessPanel
+                    activeDetailTab={harnessSettingsDetailTab ?? undefined}
+                    onDetailTabChange={(tabId) =>
+                      setHarnessSettingsDetailTab(tabId as HarnessSettingsDetailTab)
+                    }
                     harnessModelLimitsSnapshot={harnessModelLimitsSnapshot}
                     piRuntimeSettings={piRuntimeSettings}
                     piRuntimeDiagnostics={appInfo?.piRuntimeDiagnostics ?? null}
@@ -6366,7 +6438,7 @@ export function App() {
                   draftMessage={chatSessionDraftMessage}
                   piSetupState={piSetupState}
                   connection={connection}
-                  error={sessionActionError}
+                  error={visibleChatSessionActionError}
                   onRetrySessionLoad={() => {
                     void loadSessions();
                   }}
@@ -6425,7 +6497,10 @@ export function App() {
                   }
                   onOpenPiSettings={
                     canManageHarnessSettings
-                      ? navigateToHarnessSettings
+                      ? () =>
+                          openSessionErrorSettings(
+                            visibleChatSessionActionError,
+                          )
                       : undefined
                   }
                   onCompactSession={() =>
@@ -6476,7 +6551,7 @@ export function App() {
                   draftMessage={selectedSessionDraftMessage}
                   piSetupState={piSetupState}
                   connection={connection}
-                  sessionActionError={sessionActionError}
+                  sessionActionError={visibleSelectedSessionActionError}
                   onRetrySessions={() => {
                     void loadSessions();
                   }}
@@ -6514,7 +6589,10 @@ export function App() {
                   }
                   onOpenPiSettings={
                     canManageHarnessSettings
-                      ? navigateToHarnessSettings
+                      ? () =>
+                          openSessionErrorSettings(
+                            visibleSelectedSessionActionError,
+                          )
                       : undefined
                   }
                   onCompactSession={handleSelectedSessionCompact}
@@ -6581,7 +6659,7 @@ export function App() {
           <Suspense fallback={null}>
             <SupervisorQuickChatModal
               draftMessage={supervisorSessionDraftMessage}
-              error={sessionActionError?.message ?? null}
+              error={visibleSupervisorSessionActionError?.message ?? null}
               events={supervisorSession?.events ?? []}
               referenceTasks={referenceTasks}
               referenceAgents={referenceAgents}
