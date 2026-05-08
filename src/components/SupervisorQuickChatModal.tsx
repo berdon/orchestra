@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
-import { SessionSendControls, formatSessionDefaultSendSummary } from "./SessionSendControls";
+import { SessionSendControls } from "./SessionSendControls";
 import { TranscriptEventCard } from "./TranscriptEventCard";
 import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, searchProjectTagAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
 import type { AgentSummary, RoleSummary, SessionEvent, SessionRecord, SessionSendMode, TaskSummary } from "../types";
@@ -197,10 +197,7 @@ export function SupervisorQuickChatModal({
             />
           </label>
           <div className="composer__footer">
-            <div>
-              <p className="muted-copy">Press Ctrl+Enter or ⌘+Enter to send. Ctrl+T reopens this chat any time.</p>
-              <p className="composer__send-summary muted-copy" data-role="supervisor-send-summary">{formatSessionDefaultSendSummary(sessionBusy)}</p>
-            </div>
+            <p className="muted-copy">Press Ctrl+Enter or ⌘+Enter to send. Ctrl+T reopens this chat any time.</p>
             <SessionSendControls
               busy={sessionBusy}
               disabled={!session}

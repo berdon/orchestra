@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type RefObject, type UIEvent } from "react";
 
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
-import { SessionSendControls, formatSessionDefaultSendSummary } from "./SessionSendControls";
+import { SessionSendControls } from "./SessionSendControls";
 import { TranscriptEventCard } from "./TranscriptEventCard";
 import { buildProjectMentionLookup, mapTaskFileMentionAutocompleteCandidates, searchProjectReferenceAutocompleteCandidates, searchProjectTagAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
 import { useTaskCommentFileMentions } from "../lib/orchestraData/tasks";
@@ -487,9 +487,6 @@ function SessionComposer({
               <span>Updated {formatDateTime(session.updatedAt)}</span>
             </div>
           </div>
-          <p className="composer__send-summary muted-copy" data-role="session-send-summary">
-            {formatSessionDefaultSendSummary(sessionBusy)}
-          </p>
           <div className="composer__actions">
             {onCreateNewSession || onCompactSession || onReloadSession ? (
               <div className="session-actions-menu">

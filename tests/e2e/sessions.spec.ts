@@ -187,6 +187,32 @@ async function readSessionLogCount(page: import("@playwright/test").Page, target
   }, target);
 }
 
+async function measureSessionComposerActionRow(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const settingsTrigger = document.querySelector('[data-role="session-actions-trigger"]') as HTMLButtonElement | null;
+    const modelSelect = document.querySelector('.session-model-field--composer .select-input') as HTMLSelectElement | null;
+    const sendButton = document.querySelector('[data-role="send-message"]') as HTMLButtonElement | null;
+    const sendOptionsTrigger = document.querySelector('[data-role="session-send-options-trigger"]') as HTMLButtonElement | null;
+    if (!settingsTrigger || !modelSelect || !sendButton || !sendOptionsTrigger) {
+      return null;
+    }
+    const settingsRect = settingsTrigger.getBoundingClientRect();
+    const modelRect = modelSelect.getBoundingClientRect();
+    const sendRect = sendButton.getBoundingClientRect();
+    const optionsRect = sendOptionsTrigger.getBoundingClientRect();
+    return {
+      settingsTop: settingsRect.top,
+      modelTop: modelRect.top,
+      sendTop: sendRect.top,
+      optionsTop: optionsRect.top,
+      settingsBottom: settingsRect.bottom,
+      modelBottom: modelRect.bottom,
+      sendBottom: sendRect.bottom,
+      optionsBottom: optionsRect.bottom,
+    };
+  });
+}
+
 async function readSessionRefreshCount(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
     const testWindow = window as typeof window & {
@@ -1050,8 +1076,13 @@ test("sessions send options menu exposes queue and interrupt while keeping defau
   await page.locator('[data-role="send-message"]').click();
   await expect(page.locator('[data-role="session-transcript"]')).toContainText("Default send should still start immediately", { timeout: 10_000 });
   await expect.poll(async () => (await readSessionLogCount(page, "sessions.message.start")) > startCountBefore).toBe(true);
+  await expect(page.locator('[data-role="session-send-summary"]')).toHaveCount(0);
 
-  await expect(page.locator('[data-role="session-send-summary"]')).toContainText("Default: queue behind current work");
+  const actionRow = await measureSessionComposerActionRow(page);
+  expect(actionRow).not.toBeNull();
+  const rowTops = [actionRow?.settingsTop ?? 0, actionRow?.modelTop ?? 0, actionRow?.sendTop ?? 0, actionRow?.optionsTop ?? 0];
+  expect(Math.max(...rowTops) - Math.min(...rowTops)).toBeLessThanOrEqual(2);
+
   await page.locator('[data-role="composer-input"]').fill("Queue send from the menu");
   await page.locator('[data-role="session-send-options-trigger"]').click();
   await expect(page.locator('[data-role="session-send-options-menu"]')).toBeVisible();
@@ -2779,7 +2810,7 @@ test("ctrl+t quick supervisor chat exposes queue and interrupt send options", as
   await page.locator('[data-role="supervisor-composer-input"]').fill(longMessage);
   await page.locator('[data-role="supervisor-send-message"]').click();
   await expect(page.locator('[data-role="supervisor-transcript"]')).toContainText(longMessage, { timeout: 10_000 });
-  await expect(page.locator('[data-role="supervisor-send-summary"]')).toContainText("Default: queue behind current work");
+  await expect(page.locator('[data-role="supervisor-send-summary"]')).toHaveCount(0);
 
   await page.locator('[data-role="supervisor-composer-input"]').fill("Interrupt the supervisor next");
   await page.locator('[data-role="supervisor-send-options-trigger"]').click();

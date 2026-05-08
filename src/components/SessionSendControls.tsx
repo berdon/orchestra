@@ -3,12 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type { SessionSendMode } from "../types";
 
-export function formatSessionDefaultSendSummary(busy: boolean) {
-  return busy
-    ? "Default: queue behind current work · Options: Queue, Interrupt"
-    : "Default: send now if idle · Options: Queue, Interrupt";
-}
-
 function formatDefaultSendDescription(busy: boolean) {
   return busy
     ? "Default Send queues behind current work while the session is active."

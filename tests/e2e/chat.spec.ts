@@ -19,13 +19,15 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
     const composerInput = document.querySelector('[data-role="composer-input"]') as HTMLTextAreaElement | null;
     const composerFooter = document.querySelector('.composer__footer') as HTMLDivElement | null;
     const sendButton = document.querySelector('[data-role="send-message"]') as HTMLButtonElement | null;
+    const sendOptionsTrigger = document.querySelector('[data-role="session-send-options-trigger"]') as HTMLButtonElement | null;
+    const settingsTrigger = document.querySelector('[data-role="session-actions-trigger"]') as HTMLButtonElement | null;
     const modelSelect = document.querySelector('.session-model-field--composer .select-input') as HTMLSelectElement | null;
     const panelHeader = panel?.querySelector('.panel__header') as HTMLElement | null;
     const mobileAgentPicker = document.querySelector('[data-role="chat-mobile-agent-switcher"]') as HTMLElement | null;
     const mobilePickerTrigger = document.querySelector('[data-role="chat-mobile-agent-picker-trigger"]') as HTMLElement | null;
     const mobileTranscriptControlsTrigger = document.querySelector('[data-role="session-mobile-transcript-controls-trigger"]') as HTMLElement | null;
 
-    if (!content || !contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput || !composerFooter || !sendButton || !modelSelect) {
+    if (!content || !contentBody || !stack || !detailColumn || !panel || !transcript || !composerInput || !composerFooter || !sendButton || !sendOptionsTrigger || !settingsTrigger || !modelSelect) {
       return null;
     }
 
@@ -35,6 +37,8 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
     const composerRect = composerInput.getBoundingClientRect();
     const composerFooterRect = composerFooter.getBoundingClientRect();
     const sendRect = sendButton.getBoundingClientRect();
+    const sendOptionsRect = sendOptionsTrigger.getBoundingClientRect();
+    const settingsRect = settingsTrigger.getBoundingClientRect();
     const modelRect = modelSelect.getBoundingClientRect();
     const mobilePickerTriggerRect = mobilePickerTrigger?.getBoundingClientRect() ?? null;
     const mobileTranscriptControlsTriggerRect = mobileTranscriptControlsTrigger?.getBoundingClientRect() ?? null;
@@ -73,9 +77,16 @@ async function measureChatLayout(page: import("@playwright/test").Page) {
       composerInputWidth: composerRect.width,
       composerTop: composerRect.top,
       composerBottom: composerRect.bottom,
+      sendTop: sendRect.top,
       sendBottom: sendRect.bottom,
+      sendOptionsTop: sendOptionsRect.top,
+      sendOptionsBottom: sendOptionsRect.bottom,
+      settingsTop: settingsRect.top,
+      settingsBottom: settingsRect.bottom,
       sendDisabled: sendButton.disabled,
       composerFooterWidth: composerFooterRect.width,
+      modelTop: modelRect.top,
+      modelBottom: modelRect.bottom,
       modelWidth: modelRect.width,
       panelHeaderVisible: panelHeader ? window.getComputedStyle(panelHeader).display !== 'none' : false,
       mobileAgentPickerTop: mobileAgentPicker?.getBoundingClientRect().top ?? null,
@@ -722,6 +733,7 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
   await expect(page.locator('[data-role="session-chat-panel"] > .panel__header')).toBeHidden();
   await expect(page.locator('[data-role="composer-resize-handle"]')).toHaveCount(0);
   await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
+  await expect(page.locator('[data-role="session-send-summary"]')).toHaveCount(0);
   await expect(page.locator('[data-role="session-send-options-trigger"]')).toBeVisible();
   await page.locator('[data-role="session-send-options-trigger"]').click();
   await expect(page.locator('[data-role="session-send-options-menu"]')).toBeVisible();
@@ -763,6 +775,8 @@ test("chat mobile keeps a page-local agent picker and usable transcript/composer
   expect(mobileLayout?.composerBottom ?? 999).toBeLessThanOrEqual((mobileLayout?.viewportHeight ?? 0) - 8);
   expect(mobileLayout?.sendBottom ?? 999).toBeLessThanOrEqual((mobileLayout?.viewportHeight ?? 0) - 8);
   expect(mobileLayout?.sendDisabled).toBe(false);
+  const mobileActionTops = [mobileLayout?.settingsTop ?? 0, mobileLayout?.modelTop ?? 0, mobileLayout?.sendTop ?? 0, mobileLayout?.sendOptionsTop ?? 0];
+  expect(Math.max(...mobileActionTops) - Math.min(...mobileActionTops)).toBeLessThanOrEqual(2);
   expect(Math.abs((mobileLayout?.composerFooterWidth ?? 0) - (mobileLayout?.composerInputWidth ?? 0))).toBeLessThanOrEqual(2);
   expect(mobileLayout?.modelWidth ?? 999).toBeLessThan((mobileLayout?.composerInputWidth ?? 0) * 0.6);
 
