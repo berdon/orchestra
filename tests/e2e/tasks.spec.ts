@@ -3240,6 +3240,149 @@ test("task comment reply actions scroll/focus composer and nested replies target
   })).toBe("thread-parent");
 });
 
+test("task comment and reply composers handle heavy threaded markdown histories across layouts", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 760 });
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = Date.parse(new Date().toISOString());
+    const buildComment = (id: string, parentCommentId: string | null, author: string, message: string, offset: number) => ({
+      id,
+      taskId: "task-heavy-comment-history",
+      parentCommentId,
+      author,
+      message,
+      interruptAgent: false,
+      repositoryId: null,
+      relativePath: null,
+      lineStart: null,
+      lineEnd: null,
+      columnStart: null,
+      columnEnd: null,
+      selectedText: null,
+      anchorCommitHash: null,
+      anchorHasUncommittedChanges: null,
+      createdAt: new Date(timestamp + offset).toISOString(),
+      updatedAt: new Date(timestamp + offset).toISOString(),
+    });
+    const comments = Array.from({ length: 12 }, (_, index) => {
+      const threadId = `thread-${index + 1}`;
+      const threadOffset = index * 10_000;
+      return [
+        buildComment(
+          threadId,
+          null,
+          "Reviewer",
+          `### Thread ${index + 1}\n- Checklist item A\n- Checklist item B\n\n\`\`\`ts\nconst thread = ${index + 1};\n\`\`\``,
+          threadOffset,
+        ),
+        buildComment(
+          `${threadId}-reply-1`,
+          threadId,
+          "Worker",
+          `Reply ${index + 1}.1 with additional context and multiline markdown.\n\n1. First follow-up\n2. Second follow-up`,
+          threadOffset + 1_000,
+        ),
+        buildComment(
+          `${threadId}-reply-2`,
+          threadId,
+          "Worker",
+          `Reply ${index + 1}.2 keeps the thread warm while we test typing responsiveness.`,
+          threadOffset + 2_000,
+        ),
+      ];
+    }).flat();
+
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-heavy-comment-history",
+          projectId: "orchestra",
+          number: "ORC-302",
+          title: "Heavy comment history task",
+          description: "Exercise top-level and reply typing against a large markdown thread history.",
+          type: "task",
+          status: "in_progress",
+          priority: "P1",
+          workflowId: null,
+          currentLaneId: null,
+          assigneeType: "unassigned",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: comments.length,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          unreadCommentCount: 0,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments,
+          todos: [],
+          laneRuns: [],
+          laneSummaries: [],
+          tags: [],
+          activeLaneAssignment: null,
+          createdAt: new Date(timestamp).toISOString(),
+          updatedAt: new Date(timestamp).toISOString(),
+        },
+      ]),
+    );
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.locator('[data-role="task-card"]').filter({ hasText: "Heavy comment history task" }).first().click();
+
+  const topLevelComment = page.locator('[data-role="task-comment-message"]');
+  const longTopLevelComment = "Wide-layout multiline typing check.\nSecond line keeps the draft in the conversation component.\n- Bullet one\n- Bullet two";
+  await page.locator('[data-role="task-comment-author"]').fill("Reviewer");
+  await topLevelComment.click();
+  await topLevelComment.pressSequentially(longTopLevelComment);
+  await expect(topLevelComment).toHaveValue(longTopLevelComment);
+  await page.locator('[data-role="add-task-comment"]').click();
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Wide-layout multiline typing check.");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Second line keeps the draft in the conversation component.");
+  await expect(topLevelComment).toHaveValue("");
+
+  await page.setViewportSize({ width: 780, height: 760 });
+  await revealTaskDetailDock(page);
+  const nestedReplyButton = page.locator('[data-role="reply-task-comment"][data-comment-id="thread-3-reply-1"]');
+  await expect(nestedReplyButton).toBeVisible();
+  await nestedReplyButton.click();
+
+  const replyAuthor = page.locator('[data-role="task-reply-author"]');
+  const replyMessage = page.locator('[data-role="task-reply-message"]');
+  const longReply = "Narrow-layout reply typing check.\nThis reply should stay responsive with the heavy history still mounted.";
+  await replyAuthor.fill("Worker");
+  await replyMessage.click();
+  await replyMessage.pressSequentially(longReply);
+  await expect(replyMessage).toHaveValue(longReply);
+  await replyMessage.press("Control+Enter");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("Narrow-layout reply typing check.");
+  await expect(page.locator('[data-role="task-comments"]')).toContainText("This reply should stay responsive with the heavy history still mounted.");
+  await expect.poll(() => page.evaluate(() => {
+    const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]") as Array<{ id: string; comments: Array<{ message: string; parentCommentId?: string | null }> }>;
+    const task = tasks.find((entry) => entry.id === "task-heavy-comment-history");
+    return task?.comments.find((comment) => comment.message === "Narrow-layout reply typing check.\nThis reply should stay responsive with the heavy history still mounted.")?.parentCommentId ?? null;
+  })).toBe("thread-3");
+});
+
 test("task detail supports attachments, comments, recent activity, and review inbox filtering", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

@@ -80,3 +80,5 @@ export const TaskCommentMessage = memo(function TaskCommentMessage({
     />
   );
 });
+
+TaskCommentMessage.displayName = "TaskCommentMessage";

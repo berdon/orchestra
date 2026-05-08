@@ -256,3 +256,5 @@ export const MarkdownContent = memo(function MarkdownContent({
     </div>
   );
 });
+
+MarkdownContent.displayName = "MarkdownContent";

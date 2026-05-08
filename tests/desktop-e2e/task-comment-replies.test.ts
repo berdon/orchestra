@@ -45,10 +45,14 @@ describe("desktop task comment replies", () => {
       }).then((tasks) => tasks.find((entry) => entry.title === "Comment reply task"));
       expect(task).toBeTruthy();
 
+      const olderParentMessage = "Older parent comment.\n- Threaded context\n- Desktop multiline coverage";
+      const newerStandaloneMessage = "Newer standalone comment.";
+      const replyMessage = "Reply on the older thread.\nSecond line for multiline reply coverage.";
+
       await openTaskCard(sessionId, "Comment reply task");
-      await addTaskCommentViaUi(sessionId, "Reviewer", "Older parent comment.");
+      await addTaskCommentViaUi(sessionId, "Reviewer", olderParentMessage);
       await sleep(25);
-      await addTaskCommentViaUi(sessionId, "Reviewer", "Newer standalone comment.");
+      await addTaskCommentViaUi(sessionId, "Reviewer", newerStandaloneMessage);
 
       await clickByText(sessionId, '[role="tab"]', "Repo files");
       await waitForText(sessionId, "Older parent comment.");
@@ -66,7 +70,7 @@ describe("desktop task comment replies", () => {
 
       await waitForText(sessionId, "Reply to Reviewer");
       await setInputValue(sessionId, '[data-role="task-reply-author"]', "Worker");
-      await setInputValue(sessionId, '[data-role="task-reply-message"]', "Reply on the older thread.");
+      await setInputValue(sessionId, '[data-role="task-reply-message"]', replyMessage);
       const submittedReply = await executeScript<boolean>(sessionId, `
         const button = document.querySelector('[data-role="add-task-reply"]');
         if (!(button instanceof HTMLElement)) {
@@ -82,9 +86,9 @@ describe("desktop task comment replies", () => {
         taskId: task!.id,
       });
       expect(comments).toHaveLength(3);
-      const olderParent = comments.find((entry) => entry.message === "Older parent comment.");
-      const newerStandalone = comments.find((entry) => entry.message === "Newer standalone comment.");
-      const reply = comments.find((entry) => entry.message === "Reply on the older thread.");
+      const olderParent = comments.find((entry) => entry.message === olderParentMessage);
+      const newerStandalone = comments.find((entry) => entry.message === newerStandaloneMessage);
+      const reply = comments.find((entry) => entry.message === replyMessage);
       expect(olderParent?.parentCommentId ?? null).toBeNull();
       expect(newerStandalone?.parentCommentId ?? null).toBeNull();
       expect(reply?.parentCommentId).toBe(olderParent?.id);
@@ -92,8 +96,10 @@ describe("desktop task comment replies", () => {
       let renderedThreads = await getRenderedThreads(sessionId);
       expect(renderedThreads).toHaveLength(2);
       expect(renderedThreads[0]?.text).toContain("Older parent comment.");
+      expect(renderedThreads[0]?.text).toContain("Desktop multiline coverage");
       expect(renderedThreads[0]?.replies).toEqual(expect.arrayContaining([expect.stringContaining("Reply on the older thread.")]));
-      expect(renderedThreads[1]?.text).toContain("Newer standalone comment.");
+      expect(renderedThreads[0]?.replies).toEqual(expect.arrayContaining([expect.stringContaining("Second line for multiline reply coverage.")]));
+      expect(renderedThreads[1]?.text).toContain(newerStandaloneMessage);
       expect(renderedThreads[1]?.replies ?? []).toHaveLength(0);
 
       await clickByText(sessionId, "button", "Tasks");
@@ -103,16 +109,20 @@ describe("desktop task comment replies", () => {
       renderedThreads = await getRenderedThreads(sessionId);
       expect(renderedThreads).toHaveLength(2);
       expect(renderedThreads[0]?.text).toContain("Older parent comment.");
+      expect(renderedThreads[0]?.text).toContain("Desktop multiline coverage");
       expect(renderedThreads[0]?.replies).toEqual(expect.arrayContaining([expect.stringContaining("Reply on the older thread.")]));
-      expect(renderedThreads[1]?.text).toContain("Newer standalone comment.");
+      expect(renderedThreads[0]?.replies).toEqual(expect.arrayContaining([expect.stringContaining("Second line for multiline reply coverage.")]));
+      expect(renderedThreads[1]?.text).toContain(newerStandaloneMessage);
 
       await addTaskCommentViaUi(sessionId, "Reviewer", "Fresh standalone note.");
       renderedThreads = await getRenderedThreads(sessionId);
       expect(renderedThreads).toHaveLength(3);
       expect(renderedThreads[0]?.text).toContain("Fresh standalone note.");
       expect(renderedThreads[1]?.text).toContain("Older parent comment.");
+      expect(renderedThreads[1]?.text).toContain("Desktop multiline coverage");
       expect(renderedThreads[1]?.replies).toEqual(expect.arrayContaining([expect.stringContaining("Reply on the older thread.")]));
-      expect(renderedThreads[2]?.text).toContain("Newer standalone comment.");
+      expect(renderedThreads[1]?.replies).toEqual(expect.arrayContaining([expect.stringContaining("Second line for multiline reply coverage.")]));
+      expect(renderedThreads[2]?.text).toContain(newerStandaloneMessage);
       expect(renderedThreads.flatMap((thread) => thread.replies)).toHaveLength(1);
 
       const commentsAfterReload = await invokeCommand<Array<{ id: string; parentCommentId?: string | null; message: string }>>(sessionId, "list_task_comments", {
@@ -121,7 +131,7 @@ describe("desktop task comment replies", () => {
       expect(commentsAfterReload).toHaveLength(4);
       const freshStandalone = commentsAfterReload.find((entry) => entry.message === "Fresh standalone note.");
       expect(freshStandalone?.parentCommentId ?? null).toBeNull();
-      expect(commentsAfterReload.find((entry) => entry.message === "Reply on the older thread.")?.parentCommentId).toBe(olderParent?.id);
+      expect(commentsAfterReload.find((entry) => entry.message === replyMessage)?.parentCommentId).toBe(olderParent?.id);
     } finally {
       await deleteWebdriverSession(sessionId);
     }

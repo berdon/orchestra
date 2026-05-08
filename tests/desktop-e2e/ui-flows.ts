@@ -458,12 +458,27 @@ export async function openTaskCard(sessionId: string, title: string) {
   await waitForText(sessionId, title);
 }
 
+function getRenderedCommentTextFragments(message: string) {
+  const fragments = message
+    .split("\n")
+    .map((line) => line.trim())
+    .map((line) => line.replace(/^[-*+]\s+/, ""))
+    .map((line) => line.replace(/^\d+\.\s+/, ""))
+    .map((line) => line.replace(/^>\s+/, ""))
+    .map((line) => line.replace(/^#+\s+/, ""))
+    .filter(Boolean);
+
+  return fragments.length > 0 ? fragments : [message];
+}
+
 export async function addTaskCommentViaUi(sessionId: string, author: string, message: string) {
   await waitForText(sessionId, 'Task conversation');
   await setInputValue(sessionId, '[data-role="task-comment-author"]', author);
   await setInputValue(sessionId, '[data-role="task-comment-message"]', message);
   await clickSelector(sessionId, '[data-role="add-task-comment"]');
-  await waitForText(sessionId, message);
+  for (const fragment of getRenderedCommentTextFragments(message)) {
+    await waitForText(sessionId, fragment);
+  }
 }
 
 export async function addTaskFileReferenceViaUi(

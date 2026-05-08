@@ -1,23 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 
 import hljs from "highlight.js";
-import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
+import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { useTaskFileContent } from "../../lib/orchestraData/tasks";
-import { useOrchestraBootstrap } from "../../lib/orchestraClient/provider";
-import { buildTaskCommentThreads, sortTaskCommentThreadsByLatestActivityDesc } from "../../lib/taskCommentThreads";
 import { useExplanatoryTooltipProps } from "../../lib/tooltips";
-import { getTaskCommentDeleteActionState, type TaskCommentDeleteActionState } from "../../lib/taskCommentDeleteAction";
-import { formatTaskCommentAnchorLabel, isTaskCommentAnchoredToReference } from "../../lib/taskComments";
-import { shouldShowUnreadCommentAttention } from "../../lib/taskUnreadCommentVisibility";
 import { AgentReferenceLink, RoleReferenceLink, SessionReferenceLink, TaskReferenceLink, WorkerReferenceLink, type EntityReferenceLookup } from "../../components/entity-links";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
 import { TaskBrowserPanel } from "../../components/TaskBrowserPanel";
 import { MarkdownContent } from "../../components/MarkdownContent";
-import { TaskCommentComposer } from "../../components/TaskCommentComposer";
-import { TaskCommentMessage } from "../../components/TaskCommentMessage";
 import { TaskEditorForm } from "./TaskEditorForm";
 import { TaskPullRequestTab } from "./TaskPullRequestTab";
+import { TaskConversationSection } from "./TaskConversationSection";
 import { getTaskTags } from "../../lib/taskListQuery";
 import { formatTaskAttachmentSize, getTaskAttachmentFallbackCopy, getTaskAttachmentKind } from "../../lib/taskAttachments";
 import { getTaskOpenSessionTarget } from "../../lib/taskOpenSession";
@@ -200,15 +194,6 @@ function TaskHeaderMetadata({
   );
 }
 
-function createReplyDraft(author = "User", parentCommentId?: string | null): TaskCommentInput {
-  return {
-    author,
-    message: "",
-    interruptAgent: false,
-    parentCommentId: parentCommentId ?? null,
-  };
-}
-
 function describeTaskDependencyTreeMeta(task: TaskSummary, parent: TaskSummary | null) {
   return [task.priority, task.type, parent ? `Parent: ${parent.number}` : null].filter(Boolean).join(" · ");
 }
@@ -324,93 +309,6 @@ function TaskRelaneMenu({
           ))}
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function TaskCommentActionMenu({
-  comment,
-  deleteAction,
-  onDeleteComment,
-  onReply,
-}: {
-  comment: TaskComment;
-  deleteAction: TaskCommentDeleteActionState;
-  onDeleteComment: (commentId: string) => Promise<boolean>;
-  onReply: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const getTooltipProps = useExplanatoryTooltipProps();
-
-  useEffect(() => {
-    if (!open) {
-      return undefined;
-    }
-
-    function handlePointerDown(event: MouseEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    }
-
-    window.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
-
-  return (
-    <div className="task-comment-thread__actions">
-      <button className="secondary-button" data-role="reply-task-comment" data-comment-id={comment.id} data-parent-comment-id={comment.parentCommentId ?? undefined} type="button" onClick={onReply}>
-        Reply
-      </button>
-      <div className="task-comment-actions-menu" ref={rootRef}>
-        <button
-          className="secondary-button task-comment-actions-menu__trigger"
-          data-role="task-comment-overflow-trigger"
-          data-comment-id={comment.id}
-          data-parent-comment-id={comment.parentCommentId ?? undefined}
-          type="button"
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-label={`More actions for ${comment.author}'s comment`}
-          title="More actions"
-          onClick={() => setOpen((current) => !current)}
-        >
-          <span aria-hidden="true">⋯</span>
-        </button>
-        {open ? (
-          <div className="task-action-menu__dropdown task-comment-actions-menu__dropdown" data-role="task-comment-overflow-menu" data-comment-id={comment.id} role="menu">
-            <button
-              className="secondary-button secondary-button--danger task-action-menu__dropdown-button"
-              data-role="comment-delete"
-              data-comment-id={comment.id}
-              disabled={!deleteAction.enabled}
-              type="button"
-              role="menuitem"
-              {...getTooltipProps(deleteAction.reason)}
-              onClick={() => {
-                setOpen(false);
-                if (!deleteAction.enabled) {
-                  return;
-                }
-                void onDeleteComment(comment.id);
-              }}
-            >
-              Delete
-            </button>
-          </div>
-        ) : null}
-      </div>
     </div>
   );
 }
@@ -562,10 +460,6 @@ function TaskDetailMobileActionMenu({
   );
 }
 
-function isAnchoredToReference(comment: TaskComment, reference: TaskFileReference | null) {
-  return isTaskCommentAnchoredToReference(comment, reference);
-}
-
 function laneLabelForTodo(task: TaskDetail, todo: TaskTodo) {
   if (task.currentLaneId === todo.laneId) {
     return `${todo.laneId} · current lane`;
@@ -700,8 +594,6 @@ export function TaskDetailPage({
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [closeReason, setCloseReason] = useState("");
   const [deleteHolding, setDeleteHolding] = useState(false);
-  const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
-  const [replyDraft, setReplyDraft] = useState<TaskCommentInput>(() => createReplyDraft(commentDraft.author));
   const [mailDraft, setMailDraft] = useState("");
   const [mailInterrupt, setMailInterrupt] = useState(false);
   const [selectedFileReference, setSelectedFileReference] = useState<string | null>(null);
@@ -719,7 +611,6 @@ export function TaskDetailPage({
   const [completionNotes, setCompletionNotes] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [pendingScrollReferenceId, setPendingScrollReferenceId] = useState<string | null>(null);
-  const [pendingReplyFocusTargetId, setPendingReplyFocusTargetId] = useState<string | null>(null);
   const [historyLimit, setHistoryLimit] = useState<number>(() => {
     if (typeof window === "undefined") {
       return 5;
@@ -737,23 +628,18 @@ export function TaskDetailPage({
   const repoFilesPanelRef = useRef<HTMLElement | null>(null);
   const loadedFileContentPathRef = useRef<string | null>(null);
   const selectedFileReferenceCardRef = useRef<HTMLElement | null>(null);
-  const replyMessageRef = useRef<HTMLTextAreaElement | null>(null);
   const lastMarkedCommentsReadKeyRef = useRef<string | null>(null);
   const [floatingChromeLayout, setFloatingChromeLayout] = useState<FloatingTaskChromeLayout | null>(null);
   const [compactHeaderEligible, setCompactHeaderEligible] = useState(false);
   const [compactHeaderShown, setCompactHeaderShown] = useState(false);
   const [tabDockShown, setTabDockShown] = useState(true);
   const getTooltipProps = useExplanatoryTooltipProps();
-  const bootstrap = useOrchestraBootstrap();
 
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
   const taskHeading = draft.title.trim() || task.title;
   const headerAssigneeLabel = resolveTaskAssigneeLabel(task, agents, roles);
   const headerLaneLabel = getTaskLaneLabel(task, workflowLanes);
-  const commentThreads = useMemo(
-    () => sortTaskCommentThreadsByLatestActivityDesc(buildTaskCommentThreads(task.comments)),
-    [task.comments],
-  );
+  const taskLaneSummaries = task.laneSummaries ?? [];
   const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
   const defaultFileAbsolutePath = defaultFile?.exists ? defaultFile.absolutePath ?? null : null;
   const recentHistory = timelineItems.slice(0, historyLimit);
@@ -768,15 +654,8 @@ export function TaskDetailPage({
   const effectiveActiveLaneAssignmentStatus = getEffectiveTaskDetailAssignmentStatus(task);
   const currentLaneTodos = task.currentLaneId ? task.todos.filter((todo) => todo.laneId === task.currentLaneId) : [];
   const unfinishedCurrentLaneTodos = currentLaneTodos.filter((todo) => !todo.completed);
-  const taskCommentDeleteAction = getTaskCommentDeleteActionState(bootstrap);
-  const handleTopLevelCommentAuthorChange = useCallback((author: string) => {
-    onCommentDraftChange((current) => current.author === author ? current : { ...current, author });
-  }, [onCommentDraftChange]);
   const handleTopLevelCommentInterruptChange = useCallback((interruptAgent: boolean) => {
     onCommentDraftChange((current) => current.interruptAgent === interruptAgent ? current : { ...current, interruptAgent });
-  }, [onCommentDraftChange]);
-  const handleTopLevelCommentMessageChange = useCallback((message: string) => {
-    onCommentDraftChange((current) => current.message === message ? current : { ...current, message });
   }, [onCommentDraftChange]);
 
   useEffect(() => {
@@ -798,9 +677,6 @@ export function TaskDetailPage({
   }, [isEditing, onEditingStateChange]);
 
   useEffect(() => {
-    setReplyTargetCommentId(null);
-    setReplyDraft(createReplyDraft(commentDraft.author));
-    setPendingReplyFocusTargetId(null);
     setMailDraft("");
     setMailInterrupt(false);
     setTodoDraftDescription("");
@@ -811,21 +687,6 @@ export function TaskDetailPage({
     setCompletionSummary("");
     setCompletionNotes("");
   }, [workflowLanes, draft.currentLaneId, task.currentLaneId, task.id]);
-
-  useEffect(() => {
-    if (!replyTargetCommentId) {
-      setReplyDraft((current) => ({ ...current, author: commentDraft.author }));
-    }
-  }, [commentDraft.author, replyTargetCommentId]);
-
-  useEffect(() => {
-    if (!replyTargetCommentId || task.comments.some((comment) => comment.id === replyTargetCommentId)) {
-      return;
-    }
-    setReplyTargetCommentId(null);
-    setReplyDraft(createReplyDraft(commentDraft.author));
-    setPendingReplyFocusTargetId(null);
-  }, [commentDraft.author, replyTargetCommentId, task.comments]);
 
   useEffect(() => {
     if (activeNavItem !== "comments" || task.unreadCommentCount <= 0) {
@@ -874,32 +735,6 @@ export function TaskDetailPage({
       }
     };
   }, [activeTab, pendingScrollReferenceId, selectedFileReference]);
-
-  useEffect(() => {
-    if (!pendingReplyFocusTargetId || pendingReplyFocusTargetId !== replyTargetCommentId) {
-      return;
-    }
-
-    let timeoutId: number | null = null;
-    const frame = window.requestAnimationFrame(() => {
-      const replyMessage = replyMessageRef.current;
-      if (!replyMessage) {
-        return;
-      }
-      replyMessage.scrollIntoView({ block: "center", behavior: "auto" });
-      timeoutId = window.setTimeout(() => {
-        replyMessage.focus();
-        setPendingReplyFocusTargetId(null);
-      }, 50);
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-    };
-  }, [pendingReplyFocusTargetId, replyTargetCommentId]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -1256,33 +1091,10 @@ export function TaskDetailPage({
     clearDeleteHold();
   }
 
-  const openReplyComposer = useCallback((threadComment: TaskComment) => {
-    setReplyTargetCommentId(threadComment.id);
-    setReplyDraft(createReplyDraft(commentDraft.author, threadComment.id));
-    setPendingReplyFocusTargetId(threadComment.id);
-  }, [commentDraft.author]);
-
   function handleCancelEdit() {
     onCancelEdit();
     setIsEditing(false);
   }
-
-  const handleAddTopLevelComment = useCallback(async () => {
-    await onAddComment({ ...commentDraft, parentCommentId: null });
-  }, [commentDraft, onAddComment]);
-
-  const handleAddReply = useCallback(async () => {
-    if (!replyTargetCommentId) {
-      return;
-    }
-    const added = await onAddComment({ ...replyDraft, parentCommentId: replyTargetCommentId });
-    if (!added) {
-      return;
-    }
-    setReplyTargetCommentId(null);
-    setReplyDraft(createReplyDraft(commentDraft.author));
-    setPendingReplyFocusTargetId(null);
-  }, [commentDraft.author, onAddComment, replyDraft, replyTargetCommentId]);
 
   async function handleSendRuntimeMail() {
     if (!mailDraft.trim()) {
@@ -2395,7 +2207,7 @@ export function TaskDetailPage({
               </section>
             ) : null}
 
-            {task.laneSummaries.length ? (
+            {taskLaneSummaries.length ? (
               <section className="task-history-card" data-role="task-overview-lane-summaries">
                 <div className="workflow-section__header">
                   <div>
@@ -2404,7 +2216,7 @@ export function TaskDetailPage({
                   </div>
                 </div>
                 <div className="task-detail-summary__history-list">
-                  {task.laneSummaries.map((laneSummary) => (
+                  {taskLaneSummaries.map((laneSummary) => (
                     <article className="task-detail-summary__history-item" data-role="task-lane-summary-card" key={`${laneSummary.laneId}:${laneSummary.updatedAt}`}>
                       <div className="workflow-section__header">
                         <strong>{laneSummary.laneName ?? workflowLaneNameById.get(laneSummary.laneId) ?? laneSummary.laneId}</strong>
@@ -2499,155 +2311,22 @@ export function TaskDetailPage({
             </section>
 
             <section className="task-detail-summary__comments task-history-card" data-role="task-detail-summary-comments" ref={commentsSectionRef}>
-              <div className="task-detail-summary__history-header">
-                <div>
-                  <p className="eyebrow">Discussion</p>
-                  <h4>Task conversation</h4>
-                </div>
-                <div className="transcript-event__meta-group">
-                  <span className="status-badge status-badge--neutral">{task.commentCount}</span>
-                  {shouldShowUnreadCommentAttention(task) ? (
-                    <span className="status-badge status-badge--warning status-badge--compact" data-role="task-unread-comments-footer-badge">
-                      {task.unreadCommentCount} unread
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-
-              <TaskCommentComposer
-                author={commentDraft.author}
-                authorDataRole="task-comment-author"
+              <TaskConversationSection
+                task={task}
+                defaultFile={defaultFile}
+                commentDraft={commentDraft}
+                currentTaskTags={task.tags}
                 tasks={tasks}
                 agents={agents}
                 roles={roles}
-                currentTaskTags={task.tags}
-                message={commentDraft.message}
-                messageDataRole="task-comment-message"
-                messageLabel="Add comment"
-                mentionListDataRole="task-comment-mention-list"
-                mentionOptionDataRole="task-comment-mention-option"
-                onAuthorChange={handleTopLevelCommentAuthorChange}
-                onInterruptChange={handleTopLevelCommentInterruptChange}
-                onMessageChange={handleTopLevelCommentMessageChange}
-                onSubmit={() => void handleAddTopLevelComment()}
-                rows={4}
-                submitDataRole="add-task-comment"
-                submitLabel="Add comment"
-                taskId={task.id}
-                interruptChecked={commentDraft.interruptAgent}
-                interruptDataRole="task-comment-interrupt"
+                onCommentDraftChange={onCommentDraftChange}
+                onAddComment={onAddComment}
+                onDeleteComment={onDeleteComment}
+                onOpenFileReference={handleOpenCommentFileReference}
+                onOpenTask={onOpenTask}
+                onOpenAgent={onOpenAgent}
+                onOpenRole={onOpenRole}
               />
-
-              {commentThreads.length ? (
-                <div className="task-section-list" data-role="task-comments">
-                  {commentThreads.map(({ comment, replies }) => (
-                    <article className="task-comment-thread" data-role="task-comment-thread" key={comment.id}>
-                      <article className="transcript-event transcript-event--system task-comment-thread__parent" data-role="task-comment-item" data-comment-id={comment.id}>
-                        <div className="transcript-event__meta">
-                          <span>{comment.author}</span>
-                          <div className="transcript-event__meta-group">
-                            {comment.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
-                            {formatTaskCommentAnchorLabel(comment) ? <span className="status-badge status-badge--accent">{formatTaskCommentAnchorLabel(comment)}</span> : null}
-                            {isAnchoredToReference(comment, defaultFile) ? <span className="status-badge status-badge--neutral">Default file</span> : null}
-                            <time dateTime={comment.updatedAt}>{new Date(comment.updatedAt).toLocaleString()}</time>
-                          </div>
-                        </div>
-                        <TaskCommentMessage
-                          dataRole="task-comment-mention-link"
-                          fileReferences={task.fileReferences}
-                          tasks={tasks}
-                          agents={agents}
-                          roles={roles}
-                          message={comment.message}
-                          onOpenFileReference={handleOpenCommentFileReference}
-                          onOpenTask={onOpenTask}
-                          onOpenAgent={onOpenAgent}
-                          onOpenRole={onOpenRole}
-                        />
-                        {comment.selectedText ? <pre className="task-comment-thread__quote">{comment.selectedText}</pre> : null}
-                        <TaskCommentActionMenu
-                          comment={comment}
-                          deleteAction={taskCommentDeleteAction}
-                          onDeleteComment={onDeleteComment}
-                          onReply={() => openReplyComposer(comment)}
-                        />
-                      </article>
-
-                      {replies.length ? (
-                        <div className="task-comment-thread__replies" data-role="task-comment-replies">
-                          {replies.map((reply) => (
-                            <article className="transcript-event transcript-event--system task-comment-thread__reply" data-role="task-comment-reply" data-comment-id={reply.id} data-parent-comment-id={comment.id} key={reply.id}>
-                              <div className="transcript-event__meta">
-                                <span>{reply.author}</span>
-                                <div className="transcript-event__meta-group">
-                                  {reply.interruptAgent ? <span className="pending-badge">Interrupt requested</span> : null}
-                                  {formatTaskCommentAnchorLabel(reply) ? <span className="status-badge status-badge--accent">{formatTaskCommentAnchorLabel(reply)}</span> : null}
-                                  {isAnchoredToReference(reply, defaultFile) ? <span className="status-badge status-badge--neutral">Default file</span> : null}
-                                  <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
-                                </div>
-                              </div>
-                              <TaskCommentMessage
-                                dataRole="task-comment-mention-link"
-                                fileReferences={task.fileReferences}
-                                tasks={tasks}
-                                agents={agents}
-                                roles={roles}
-                                message={reply.message}
-                                onOpenFileReference={handleOpenCommentFileReference}
-                                onOpenTask={onOpenTask}
-                                onOpenAgent={onOpenAgent}
-                                onOpenRole={onOpenRole}
-                              />
-                              {reply.selectedText ? <pre className="task-comment-thread__quote">{reply.selectedText}</pre> : null}
-                              <TaskCommentActionMenu
-                                comment={reply}
-                                deleteAction={taskCommentDeleteAction}
-                                onDeleteComment={onDeleteComment}
-                                onReply={() => openReplyComposer(comment)}
-                              />
-                            </article>
-                          ))}
-                        </div>
-                      ) : null}
-
-                      {replyTargetCommentId === comment.id ? (
-                        <TaskCommentComposer
-                          author={replyDraft.author}
-                          authorDataRole="task-reply-author"
-                          className="task-comment-reply-composer"
-                          tasks={tasks}
-                          agents={agents}
-                          roles={roles}
-                          currentTaskTags={task.tags}
-                          interruptChecked={replyDraft.interruptAgent}
-                          interruptDataRole="task-reply-interrupt"
-                          message={replyDraft.message}
-                          messageDataRole="task-reply-message"
-                          messageRef={replyMessageRef}
-                          messageLabel={`Reply to ${comment.author}`}
-                          mentionListDataRole="task-reply-mention-list"
-                          mentionOptionDataRole="task-reply-mention-option"
-                          onAuthorChange={(author) => setReplyDraft({ ...replyDraft, author })}
-                          onCancel={() => {
-                            setReplyTargetCommentId(null);
-                            setReplyDraft(createReplyDraft(commentDraft.author));
-                            setPendingReplyFocusTargetId(null);
-                          }}
-                          onInterruptChange={(interruptAgent) => setReplyDraft({ ...replyDraft, interruptAgent })}
-                          onMessageChange={(message) => setReplyDraft({ ...replyDraft, message })}
-                          onSubmit={() => void handleAddReply()}
-                          rows={3}
-                          submitDataRole="add-task-reply"
-                          submitLabel="Add reply"
-                          cancelDataRole="cancel-task-reply"
-                          cancelLabel="Cancel"
-                          taskId={task.id}
-                        />
-                      ) : null}
-                    </article>
-                  ))}
-                </div>
-              ) : <p className="muted-copy">No comments yet. Add one to capture guidance, review notes, or an interrupt request.</p>}
             </section>
           </div>
         )}
