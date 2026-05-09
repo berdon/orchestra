@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE_NAME="${ORCHESTRA_DESKTOP_E2E_IMAGE:-orchestra-desktop-e2e:latest}"
 HOST_PI_DIR="${HOME}/.pi"
 HOST_CODEX_DIR="${HOME}/.codex"
+HOST_ORCHESTRA_PI_AGENT_DIR="${HOME}/.orchestra/runtime/pi/agent"
 TRIM_START="${ORCHESTRA_DEMO_VIDEO_TRIM_START:-8}"
 TEST_FILE=""
 OUTPUT_NAME=""
@@ -189,6 +190,9 @@ if [[ -d "${HOST_PI_DIR}" ]]; then
 fi
 if [[ -d "${HOST_CODEX_DIR}" ]]; then
   SEED_MOUNT_ARGS+=( -v "${HOST_CODEX_DIR}:/seed-home/.codex:ro" )
+fi
+if [[ -d "${HOST_ORCHESTRA_PI_AGENT_DIR}" ]]; then
+  SEED_MOUNT_ARGS+=( -v "${HOST_ORCHESTRA_PI_AGENT_DIR}:/seed-home/.orchestra/runtime/pi/agent:ro" )
 fi
 
 podman run --rm --security-opt label=disable \

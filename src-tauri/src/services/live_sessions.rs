@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
@@ -33,6 +33,7 @@ use crate::{
 
 const RPC_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 const NON_PROMPT_DELIVERY_GRACE: Duration = Duration::from_secs(90);
+const QUEUED_DELIVERY_TIMEOUT: Duration = Duration::from_secs(90);
 
 fn supported_control_capability() -> SessionControlCapability {
     SessionControlCapability {
@@ -163,6 +164,14 @@ fn decide_session_runtime_reuse(
     }
 }
 
+#[derive(Debug, Clone)]
+struct QueuedDelivery {
+    run_id: String,
+    delivery_type: String,
+    message: String,
+    accepted_at: Instant,
+}
+
 pub struct SessionRuntime {
     instance_id: String,
     session_id: String,
@@ -185,6 +194,7 @@ pub struct SessionRuntime {
     subscribed: Mutex<bool>,
     current_run_id: Mutex<Option<String>>,
     current_prompt_message: Mutex<Option<String>>,
+    queued_deliveries: Mutex<VecDeque<QueuedDelivery>>,
     closed: Mutex<bool>,
     last_non_prompt_delivery_at: Mutex<Option<Instant>>,
     reload_capability: Mutex<SessionControlCapability>,
@@ -364,6 +374,7 @@ impl SessionRuntime {
             subscribed: Mutex::new(false),
             current_run_id: Mutex::new(None),
             current_prompt_message: Mutex::new(None),
+            queued_deliveries: Mutex::new(VecDeque::new()),
             closed: Mutex::new(false),
             last_non_prompt_delivery_at: Mutex::new(None),
             reload_capability: Mutex::new(unknown_control_capability()),
@@ -612,19 +623,36 @@ impl SessionRuntime {
                 false
             };
 
+            let promoted_delivery = self.promote_next_queued_delivery();
+            if let Some(delivery) = promoted_delivery.as_ref() {
+                self.app.state::<crate::state::AppState>().log(
+                    "info",
+                    "sessions.run.promoted",
+                    &format!(
+                        "Session {} promoted queued {} delivery {}",
+                        self.session_id, delivery.delivery_type, delivery.run_id
+                    ),
+                );
+            }
+
             if let Some(runtime) = maybe_runtime(
                 &self.app.state::<crate::state::AppState>().session_runtimes,
                 &self.session_id,
             ) {
                 if completed_run {
                     runtime.mark_non_prompt_delivery();
-                    thread::spawn(move || {
-                        let _ = maybe_auto_compact(Arc::clone(&runtime));
-                        runtime.close_if_idle();
-                    });
-                } else {
-                    runtime.close_if_idle();
+                    if promoted_delivery.is_none() {
+                        let runtime_for_idle = Arc::clone(&runtime);
+                        thread::spawn(move || {
+                            let _ = maybe_auto_compact(Arc::clone(&runtime_for_idle));
+                            runtime_for_idle.close_if_idle();
+                        });
+                    }
                 }
+                if promoted_delivery.is_some() {
+                    runtime.mark_non_prompt_delivery();
+                }
+                runtime.close_if_idle();
             } else {
                 self.close_if_idle();
             }
@@ -667,7 +695,7 @@ impl SessionRuntime {
                 crate::services::channels::fail_channel_response_for_run(&run_id, &error_message);
             let mut event = json!({
                 "type": "error",
-                "message": error_message,
+                "message": error_message.clone(),
                 "source": "orchestra",
             });
             let _ = pi_auth_failures::attach_normalized_model_auth_error(
@@ -676,16 +704,39 @@ impl SessionRuntime {
                 None,
                 None,
             );
-            self.emit_stream_event(event);
+            self.emit_stream_event_for_run(Some(run_id), event);
+        }
+
+        for delivery in self.take_queued_deliveries() {
+            let message = format!(
+                "Queued {} delivery failed before it began processing: {}",
+                delivery.delivery_type, error_message
+            );
+            let _ = crate::services::channels::fail_channel_response_for_run(
+                &delivery.run_id,
+                &message,
+            );
+            self.emit_stream_event_for_run(
+                Some(delivery.run_id),
+                json!({
+                    "type": "delivery_error",
+                    "message": message,
+                    "source": "orchestra",
+                }),
+            );
         }
 
         self.teardown_process();
     }
 
     fn emit_stream_event(&self, event: Value) {
+        self.emit_stream_event_for_run(self.current_run_id(), event);
+    }
+
+    fn emit_stream_event_for_run(&self, run_id: Option<String>, event: Value) {
         let payload = SessionStreamEnvelope {
             session_id: self.session_id.clone(),
-            run_id: self.current_run_id(),
+            run_id,
             event,
             received_at: crate::state::now_iso(),
         };
@@ -825,6 +876,7 @@ impl SessionRuntime {
             .lock()
             .map(|current| current.is_some())
             .unwrap_or(false)
+            || self.has_queued_deliveries()
     }
 
     pub fn has_active_control_operation(&self) -> bool {
@@ -1027,6 +1079,7 @@ impl SessionRuntime {
     pub fn abort_active_run(&self) {
         let _ = self.take_current_run_id();
         let _ = self.take_current_prompt_message();
+        let _ = self.take_queued_deliveries();
         self.mark_closed();
         if let Ok(mut stdin) = self.stdin.lock() {
             *stdin = None;
@@ -1061,24 +1114,34 @@ impl SessionRuntime {
             ),
         );
 
+        let accepted_at = Instant::now();
+        let queued_delivery = QueuedDelivery {
+            run_id: run_id.to_string(),
+            delivery_type: delivery_type.to_string(),
+            message: message.to_string(),
+            accepted_at,
+        };
         let command_id = format!("{}-{}", delivery_type, run_id);
+        let activated_non_prompt_delivery =
+            delivery_type != "prompt" && self.current_run_id().is_none();
         let command = match delivery_type {
             "prompt" => {
-                let mut current_run_id = self
-                    .current_run_id
-                    .lock()
-                    .map_err(|_| "Unable to access current session run state".to_string())?;
-                if current_run_id.is_some() {
-                    return Err("This session is already processing a message".into());
-                }
-                *current_run_id = Some(run_id.to_string());
-                if let Ok(mut current_prompt_message) = self.current_prompt_message.lock() {
-                    *current_prompt_message = Some(message.to_string());
-                }
+                self.activate_delivery(run_id, message)?;
                 json!({ "id": command_id, "type": "prompt", "message": message })
             }
-            "steer" => json!({ "id": command_id, "type": "steer", "message": message }),
-            "follow_up" => json!({ "id": command_id, "type": "follow_up", "message": message }),
+            "steer" | "follow_up" => {
+                if self.current_run_id().is_some() {
+                    self.queue_delivery(queued_delivery.clone())?;
+                } else {
+                    self.activate_delivery(run_id, message)?;
+                    if let Err(error) = self.ensure_session_run_tracking(run_id) {
+                        let _ = self.take_current_run_id();
+                        let _ = self.take_current_prompt_message();
+                        return Err(error);
+                    }
+                }
+                json!({ "id": command_id, "type": delivery_type, "message": message })
+            }
             other => return Err(format!("Unsupported session delivery type: {other}")),
         };
 
@@ -1096,10 +1159,23 @@ impl SessionRuntime {
                     self.session_id, delivery_type, run_id, error
                 ),
             );
-            if delivery_type == "prompt" {
+            if self.current_run_id().as_deref() == Some(run_id) {
                 let _ = self.take_current_run_id();
+                let _ = self.take_current_prompt_message();
+                if activated_non_prompt_delivery {
+                    let _ = self
+                        .app
+                        .state::<crate::state::AppState>()
+                        .end_session_run(&self.session_id, run_id);
+                }
+            } else {
+                let _ = self.remove_queued_delivery(run_id);
             }
             return Err(error);
+        }
+
+        if delivery_type != "prompt" && self.is_delivery_queued(run_id, accepted_at) {
+            self.spawn_queued_delivery_watchdog(run_id.to_string(), accepted_at);
         }
 
         Ok(())
@@ -1254,6 +1330,169 @@ impl SessionRuntime {
             .and_then(|value| value.clone())
     }
 
+    fn activate_delivery(&self, run_id: &str, message: &str) -> Result<(), String> {
+        let mut current_run_id = self
+            .current_run_id
+            .lock()
+            .map_err(|_| "Unable to access current session run state".to_string())?;
+        if current_run_id.is_some() {
+            return Err("This session is already processing a message".into());
+        }
+        *current_run_id = Some(run_id.to_string());
+        if let Ok(mut current_prompt_message) = self.current_prompt_message.lock() {
+            *current_prompt_message = Some(message.to_string());
+        }
+        Ok(())
+    }
+
+    fn has_queued_deliveries(&self) -> bool {
+        self.queued_deliveries
+            .lock()
+            .map(|deliveries| !deliveries.is_empty())
+            .unwrap_or(false)
+    }
+
+    fn queue_delivery(&self, delivery: QueuedDelivery) -> Result<(), String> {
+        let mut queued_deliveries = self
+            .queued_deliveries
+            .lock()
+            .map_err(|_| "Unable to access queued session deliveries".to_string())?;
+        if delivery.delivery_type == "steer" {
+            let insert_at = queued_deliveries
+                .iter()
+                .position(|queued| queued.delivery_type != "steer")
+                .unwrap_or(queued_deliveries.len());
+            queued_deliveries.insert(insert_at, delivery);
+        } else {
+            queued_deliveries.push_back(delivery);
+        }
+        Ok(())
+    }
+
+    fn is_delivery_queued(&self, run_id: &str, accepted_at: Instant) -> bool {
+        self.queued_deliveries
+            .lock()
+            .ok()
+            .and_then(|deliveries| {
+                deliveries
+                    .iter()
+                    .find(|delivery| delivery.run_id == run_id)
+                    .map(|delivery| delivery.accepted_at == accepted_at)
+            })
+            .unwrap_or(false)
+    }
+
+    fn remove_queued_delivery(&self, run_id: &str) -> bool {
+        if let Ok(mut queued_deliveries) = self.queued_deliveries.lock() {
+            let original_len = queued_deliveries.len();
+            queued_deliveries.retain(|delivery| delivery.run_id != run_id);
+            return queued_deliveries.len() != original_len;
+        }
+        false
+    }
+
+    fn take_queued_deliveries(&self) -> Vec<QueuedDelivery> {
+        self.queued_deliveries
+            .lock()
+            .map(|mut deliveries| deliveries.drain(..).collect::<Vec<_>>())
+            .unwrap_or_default()
+    }
+
+    fn promote_next_queued_delivery(&self) -> Option<QueuedDelivery> {
+        let next_delivery = self
+            .queued_deliveries
+            .lock()
+            .ok()
+            .and_then(|mut deliveries| deliveries.pop_front());
+        if let Some(delivery) = next_delivery.as_ref() {
+            if self
+                .activate_delivery(&delivery.run_id, &delivery.message)
+                .is_err()
+            {
+                return None;
+            }
+            if let Err(error) = self.ensure_session_run_tracking(&delivery.run_id) {
+                let message = format!(
+                    "Message was accepted but Orchestra could not promote it into the active session run. Stop the session and retry. ({error})"
+                );
+                self.app.state::<crate::state::AppState>().log(
+                    "error",
+                    "sessions.run.promote.failed",
+                    &format!(
+                        "Session {} failed to track promoted queued delivery {}: {}",
+                        self.session_id, delivery.run_id, error
+                    ),
+                );
+                let _ = self.take_current_run_id();
+                let _ = self.take_current_prompt_message();
+                let _ = crate::services::channels::fail_channel_response_for_run(
+                    &delivery.run_id,
+                    &message,
+                );
+                self.emit_stream_event_for_run(
+                    Some(delivery.run_id.clone()),
+                    json!({
+                        "type": "delivery_error",
+                        "message": message,
+                        "source": "orchestra",
+                    }),
+                );
+                return None;
+            }
+        }
+        next_delivery
+    }
+
+    fn spawn_queued_delivery_watchdog(&self, run_id: String, accepted_at: Instant) {
+        let app = self.app.clone();
+        let session_id = self.session_id.clone();
+        thread::spawn(move || {
+            thread::sleep(QUEUED_DELIVERY_TIMEOUT);
+            let Some(runtime) = maybe_runtime(
+                &app.state::<crate::state::AppState>().session_runtimes,
+                &session_id,
+            ) else {
+                return;
+            };
+            if !runtime.is_delivery_queued(&run_id, accepted_at) {
+                return;
+            }
+            let message = "Message was accepted but the session did not begin processing it. Stop the session and retry.";
+            if runtime.remove_queued_delivery(&run_id) {
+                app.state::<crate::state::AppState>().log(
+                    "error",
+                    "sessions.run.delivery_timeout",
+                    &format!(
+                        "Session {} delivery {} timed out before it started processing",
+                        session_id, run_id
+                    ),
+                );
+                let _ = crate::services::channels::fail_channel_response_for_run(&run_id, message);
+                runtime.emit_stream_event_for_run(
+                    Some(run_id.clone()),
+                    json!({
+                        "type": "delivery_error",
+                        "message": message,
+                        "source": "orchestra",
+                    }),
+                );
+                runtime.close_if_idle();
+            }
+        });
+    }
+
+    fn ensure_session_run_tracking(&self, run_id: &str) -> Result<(), String> {
+        let state = self.app.state::<crate::state::AppState>();
+        match state.begin_session_run(&self.session_id, run_id) {
+            Ok(()) => Ok(()),
+            Err(error) if error == "This session is already processing a message" => {
+                state.clear_active_session_run(&self.session_id)?;
+                state.begin_session_run(&self.session_id, run_id)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn current_prompt_message(&self) -> Option<String> {
         self.current_prompt_message
             .lock()
@@ -1278,6 +1517,7 @@ impl SessionRuntime {
     fn close_if_idle(&self) {
         if self.is_subscribed()
             || self.current_run_id().is_some()
+            || self.has_queued_deliveries()
             || self.is_closed()
             || self.has_recent_non_prompt_delivery()
         {
@@ -2427,6 +2667,7 @@ mod tests {
             subscribed: Mutex::new(false),
             current_run_id: Mutex::new(active_prompt.then(|| "run-1".into())),
             current_prompt_message: Mutex::new(active_prompt.then(|| "Test prompt".into())),
+            queued_deliveries: Mutex::new(VecDeque::new()),
             closed: Mutex::new(false),
             last_non_prompt_delivery_at: Mutex::new(None),
             reload_capability: Mutex::new(unknown_control_capability()),
@@ -2987,6 +3228,103 @@ mod tests {
         assert!(!evaluation.trigger);
         assert_eq!(evaluation.context_tokens, None);
         assert!(evaluation.reset_last_context_tokens);
+    }
+
+    #[test]
+    fn queued_deliveries_promote_in_priority_order_after_agent_end() {
+        let app_handle = test_app_handle();
+        let runtime = test_runtime(
+            &app_handle,
+            "session-queued-promotion",
+            "hash-queued-promotion",
+            "auth-hash-queued-promotion",
+            true,
+        );
+
+        runtime
+            .queue_delivery(QueuedDelivery {
+                run_id: "run-follow-up".into(),
+                delivery_type: "follow_up".into(),
+                message: "follow-up".into(),
+                accepted_at: Instant::now(),
+            })
+            .expect("follow-up should queue");
+        runtime
+            .queue_delivery(QueuedDelivery {
+                run_id: "run-steer".into(),
+                delivery_type: "steer".into(),
+                message: "steer".into(),
+                accepted_at: Instant::now(),
+            })
+            .expect("steer should queue");
+
+        runtime.handle_payload(json!({ "type": "agent_end" }));
+        assert_eq!(runtime.current_run_id(), Some("run-steer".into()));
+        assert_eq!(runtime.current_prompt_message(), Some("steer".into()));
+
+        runtime.handle_payload(json!({ "type": "agent_end" }));
+        assert_eq!(runtime.current_run_id(), Some("run-follow-up".into()));
+        assert_eq!(runtime.current_prompt_message(), Some("follow-up".into()));
+    }
+
+    #[test]
+    fn promoted_queued_delivery_reclaims_active_session_run_tracking() {
+        let app_handle = test_app_handle();
+        let state = app_handle.state::<crate::state::AppState>();
+        let runtime = test_runtime(
+            &app_handle,
+            "session-promoted-run-tracking",
+            "hash-promoted-run-tracking",
+            "auth-hash-promoted-run-tracking",
+            true,
+        );
+
+        state
+            .begin_session_run("session-promoted-run-tracking", "run-1")
+            .expect("initial active run should register");
+        runtime
+            .queue_delivery(QueuedDelivery {
+                run_id: "run-queued".into(),
+                delivery_type: "follow_up".into(),
+                message: "queued".into(),
+                accepted_at: Instant::now(),
+            })
+            .expect("delivery should queue");
+
+        runtime.handle_payload(json!({ "type": "agent_end" }));
+
+        assert_eq!(runtime.current_run_id(), Some("run-queued".into()));
+        assert_eq!(runtime.current_prompt_message(), Some("queued".into()));
+        assert_eq!(
+            state
+                .active_session_run_id("session-promoted-run-tracking")
+                .expect("active session run should resolve"),
+            Some("run-queued".into())
+        );
+    }
+
+    #[test]
+    fn has_active_prompt_stays_true_while_queued_deliveries_remain() {
+        let app_handle = test_app_handle();
+        let runtime = test_runtime(
+            &app_handle,
+            "session-queued-busy",
+            "hash-queued-busy",
+            "auth-hash-queued-busy",
+            false,
+        );
+
+        assert!(!runtime.has_active_prompt());
+        runtime
+            .queue_delivery(QueuedDelivery {
+                run_id: "run-queued".into(),
+                delivery_type: "follow_up".into(),
+                message: "queued".into(),
+                accepted_at: Instant::now(),
+            })
+            .expect("delivery should queue");
+
+        assert!(runtime.has_active_prompt());
     }
 }
 

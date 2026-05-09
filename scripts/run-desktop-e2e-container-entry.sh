@@ -63,6 +63,12 @@ if [[ -d /seed-home/.codex ]]; then
   rm -rf /root/.codex
   cp -a /seed-home/.codex /root/.codex
 fi
+if [[ -d /seed-home/.orchestra ]]; then
+  echo "[desktop-e2e] wiring writable managed Orchestra home copy"
+  mkdir -p /root
+  rm -rf /root/.orchestra
+  cp -a /seed-home/.orchestra /root/.orchestra
+fi
 
 mkdir -p "${WORKSPACE_DIR}/.tmp/desktop-e2e"
 mkdir -p "${WORKSPACE_DIR}/.tmp/desktop-e2e/shared-home/workspace/workflow-lifecycle-repo/repository"

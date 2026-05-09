@@ -1043,6 +1043,24 @@ export function reduceSessionTranscriptEvent(
     };
   }
 
+  if (eventType === "delivery_error") {
+    const rpcEvent = isObject(payload.event) ? payload.event : null;
+    const message = asString(rpcEvent?.message) || "Message was accepted but the session did not begin processing it. Stop the session and retry.";
+    return {
+      session: upsertSystemEvent(
+        removePendingRunFromSession(session, runId),
+        `delivery-error-${runId}`,
+        runId,
+        eventTimestamp,
+        message,
+        false,
+        { label: "Send failed" },
+      ),
+      clearPendingRun: true,
+      sessionActionError: message,
+    };
+  }
+
   if (eventType === "error") {
     const rpcEvent = isObject(payload.event) ? payload.event : null;
     return {

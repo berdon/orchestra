@@ -3264,6 +3264,7 @@ pub async fn send_session_message_with_optional_run_id(
         run_id: run_id.clone(),
         message: trimmed_message.clone(),
         timestamp: crate::state::now_iso(),
+        delivery_mode: delivery_mode.to_string(),
     };
 
     let run_id_for_task = run_id.clone();

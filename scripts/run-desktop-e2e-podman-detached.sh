@@ -34,6 +34,7 @@ RUN_ID="$(date +%s)-$RANDOM"
 CONTAINER_NAME="orchestra-desktop-e2e-${RUN_ID}"
 HOST_PI_DIR="${HOME}/.pi"
 HOST_CODEX_DIR="${HOME}/.codex"
+HOST_ORCHESTRA_PI_AGENT_DIR="${HOME}/.orchestra/runtime/pi/agent"
 LOG_DIR="${ROOT_DIR}/.tmp/desktop-e2e/podman-logs"
 mkdir -p "${LOG_DIR}"
 SEED_MOUNT_ARGS=()
@@ -42,6 +43,9 @@ if [[ -d "${HOST_PI_DIR}" ]]; then
 fi
 if [[ -d "${HOST_CODEX_DIR}" ]]; then
   SEED_MOUNT_ARGS+=( -v "${HOST_CODEX_DIR}:/seed-home/.codex:ro" )
+fi
+if [[ -d "${HOST_ORCHESTRA_PI_AGENT_DIR}" ]]; then
+  SEED_MOUNT_ARGS+=( -v "${HOST_ORCHESTRA_PI_AGENT_DIR}:/seed-home/.orchestra/runtime/pi/agent:ro" )
 fi
 
 CID_FILE="${LOG_DIR}/${CONTAINER_NAME}.cid"

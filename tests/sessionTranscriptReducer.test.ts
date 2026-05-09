@@ -318,6 +318,27 @@ describe("sessionTranscriptReducer", () => {
     expect(reduced?.pendingRun?.runId).toBe("run-1");
   });
 
+  it("surfaces a queued-delivery timeout as an actionable send failure", () => {
+    const pendingRun = createPendingUserRun("run-timeout", "follow-up message", "2026-04-08T00:05:00Z");
+    const session = applyPendingRunToSession(makeSession(), pendingRun);
+
+    const reduced = reduceSessionTranscriptEvent(session, pendingRun, {
+      sessionId: session.id,
+      runId: "run-timeout",
+      receivedAt: "2026-04-08T00:05:30Z",
+      event: {
+        type: "delivery_error",
+        message: "Message was accepted but the session did not begin processing it. Stop the session and retry.",
+        source: "orchestra",
+      },
+    });
+
+    expect(reduced?.clearPendingRun).toBe(true);
+    expect(reduced?.sessionActionError).toBe("Message was accepted but the session did not begin processing it. Stop the session and retry.");
+    expect(reduced?.session.events.some((event) => event.runId === "run-timeout" && event.kind === "user")).toBe(false);
+    expect(reduced?.session.events.find((event) => event.id === "delivery-error-run-timeout")?.message).toContain("did not begin processing");
+  });
+
   it("drops optimistic rows once the backend record already includes that run", () => {
     const run1 = createPendingUserRun("run-1", "first message", "2026-04-08T00:06:00Z");
     const run2 = createPendingUserRun("run-2", "follow-up message", "2026-04-08T00:06:01Z");
