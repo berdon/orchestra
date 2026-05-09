@@ -30,7 +30,8 @@ use crate::{
         agents, authorization, command_authorization, database, live_sessions, messages,
         pi_sessions, policies, project_notes, project_secrets, project_settings, projects,
         reminders, role_runtime, roles, session_management, session_ownership, task_attachments,
-        task_browser, task_file_references, task_runtime, tasks, workflows,
+        task_browser, task_comment_file_mentions, task_file_references, task_runtime, tasks,
+        workflows,
     },
 };
 
@@ -160,6 +161,9 @@ const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
     "set_task_browser_inspect_mode",
     "reveal_task_browser_dom_anchor",
     "list_task_comments",
+    "list_task_attachments",
+    "search_task_comments",
+    "search_task_comment_file_mentions",
     "list_task_todos",
     "list_unfinished_task_todos",
     "get_unread_task_comments",
@@ -1643,11 +1647,17 @@ fn invoke_bridge_command(
             )?)
             .map_err(|error| format!("Unable to serialize tasks: {error}"))
         }
-        "get_task" | "get_task_context" => {
+        "get_task" => {
             let task_id = require_string(&payload, "taskId")?;
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             serde_json::to_value(tasks::get_task_context(connection, &task_id)?)
                 .map_err(|error| format!("Unable to serialize task context: {error}"))
+        }
+        "get_task_context" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            serde_json::to_value(tasks::get_agent_task_context(connection, &task_id)?)
+                .map_err(|error| format!("Unable to serialize bounded task context: {error}"))
         }
         "show_task_browser" => {
             let task_id = require_string(&payload, "taskId")?;
@@ -1732,6 +1742,33 @@ fn invoke_bridge_command(
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             serde_json::to_value(tasks::list_task_comments(connection, &task_id)?)
                 .map_err(|error| format!("Unable to serialize task comments: {error}"))
+        }
+        "list_task_attachments" => {
+            let task_id = require_string(&payload, "taskId")?;
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            serde_json::to_value(tasks::list_task_attachments(connection, &task_id)?)
+                .map_err(|error| format!("Unable to serialize task attachments: {error}"))
+        }
+        "search_task_comments" => {
+            let task_id = require_string(&payload, "taskId")?;
+            let query = require_string(&payload, "query")?;
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            let limit = payload.get("limit").and_then(Value::as_u64).map(|value| value as usize);
+            serde_json::to_value(tasks::search_task_comments(connection, &task_id, &query, limit)?)
+                .map_err(|error| format!("Unable to serialize task comment search results: {error}"))
+        }
+        "search_task_comment_file_mentions" => {
+            let task_id = require_string(&payload, "taskId")?;
+            let query = require_string(&payload, "query")?;
+            command_authorization::require_permission(connection, authorization, "tasks.read")?;
+            let limit = payload.get("limit").and_then(Value::as_u64).map(|value| value as usize);
+            serde_json::to_value(task_comment_file_mentions::search_task_comment_file_mentions(
+                connection,
+                &task_id,
+                &query,
+                limit,
+            )?)
+            .map_err(|error| format!("Unable to serialize task comment file mention search results: {error}"))
         }
         "list_task_todos" => {
             let task_id = require_string(&payload, "taskId")?;

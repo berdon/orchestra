@@ -8,10 +8,11 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::{
     models::{
-        TaskAttachment, TaskAttachmentInput, TaskComment, TaskCommentDeleteImpact,
-        TaskCommentFileMentionCandidate, TaskCommentInput, TaskCommentUpdateInput, TaskDependency,
-        TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskPullRequestDetail,
-        TaskRepository, TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
+        TaskAttachment, TaskAttachmentInput, TaskAttachmentManifest, TaskComment,
+        TaskCommentDeleteImpact, TaskCommentFileMentionCandidate, TaskCommentInput,
+        TaskCommentUpdateInput, TaskDependency, TaskDetail, TaskFileReference,
+        TaskFileReferenceInput, TaskPullRequestDetail, TaskRepository, TaskSummary, TaskTodo,
+        TaskTodoInput, TaskUpsertInput,
     },
     services::{
         app_events, database, dispatcher, domain_events, pi_sessions, pi_setup, task_attachments,
@@ -214,6 +215,22 @@ pub fn get_task_context(task_id: String) -> Result<TaskDetail, String> {
 pub fn list_task_comments(task_id: String) -> Result<Vec<TaskComment>, String> {
     let connection = database::open_connection()?;
     tasks::list_task_comments(&connection, &task_id)
+}
+
+#[tauri::command]
+pub fn list_task_attachments(task_id: String) -> Result<Vec<TaskAttachmentManifest>, String> {
+    let connection = database::open_connection()?;
+    tasks::list_task_attachments(&connection, &task_id)
+}
+
+#[tauri::command]
+pub fn search_task_comments(
+    task_id: String,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<TaskComment>, String> {
+    let connection = database::open_connection()?;
+    tasks::search_task_comments(&connection, &task_id, &query, limit)
 }
 
 #[tauri::command]

@@ -2523,6 +2523,229 @@ pub struct TaskDetail {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskAttachmentManifest {
+    pub id: String,
+    pub task_id: String,
+    pub file_name: String,
+    pub media_type: String,
+    pub byte_size: i64,
+    pub stored_path: String,
+    pub caption: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BoundedCollectionInfo {
+    pub total_count: i64,
+    pub included_count: i64,
+    pub omitted_count: i64,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskContextBounds {
+    pub comments: BoundedCollectionInfo,
+    pub attachments: BoundedCollectionInfo,
+    pub file_references: BoundedCollectionInfo,
+    pub children: BoundedCollectionInfo,
+    pub blocked_by: BoundedCollectionInfo,
+    pub blocking: BoundedCollectionInfo,
+    pub todos: BoundedCollectionInfo,
+    pub lane_runs: BoundedCollectionInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTaskContext {
+    pub id: String,
+    pub project_id: String,
+    pub number: String,
+    pub title: String,
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub task_type: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub status: String,
+    pub priority: String,
+    pub workflow_id: Option<String>,
+    pub current_lane_id: Option<String>,
+    pub assignee_type: String,
+    pub assignee_id: Option<String>,
+    pub repository_id: Option<String>,
+    #[serde(default)]
+    pub repository_ids: Vec<String>,
+    pub parent_task_id: Option<String>,
+    pub whip_max_attempts: i64,
+    pub archived: bool,
+    pub comment_count: i64,
+    pub unread_comment_count: i64,
+    pub lane_run_count: i64,
+    pub child_count: i64,
+    pub completed_child_count: i64,
+    pub in_progress_child_count: i64,
+    pub blocked_child_count: i64,
+    pub blocked_by_count: i64,
+    pub blocking_count: i64,
+    pub attachment_count: i64,
+    pub dependency_blocked: bool,
+    pub active_lane_assignment_status: Option<String>,
+    pub ready_for_dispatch: bool,
+    pub parent: Option<TaskSummary>,
+    pub lineage: Vec<TaskSummary>,
+    pub children: Vec<TaskSummary>,
+    pub blocked_by: Vec<TaskDependency>,
+    pub blocking: Vec<TaskDependency>,
+    pub attachments: Vec<TaskAttachmentManifest>,
+    pub task_repositories: Vec<TaskRepository>,
+    pub file_references: Vec<TaskFileReference>,
+    pub comments: Vec<TaskComment>,
+    pub todos: Vec<TaskTodo>,
+    pub lane_runs: Vec<TaskLaneRun>,
+    #[serde(default)]
+    pub lane_summaries: Vec<TaskLaneSummary>,
+    pub active_lane_assignment: Option<TaskLaneAssignment>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub context_bounded: bool,
+    pub bounds: AgentTaskContextBounds,
+    #[serde(default)]
+    pub additional_data_hints: Vec<String>,
+}
+
+impl From<TaskAttachment> for TaskAttachmentManifest {
+    fn from(value: TaskAttachment) -> Self {
+        Self {
+            id: value.id,
+            task_id: value.task_id,
+            file_name: value.file_name,
+            media_type: value.media_type,
+            byte_size: value.byte_size,
+            stored_path: value.stored_path,
+            caption: value.caption,
+            created_at: value.created_at,
+        }
+    }
+}
+
+impl From<TaskDetail> for AgentTaskContext {
+    fn from(value: TaskDetail) -> Self {
+        let comment_count = value.comments.len() as i64;
+        let attachment_count = value.attachments.len() as i64;
+        let file_reference_count = value.file_references.len() as i64;
+        let child_count = value.children.len() as i64;
+        let blocked_by_count = value.blocked_by.len() as i64;
+        let blocking_count = value.blocking.len() as i64;
+        let todo_count = value.todos.len() as i64;
+        let lane_run_count = value.lane_runs.len() as i64;
+
+        Self {
+            id: value.id,
+            project_id: value.project_id,
+            number: value.number,
+            title: value.title,
+            description: value.description,
+            task_type: value.task_type,
+            tags: value.tags,
+            status: value.status,
+            priority: value.priority,
+            workflow_id: value.workflow_id,
+            current_lane_id: value.current_lane_id,
+            assignee_type: value.assignee_type,
+            assignee_id: value.assignee_id,
+            repository_id: value.repository_id,
+            repository_ids: value.repository_ids,
+            parent_task_id: value.parent_task_id,
+            whip_max_attempts: value.whip_max_attempts,
+            archived: value.archived,
+            comment_count: value.comment_count,
+            unread_comment_count: value.unread_comment_count,
+            lane_run_count: value.lane_run_count,
+            child_count: value.child_count,
+            completed_child_count: value.completed_child_count,
+            in_progress_child_count: value.in_progress_child_count,
+            blocked_child_count: value.blocked_child_count,
+            blocked_by_count: value.blocked_by_count,
+            blocking_count: value.blocking_count,
+            attachment_count: value.attachment_count,
+            dependency_blocked: value.dependency_blocked,
+            active_lane_assignment_status: value.active_lane_assignment_status,
+            ready_for_dispatch: value.ready_for_dispatch,
+            parent: value.parent,
+            lineage: value.lineage,
+            children: value.children,
+            blocked_by: value.blocked_by,
+            blocking: value.blocking,
+            attachments: value.attachments.into_iter().map(Into::into).collect(),
+            task_repositories: value.task_repositories,
+            file_references: value.file_references,
+            comments: value.comments,
+            todos: value.todos,
+            lane_runs: value.lane_runs,
+            lane_summaries: value.lane_summaries,
+            active_lane_assignment: value.active_lane_assignment,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+            context_bounded: false,
+            bounds: AgentTaskContextBounds {
+                comments: BoundedCollectionInfo {
+                    total_count: comment_count,
+                    included_count: comment_count,
+                    omitted_count: 0,
+                    truncated: false,
+                },
+                attachments: BoundedCollectionInfo {
+                    total_count: attachment_count,
+                    included_count: attachment_count,
+                    omitted_count: 0,
+                    truncated: false,
+                },
+                file_references: BoundedCollectionInfo {
+                    total_count: file_reference_count,
+                    included_count: file_reference_count,
+                    omitted_count: 0,
+                    truncated: false,
+                },
+                children: BoundedCollectionInfo {
+                    total_count: child_count,
+                    included_count: child_count,
+                    omitted_count: 0,
+                    truncated: false,
+                },
+                blocked_by: BoundedCollectionInfo {
+                    total_count: blocked_by_count,
+                    included_count: blocked_by_count,
+                    omitted_count: 0,
+                    truncated: false,
+                },
+                blocking: BoundedCollectionInfo {
+                    total_count: blocking_count,
+                    included_count: blocking_count,
+                    omitted_count: 0,
+                    truncated: false,
+                },
+                todos: BoundedCollectionInfo {
+                    total_count: todo_count,
+                    included_count: todo_count,
+                    omitted_count: 0,
+                    truncated: false,
+                },
+                lane_runs: BoundedCollectionInfo {
+                    total_count: lane_run_count,
+                    included_count: lane_run_count,
+                    omitted_count: 0,
+                    truncated: false,
+                },
+            },
+            additional_data_hints: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskUpsertInput {
     pub title: String,
     pub description: Option<String>,

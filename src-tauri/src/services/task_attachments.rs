@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
 use crate::{
-    models::{TaskAttachment, TaskAttachmentInput},
+    models::{TaskAttachment, TaskAttachmentInput, TaskAttachmentManifest},
     services::orchestra_paths::{default_orchestra_root, task_attachments_dir},
 };
 
@@ -131,34 +131,7 @@ pub fn load_task_attachments(
     connection: &Connection,
     task_id: &str,
 ) -> Result<Vec<TaskAttachment>, String> {
-    let mut statement = connection
-        .prepare(
-            r#"
-            SELECT id, task_id, file_name, media_type, byte_size, stored_path, caption, created_at
-            FROM task_attachments
-            WHERE task_id = ?1
-            ORDER BY created_at ASC, id ASC
-            "#,
-        )
-        .map_err(|error| format!("Unable to prepare task attachment query: {error}"))?;
-
-    let rows = statement
-        .query_map([task_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, String>(7)?,
-            ))
-        })
-        .map_err(|error| format!("Unable to read task attachments for {task_id}: {error}"))?;
-
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to collect task attachments for {task_id}: {error}"))?
+    load_task_attachment_rows(connection, task_id, None)?
         .into_iter()
         .map(
             |(id, task_id, file_name, media_type, byte_size, stored_path, caption, created_at)| {
@@ -175,6 +148,96 @@ pub fn load_task_attachments(
             },
         )
         .collect()
+}
+
+pub fn load_task_attachment_manifests(
+    connection: &Connection,
+    task_id: &str,
+    limit: Option<usize>,
+) -> Result<Vec<TaskAttachmentManifest>, String> {
+    Ok(load_task_attachment_rows(connection, task_id, limit)?
+        .into_iter()
+        .map(
+            |(id, task_id, file_name, media_type, byte_size, stored_path, caption, created_at)| {
+                TaskAttachmentManifest {
+                    id,
+                    task_id,
+                    file_name,
+                    media_type,
+                    byte_size,
+                    stored_path,
+                    caption,
+                    created_at,
+                }
+            },
+        )
+        .collect())
+}
+
+fn load_task_attachment_rows(
+    connection: &Connection,
+    task_id: &str,
+    limit: Option<usize>,
+) -> Result<
+    Vec<(
+        String,
+        String,
+        String,
+        String,
+        i64,
+        String,
+        Option<String>,
+        String,
+    )>,
+    String,
+> {
+    let (sql, params): (&str, Vec<rusqlite::types::Value>) = match limit {
+        Some(limit) => (
+            r#"
+            SELECT id, task_id, file_name, media_type, byte_size, stored_path, caption, created_at
+            FROM (
+                SELECT id, task_id, file_name, media_type, byte_size, stored_path, caption, created_at
+                FROM task_attachments
+                WHERE task_id = ?1
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?2
+            )
+            ORDER BY created_at ASC, id ASC
+            "#,
+            vec![String::from(task_id).into(), (limit as i64).into()],
+        ),
+        None => (
+            r#"
+            SELECT id, task_id, file_name, media_type, byte_size, stored_path, caption, created_at
+            FROM task_attachments
+            WHERE task_id = ?1
+            ORDER BY created_at ASC, id ASC
+            "#,
+            vec![String::from(task_id).into()],
+        ),
+    };
+
+    let mut statement = connection
+        .prepare(sql)
+        .map_err(|error| format!("Unable to prepare task attachment query: {error}"))?;
+
+    let rows = statement
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, String>(7)?,
+            ))
+        })
+        .map_err(|error| format!("Unable to read task attachments for {task_id}: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect task attachments for {task_id}: {error}"))
 }
 
 pub fn load_attachment(

@@ -97,45 +97,7 @@ pub fn load_task_file_references(
     task_id: &str,
     runtime_cwd: Option<&str>,
 ) -> Result<Vec<TaskFileReference>, String> {
-    let mut statement = connection
-        .prepare(
-            r#"
-            SELECT
-                r.id,
-                r.task_id,
-                r.repository_id,
-                repo.name,
-                repo.slug,
-                repo.local_path,
-                r.relative_path,
-                r.is_default,
-                r.created_at
-            FROM task_file_references r
-            JOIN repositories repo ON repo.id = r.repository_id
-            WHERE r.task_id = ?1
-            ORDER BY r.is_default DESC, r.created_at ASC, r.id ASC
-            "#,
-        )
-        .map_err(|error| format!("Unable to prepare task file reference query: {error}"))?;
-
-    let rows = statement
-        .query_map([task_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, i64>(7)?,
-                row.get::<_, String>(8)?,
-            ))
-        })
-        .map_err(|error| format!("Unable to read task file references for {task_id}: {error}"))?;
-
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to collect task file references for {task_id}: {error}"))?
+    load_task_file_reference_rows(connection, task_id, None)?
         .into_iter()
         .map(
             |(
@@ -164,6 +126,150 @@ pub fn load_task_file_references(
             },
         )
         .collect()
+}
+
+pub fn load_task_file_references_limited(
+    connection: &Connection,
+    task_id: &str,
+    runtime_cwd: Option<&str>,
+    limit: Option<usize>,
+) -> Result<Vec<TaskFileReference>, String> {
+    load_task_file_reference_rows(connection, task_id, limit)?
+        .into_iter()
+        .map(
+            |(
+                id,
+                task_id,
+                repository_id,
+                repository_name,
+                repository_slug,
+                repository_local_path,
+                relative_path,
+                is_default,
+                created_at,
+            )| {
+                build_reference(
+                    id,
+                    task_id,
+                    repository_id,
+                    repository_name,
+                    repository_slug,
+                    repository_local_path,
+                    runtime_cwd,
+                    relative_path,
+                    is_default,
+                    created_at,
+                )
+            },
+        )
+        .collect()
+}
+
+pub fn count_task_file_references(connection: &Connection, task_id: &str) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM task_file_references WHERE task_id = ?1",
+            [task_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Unable to count task file references for {task_id}: {error}"))
+}
+
+fn load_task_file_reference_rows(
+    connection: &Connection,
+    task_id: &str,
+    limit: Option<usize>,
+) -> Result<
+    Vec<(
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        i64,
+        String,
+    )>,
+    String,
+> {
+    let (sql, params): (&str, Vec<rusqlite::types::Value>) = match limit {
+        Some(limit) => (
+            r#"
+            SELECT
+                id,
+                task_id,
+                repository_id,
+                repository_name,
+                repository_slug,
+                repository_local_path,
+                relative_path,
+                is_default,
+                created_at
+            FROM (
+                SELECT
+                    r.id AS id,
+                    r.task_id AS task_id,
+                    r.repository_id AS repository_id,
+                    repo.name AS repository_name,
+                    repo.slug AS repository_slug,
+                    repo.local_path AS repository_local_path,
+                    r.relative_path AS relative_path,
+                    r.is_default AS is_default,
+                    r.created_at AS created_at
+                FROM task_file_references r
+                JOIN repositories repo ON repo.id = r.repository_id
+                WHERE r.task_id = ?1
+                ORDER BY r.created_at DESC, r.id DESC
+                LIMIT ?2
+            )
+            ORDER BY created_at ASC, id ASC
+            "#,
+            vec![String::from(task_id).into(), (limit as i64).into()],
+        ),
+        None => (
+            r#"
+            SELECT
+                r.id,
+                r.task_id,
+                r.repository_id,
+                repo.name,
+                repo.slug,
+                repo.local_path,
+                r.relative_path,
+                r.is_default,
+                r.created_at
+            FROM task_file_references r
+            JOIN repositories repo ON repo.id = r.repository_id
+            WHERE r.task_id = ?1
+            ORDER BY r.is_default DESC, r.created_at ASC, r.id ASC
+            "#,
+            vec![String::from(task_id).into()],
+        ),
+    };
+
+    let mut statement = connection
+        .prepare(sql)
+        .map_err(|error| format!("Unable to prepare task file reference query: {error}"))?;
+
+    let rows = statement
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, String>(8)?,
+            ))
+        })
+        .map_err(|error| format!("Unable to read task file references for {task_id}: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect task file references for {task_id}: {error}"))
 }
 
 pub fn set_task_file_reference_default(

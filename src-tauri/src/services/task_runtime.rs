@@ -6,8 +6,9 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        AgentDefinition, AuthorizationContext, RepositoryRecord, RoleDefinition, TaskComment,
-        TaskDetail, TaskLaneAssignment, TaskRepository, WorkflowDefinition, WorkflowLane,
+        AgentDefinition, AgentTaskContext, AuthorizationContext, RepositoryRecord,
+        RoleDefinition, TaskComment, TaskDetail, TaskLaneAssignment, TaskRepository,
+        WorkflowDefinition, WorkflowLane,
     },
     services::{
         agent_dispatch, agent_runtime, agents, live_sessions, messages, notifications, pi_sessions,
@@ -3324,9 +3325,10 @@ fn dispatch_role_lane(
             None,
         )?)
     };
+    let prompt_task = tasks::get_agent_task_context(connection, &task.id)?;
     let prompt = build_lane_prompt(
         connection,
-        task,
+        &prompt_task,
         workflow,
         lane,
         queued_workspace_cwd.as_deref(),
@@ -3366,9 +3368,10 @@ fn dispatch_role_lane(
             (ASSIGNMENT_STATUS_QUEUED.to_string(), None, None, None)
         };
 
+    let prompt_task = tasks::get_agent_task_context(connection, &task.id)?;
     let prompt = build_lane_prompt(
         connection,
-        task,
+        &prompt_task,
         workflow,
         lane,
         runtime_cwd.as_deref(),
@@ -3540,9 +3543,10 @@ fn dispatch_agent_lane(
         created.record.id
     };
 
+    let prompt_task = tasks::get_agent_task_context(connection, &task.id)?;
     let prompt = build_lane_prompt(
         connection,
-        task,
+        &prompt_task,
         workflow,
         lane,
         Some(&task_workspace_cwd),
@@ -5519,7 +5523,7 @@ fn orchestra_working_rules_block() -> String {
         "11. Attach important artifacts with add_task_attachment when they would help review, handoff, or future execution. Prefer input.filePath for readable session-local files and input.base64Data for in-memory bytes.",
         "12. If you create or materially change a large or central repository file that should stay visible on the task — such as a design doc, architecture note, ADR, diagram source, migration plan, runbook, or other non-source artifact — record it with add_task_file_reference.",
         "13. Do not add normal source code or test file edits as task file references unless the human explicitly asked for that file to be tracked on the task.",
-        "14. Use list_task_comments when you need the full threaded discussion instead of only the recent comment summary in task context.",
+        "14. Use list_task_comments, search_task_comments, and list_task_attachments when you need discussion or attachment details beyond the intentionally bounded task context.",
         "15. If you need to come back to something after a short wait, external delay, or timed checkpoint, call remind_me with a concrete message and a delay in seconds or minutes so Orchestra can re-prompt you later.",
         "16. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
         "17. Immediately before any completion tool, call list_unfinished_task_todos for the canonical task ID and current lane. Finish or explicitly reopen every remaining lane todo before you try to transition.",
@@ -5532,8 +5536,11 @@ fn orchestra_tool_help_block() -> String {
     [
         "Available Orchestra task tools and exactly how to use them:",
         "- These names are real Orchestra tools/functions exposed in this session. You must invoke them as tool calls, not merely mention them in prose.",
-        "- get_task_context(taskId): Call this tool when you need the freshest full task state. Use it before making decisions if comments, attachments, dependencies, subtasks, or assignment state may have changed.",
+        "- get_task_context(taskId): Call this tool when you need the freshest bounded agent task state. It intentionally returns only recent comments, attachment manifests, and capped repeated collections; use the follow-up tools below when you need omitted details.",
         "- list_task_comments(taskId): Call this tool when you need the full threaded task discussion, including replies and parent-child comment relationships.",
+        "- list_task_attachments(taskId): Call this tool when you need the full task attachment manifest list without inline attachment content.",
+        "- search_task_comments(taskId, query, limit?): Call this tool to search older or targeted task comments without pulling the full thread history.",
+        "- search_task_comment_file_mentions(taskId, query, limit?): Call this tool to search repository file-path mentions referenced in task comments.",
         "- list_task_todos(taskId): Call this tool to inspect every todo recorded on the task across lanes.",
         "- list_unfinished_task_todos(taskId, laneId?): Call this tool to inspect only unfinished todos. Use it before any completion tool, usually scoped to the current lane.",
         "- get_task_repositories(taskId): Call this tool to list the task-associated repositories and their current workspace paths before you read or modify repository files.",
@@ -5720,7 +5727,7 @@ fn build_worker_context_block(worker_prompt: Option<&WorkerPromptContext>) -> St
 
 fn build_lane_prompt(
     connection: &Connection,
-    task: &TaskDetail,
+    task: &AgentTaskContext,
     workflow: &WorkflowDefinition,
     lane: &WorkflowLane,
     task_workspace_cwd: Option<&str>,
@@ -5767,6 +5774,22 @@ fn build_lane_prompt(
         .unwrap_or_default();
     let source_control_context_block =
         project_settings::render_source_control_context_block(&resolved_source_control);
+    let bounded_context_note = if task.context_bounded {
+        let mut lines = vec![
+            "Task context is intentionally bounded for agent use.".to_string(),
+            "Recent comments, attachment manifests, file references, and other repeated collections may be truncated.".to_string(),
+        ];
+        if !task.additional_data_hints.is_empty() {
+            lines.extend(
+                task.additional_data_hints
+                    .iter()
+                    .map(|hint| format!("- {hint}")),
+            );
+        }
+        Some(lines.join("\n"))
+    } else {
+        None
+    };
 
     let blocked_by_block = if task.blocked_by.is_empty() {
         String::new()
@@ -5812,48 +5835,96 @@ fn build_lane_prompt(
             .join("\n")
     };
 
-    let file_references_block = if task.file_references.is_empty() {
-        String::new()
-    } else {
-        task.file_references
-            .iter()
-            .map(|reference| {
-                let status = if reference.exists {
-                    "available"
-                } else {
-                    "missing"
-                };
-                match reference.absolute_path.as_deref() {
-                    Some(path) => format!(
-                        "- {}/{} ({}) at {}",
-                        reference.repository_slug, reference.relative_path, status, path
-                    ),
-                    None => format!(
-                        "- {}/{} ({})",
-                        reference.repository_slug, reference.relative_path, status
-                    ),
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-
-    let attachments_block = if task.attachments.is_empty() {
-        String::new()
-    } else {
-        task.attachments
-            .iter()
-            .map(|attachment| {
+    let file_references_block = {
+        let mut block = if task.file_references.is_empty() {
+            String::new()
+        } else {
+            task.file_references
+                .iter()
+                .map(|reference| {
+                    let status = if reference.exists {
+                        "available"
+                    } else {
+                        "missing"
+                    };
+                    match reference.absolute_path.as_deref() {
+                        Some(path) => format!(
+                            "- {}/{} ({}) at {}",
+                            reference.repository_slug, reference.relative_path, status, path
+                        ),
+                        None => format!(
+                            "- {}/{} ({})",
+                            reference.repository_slug, reference.relative_path, status
+                        ),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        if task.context_bounded {
+            let note = if task.bounds.file_references.truncated {
                 format!(
-                    "- {} ({}) at {}",
-                    attachment.file_name, attachment.media_type, attachment.stored_path
+                    "- Context note: showing {} of {} file references. Use list_task_file_references for the full list.",
+                    task.bounds.file_references.included_count,
+                    task.bounds.file_references.total_count,
                 )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+            } else {
+                "- Context note: file references are included as a bounded agent-context section; use list_task_file_references for a fresh full listing.".to_string()
+            };
+            block = if block.is_empty() { note } else { format!("{block}\n{note}") };
+        }
+        block
     };
 
-    let comments_block = render_recent_task_comments(&task.comments, 5);
+    let attachments_block = {
+        let mut block = if task.attachments.is_empty() {
+            String::new()
+        } else {
+            task.attachments
+                .iter()
+                .map(|attachment| {
+                    format!(
+                        "- {} ({}, {} bytes) at {}",
+                        attachment.file_name,
+                        attachment.media_type,
+                        attachment.byte_size,
+                        attachment.stored_path
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        if task.context_bounded {
+            let note = if task.bounds.attachments.truncated {
+                format!(
+                    "- Context note: showing {} of {} attachment manifests. Use list_task_attachments for the full manifest list. Attachment content is not inlined here.",
+                    task.bounds.attachments.included_count,
+                    task.bounds.attachments.total_count,
+                )
+            } else {
+                "- Context note: attachments are surfaced here as manifest metadata only; use list_task_attachments for a fresh full manifest list and normal file tools against stored paths when needed.".to_string()
+            };
+            block = if block.is_empty() { note } else { format!("{block}\n{note}") };
+        }
+        block
+    };
+
+    let comments_block = {
+        let mut block = render_recent_task_comments(&task.comments, task.comments.len());
+        if task.context_bounded {
+            let note = if task.bounds.comments.truncated {
+                format!(
+                    "- Context note: showing {} of {} recent comments. Use list_task_comments or search_task_comments for older discussion.",
+                    task.bounds.comments.included_count,
+                    task.bounds.comments.total_count,
+                )
+            } else {
+                "- Context note: comment text may still be truncated for agent context; use list_task_comments or search_task_comments when exact older wording matters.".to_string()
+            };
+            block = if block.is_empty() { note } else { format!("{block}\n{note}") };
+        }
+        block
+    };
     let todos_block = if task.todos.is_empty() {
         "No task todos recorded yet.".to_string()
     } else {
@@ -5901,7 +5972,14 @@ fn build_lane_prompt(
         ),
         (
             "{TASK.DESCRIPTION}",
-            optional_section("Task description", task.description.clone()),
+            [
+                optional_section("Task description", task.description.clone()),
+                optional_section("Task context availability", bounded_context_note.clone()),
+            ]
+            .into_iter()
+            .filter(|value| !value.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n"),
         ),
         (
             "{TASK.COMMENTS}",
@@ -5927,7 +6005,7 @@ fn build_lane_prompt(
         ),
         (
             "{TASK.ATTACHMENTS}",
-            optional_section("Task attachments", Some(attachments_block)),
+            optional_section("Task attachments (manifest metadata only)", Some(attachments_block)),
         ),
         (
             "{TASK.TODOS}",
@@ -6564,8 +6642,8 @@ mod tests {
         )
         .expect("file reference should add");
 
-        let task =
-            tasks::get_task_context(&connection, &task.id).expect("task context should load");
+        let task = tasks::get_agent_task_context(&connection, &task.id)
+            .expect("agent task context should load");
         let lane = workflow
             .lanes
             .iter()
@@ -6597,7 +6675,11 @@ mod tests {
         assert!(prompt.contains("Available Orchestra task tools and exactly how to use them:"));
         assert!(prompt
             .contains("These names are real Orchestra tools/functions exposed in this session."));
-        assert!(prompt.contains("- get_task_context(taskId): Call this tool"));
+        assert!(prompt.contains("- get_task_context(taskId): Call this tool when you need the freshest bounded agent task state."));
+        assert!(prompt.contains("Task context availability:\nTask context is intentionally bounded for agent use."));
+        assert!(prompt.contains("- list_task_attachments(taskId): Call this tool when you need the full task attachment manifest list without inline attachment content."));
+        assert!(prompt.contains("- search_task_comments(taskId, query, limit?): Call this tool to search older or targeted task comments without pulling the full thread history."));
+        assert!(prompt.contains("- search_task_comment_file_mentions(taskId, query, limit?): Call this tool to search repository file-path mentions referenced in task comments."));
         assert!(prompt.contains("- get_task_repositories(taskId): Call this tool"));
         assert!(prompt.contains("- list_task_file_references(taskId): Call this tool to inspect which repository files are already tracked on the task before adding more."));
         assert!(prompt.contains("- add_task_file_reference(taskId, repositoryId, relativePath): Call this tool when you create or materially change a large or central repository file that should stay visible on the task."));
@@ -6742,6 +6824,7 @@ mod tests {
         };
 
         let connection = in_memory_connection();
+        let task: AgentTaskContext = task.into();
 
         let prompt = build_lane_prompt(
             &connection,
@@ -6877,6 +6960,7 @@ mod tests {
             failure_transition_type: "end".into(),
             failure_target_lane_id: None,
         };
+        let task: AgentTaskContext = task.into();
 
         let prompt = build_lane_prompt(
             &connection,
@@ -7008,6 +7092,7 @@ mod tests {
             system_prompt: None,
             project_overlay_prompt: None,
         };
+        let task: AgentTaskContext = task.into();
 
         let prompt = build_lane_prompt(
             &connection,
@@ -7134,6 +7219,7 @@ mod tests {
             system_prompt: Some("Base prompt".into()),
             project_overlay_prompt: None,
         };
+        let task: AgentTaskContext = task.into();
 
         let prompt = build_lane_prompt(
             &connection,

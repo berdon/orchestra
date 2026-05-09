@@ -2179,7 +2179,7 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     };
   }
 
-  if (["get_task", "get_task_context", "get_task_repositories", "list_task_comments", "get_unread_task_comments", "list_task_file_references", "list_task_todos", "list_task_repositories"].includes(tool.name)) {
+  if (["get_task", "get_task_context", "get_task_repositories", "list_task_comments", "list_task_attachments", "get_unread_task_comments", "list_task_file_references", "list_task_todos", "list_task_repositories"].includes(tool.name)) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
@@ -2189,6 +2189,31 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       }),
       async execute(_toolCallId: string, params: { taskId: string }) {
         const payload = { taskId: params.taskId };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (["search_task_comments", "search_task_comment_file_mentions"].includes(tool.name)) {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, query, and optionally limit.`,
+      parameters: Type.Object({
+        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        query: Type.String({ description: "Search query text." }),
+        limit: Type.Optional(Type.Number({ description: "Optional maximum result count." })),
+      }),
+      async execute(_toolCallId: string, params: { taskId: string; query: string; limit?: number }) {
+        const payload = {
+          taskId: params.taskId,
+          query: params.query,
+          ...(params.limit !== undefined ? { limit: params.limit } : {}),
+        };
         const result = await invokeBridge(tool.name, payload);
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
@@ -2633,7 +2658,7 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     };
   }
 
-  if (["get_task_context", "get_task_repositories", "list_task_comments", "get_unread_task_comments", "list_task_file_references", "list_task_todos", "show_task_browser", "get_task_browser_state"].includes(tool.name)) {
+  if (["get_task_context", "get_task_repositories", "list_task_comments", "list_task_attachments", "get_unread_task_comments", "list_task_file_references", "list_task_todos", "show_task_browser", "get_task_browser_state"].includes(tool.name)) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,

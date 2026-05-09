@@ -13,10 +13,12 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        AuthorizationContext, TaskComment, TaskCommentAnchor, TaskCommentDeleteImpact,
-        TaskCommentDomAnchor, TaskCommentFileAnchor, TaskCommentInput, TaskCommentReceipt,
-        TaskDependency, TaskDetail, TaskDiffCommentAnchor, TaskLaneAssignment, TaskLaneRun,
-        TaskLaneSummary, TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
+        AgentTaskContext, AgentTaskContextBounds, AuthorizationContext,
+        BoundedCollectionInfo, TaskAttachmentManifest, TaskComment, TaskCommentAnchor,
+        TaskCommentDeleteImpact, TaskCommentDomAnchor, TaskCommentFileAnchor,
+        TaskCommentInput, TaskCommentReceipt, TaskDependency, TaskDetail,
+        TaskDiffCommentAnchor, TaskLaneAssignment, TaskLaneRun, TaskLaneSummary,
+        TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
     },
     services::{
         orchestra_paths::{default_orchestra_root, task_attachments_dir},
@@ -44,6 +46,15 @@ const TERMINAL_TASK_STATUSES: &[&str] = &["completed", "canceled"];
 const TASK_TAG_SEPARATOR: char = '\u{001F}';
 const MAX_TASK_TAG_LENGTH: usize = 32;
 const MAX_TASK_TAG_COUNT: usize = 20;
+const AGENT_CONTEXT_COMMENT_LIMIT: usize = 8;
+const AGENT_CONTEXT_ATTACHMENT_LIMIT: usize = 10;
+const AGENT_CONTEXT_FILE_REFERENCE_LIMIT: usize = 20;
+const AGENT_CONTEXT_CHILD_LIMIT: usize = 25;
+const AGENT_CONTEXT_DEPENDENCY_LIMIT: usize = 25;
+const AGENT_CONTEXT_TODO_LIMIT: usize = 25;
+const AGENT_CONTEXT_LANE_RUN_LIMIT: usize = 10;
+const AGENT_CONTEXT_COMMENT_MESSAGE_MAX_CHARS: usize = 500;
+const AGENT_CONTEXT_COMMENT_SELECTED_TEXT_MAX_CHARS: usize = 200;
 
 #[cfg(test)]
 type PostTaskNumberAllocationHook = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
@@ -421,6 +432,143 @@ pub fn list_tasks_materialized_from_schedule(
 }
 
 pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, String> {
+    let mut task = load_task_detail_base(connection, task_id)?;
+    task.children = load_child_tasks(connection, task_id)?;
+    task.blocked_by = load_blocked_by_dependencies(connection, task_id)?;
+    task.blocking = load_blocking_dependencies(connection, task_id)?;
+    task.attachments = task_attachments::load_task_attachments(connection, task_id)?;
+    task.file_references = task_file_references::load_task_file_references(
+        connection,
+        task_id,
+        task.active_lane_assignment
+            .as_ref()
+            .and_then(|assignment| assignment.runtime_cwd.as_deref()),
+    )?;
+    task.comments = load_task_comments(connection, task_id)?;
+    task.todos = load_task_todos(connection, task_id, None, None)?;
+    task.lane_runs = load_task_lane_runs(connection, task_id)?;
+    task.lane_summaries = load_task_lane_summaries(
+        connection,
+        task.workflow_id.as_deref(),
+        task.active_lane_assignment.as_ref(),
+        &task.lane_runs,
+    )?;
+    Ok(task)
+}
+
+pub fn get_task_context(connection: &Connection, task_id: &str) -> Result<TaskDetail, String> {
+    get_task(connection, task_id)
+}
+
+pub fn get_agent_task_context(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<AgentTaskContext, String> {
+    let task = load_task_detail_base(connection, task_id)?;
+    let runtime_cwd = task
+        .active_lane_assignment
+        .as_ref()
+        .and_then(|assignment| assignment.runtime_cwd.as_deref());
+
+    let children = load_child_tasks_limited(connection, task_id, AGENT_CONTEXT_CHILD_LIMIT)?;
+    let blocked_by =
+        load_blocked_by_dependencies_limited(connection, task_id, AGENT_CONTEXT_DEPENDENCY_LIMIT)?;
+    let blocking =
+        load_blocking_dependencies_limited(connection, task_id, AGENT_CONTEXT_DEPENDENCY_LIMIT)?;
+    let attachments = task_attachments::load_task_attachment_manifests(
+        connection,
+        task_id,
+        Some(AGENT_CONTEXT_ATTACHMENT_LIMIT),
+    )?;
+    let file_references = task_file_references::load_task_file_references_limited(
+        connection,
+        task_id,
+        runtime_cwd,
+        Some(AGENT_CONTEXT_FILE_REFERENCE_LIMIT),
+    )?;
+    let comments = load_recent_task_comments(connection, task_id, AGENT_CONTEXT_COMMENT_LIMIT)?
+        .into_iter()
+        .map(truncate_comment_for_agent_context)
+        .collect::<Vec<_>>();
+    let todos = load_task_todos_limited(connection, task_id, None, None, AGENT_CONTEXT_TODO_LIMIT)?;
+    let lane_runs = load_task_lane_runs_limited(connection, task_id, AGENT_CONTEXT_LANE_RUN_LIMIT)?;
+    let lane_summaries = load_task_lane_summaries(
+        connection,
+        task.workflow_id.as_deref(),
+        task.active_lane_assignment.as_ref(),
+        &lane_runs,
+    )?;
+    let file_reference_count = task_file_references::count_task_file_references(connection, task_id)?;
+    let todo_count = count_task_todos(connection, task_id)?;
+
+    Ok(AgentTaskContext {
+        id: task.id,
+        project_id: task.project_id,
+        number: task.number,
+        title: task.title,
+        description: task.description,
+        task_type: task.task_type,
+        tags: task.tags,
+        status: task.status,
+        priority: task.priority,
+        workflow_id: task.workflow_id,
+        current_lane_id: task.current_lane_id,
+        assignee_type: task.assignee_type,
+        assignee_id: task.assignee_id,
+        repository_id: task.repository_id,
+        repository_ids: task.repository_ids,
+        parent_task_id: task.parent_task_id,
+        whip_max_attempts: task.whip_max_attempts,
+        archived: task.archived,
+        comment_count: task.comment_count,
+        unread_comment_count: task.unread_comment_count,
+        lane_run_count: task.lane_run_count,
+        child_count: task.child_count,
+        completed_child_count: task.completed_child_count,
+        in_progress_child_count: task.in_progress_child_count,
+        blocked_child_count: task.blocked_child_count,
+        blocked_by_count: task.blocked_by_count,
+        blocking_count: task.blocking_count,
+        attachment_count: task.attachment_count,
+        dependency_blocked: task.dependency_blocked,
+        active_lane_assignment_status: task.active_lane_assignment_status,
+        ready_for_dispatch: task.ready_for_dispatch,
+        parent: task.parent,
+        lineage: task.lineage,
+        children,
+        blocked_by,
+        blocking,
+        attachments,
+        task_repositories: task.task_repositories,
+        file_references,
+        comments,
+        todos,
+        lane_runs,
+        lane_summaries,
+        active_lane_assignment: task.active_lane_assignment,
+        created_at: task.created_at,
+        updated_at: task.updated_at,
+        context_bounded: true,
+        bounds: AgentTaskContextBounds {
+            comments: bounded_collection_info(task.comment_count, AGENT_CONTEXT_COMMENT_LIMIT, task.comment_count.min(AGENT_CONTEXT_COMMENT_LIMIT as i64) as usize),
+            attachments: bounded_collection_info(task.attachment_count, AGENT_CONTEXT_ATTACHMENT_LIMIT, task.attachment_count.min(AGENT_CONTEXT_ATTACHMENT_LIMIT as i64) as usize),
+            file_references: bounded_collection_info(file_reference_count, AGENT_CONTEXT_FILE_REFERENCE_LIMIT, file_reference_count.min(AGENT_CONTEXT_FILE_REFERENCE_LIMIT as i64) as usize),
+            children: bounded_collection_info(task.child_count, AGENT_CONTEXT_CHILD_LIMIT, task.child_count.min(AGENT_CONTEXT_CHILD_LIMIT as i64) as usize),
+            blocked_by: bounded_collection_info(task.blocked_by_count, AGENT_CONTEXT_DEPENDENCY_LIMIT, task.blocked_by_count.min(AGENT_CONTEXT_DEPENDENCY_LIMIT as i64) as usize),
+            blocking: bounded_collection_info(task.blocking_count, AGENT_CONTEXT_DEPENDENCY_LIMIT, task.blocking_count.min(AGENT_CONTEXT_DEPENDENCY_LIMIT as i64) as usize),
+            todos: bounded_collection_info(todo_count, AGENT_CONTEXT_TODO_LIMIT, todo_count.min(AGENT_CONTEXT_TODO_LIMIT as i64) as usize),
+            lane_runs: bounded_collection_info(task.lane_run_count, AGENT_CONTEXT_LANE_RUN_LIMIT, task.lane_run_count.min(AGENT_CONTEXT_LANE_RUN_LIMIT as i64) as usize),
+        },
+        additional_data_hints: vec![
+            "Task context is intentionally bounded for agent use.".into(),
+            "Use list_task_comments or search_task_comments to inspect older or targeted discussion.".into(),
+            "Use list_task_attachments for the full attachment manifest; attachment content is not inlined here.".into(),
+            "Use search_task_comment_file_mentions and list_task_file_references for targeted file-path lookup.".into(),
+        ],
+    })
+}
+
+fn load_task_detail_base(connection: &Connection, task_id: &str) -> Result<TaskDetail, String> {
     let mut task = connection
         .query_row(
             &format!(
@@ -491,10 +639,6 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
 
     task.parent = load_parent_summary(connection, task.parent_task_id.as_deref())?;
     task.lineage = load_lineage(connection, task.parent_task_id.clone())?;
-    task.children = load_child_tasks(connection, task_id)?;
-    task.blocked_by = load_blocked_by_dependencies(connection, task_id)?;
-    task.blocking = load_blocking_dependencies(connection, task_id)?;
-    task.attachments = task_attachments::load_task_attachments(connection, task_id)?;
     task.active_lane_assignment = task_runtime::get_current_lane_assignment(connection, task_id)?;
     let effective_active_assignment_status = task
         .active_lane_assignment
@@ -522,27 +666,7 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
         .iter()
         .map(|repository| repository.repository_id.clone())
         .collect();
-    task.file_references = task_file_references::load_task_file_references(
-        connection,
-        task_id,
-        task.active_lane_assignment
-            .as_ref()
-            .and_then(|assignment| assignment.runtime_cwd.as_deref()),
-    )?;
-    task.comments = load_task_comments(connection, task_id)?;
-    task.todos = load_task_todos(connection, task_id, None, None)?;
-    task.lane_runs = load_task_lane_runs(connection, task_id)?;
-    task.lane_summaries = load_task_lane_summaries(
-        connection,
-        task.workflow_id.as_deref(),
-        task.active_lane_assignment.as_ref(),
-        &task.lane_runs,
-    )?;
     Ok(task)
-}
-
-pub fn get_task_context(connection: &Connection, task_id: &str) -> Result<TaskDetail, String> {
-    get_task(connection, task_id)
 }
 
 pub fn list_task_comments(
@@ -553,6 +677,59 @@ pub fn list_task_comments(
         return Err(format!("Task {task_id} was not found"));
     }
     load_task_comments(connection, task_id)
+}
+
+pub fn list_task_attachments(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Vec<TaskAttachmentManifest>, String> {
+    if !task_exists(connection, task_id)? {
+        return Err(format!("Task {task_id} was not found"));
+    }
+    task_attachments::load_task_attachment_manifests(connection, task_id, None)
+}
+
+pub fn search_task_comments(
+    connection: &Connection,
+    task_id: &str,
+    query: &str,
+    limit: Option<usize>,
+) -> Result<Vec<TaskComment>, String> {
+    if !task_exists(connection, task_id)? {
+        return Err(format!("Task {task_id} was not found"));
+    }
+
+    let trimmed_query = query.trim();
+    if trimmed_query.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let limit = limit.unwrap_or(10).clamp(1, 25) as i64;
+    let like_query = format!("%{}%", trimmed_query.to_lowercase());
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, diff_anchor_json, created_at, updated_at
+            FROM task_comments
+            WHERE task_id = ?1
+              AND (
+                    LOWER(message) LIKE ?2
+                 OR LOWER(author) LIKE ?2
+                 OR LOWER(COALESCE(relative_path, '')) LIKE ?2
+                 OR LOWER(COALESCE(selected_text, '')) LIKE ?2
+              )
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?3
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare task comment search query: {error}"))?;
+
+    let rows = statement
+        .query_map(params![task_id, like_query, limit], read_task_comment_from_row)
+        .map_err(|error| format!("Unable to search task comments for {task_id}: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect task comment search results for {task_id}: {error}"))
 }
 
 pub fn list_task_todos(connection: &Connection, task_id: &str) -> Result<Vec<TaskTodo>, String> {
@@ -2538,6 +2715,35 @@ fn load_task_comments(connection: &Connection, task_id: &str) -> Result<Vec<Task
         .map_err(|error| format!("Unable to collect task comments for {task_id}: {error}"))
 }
 
+fn load_recent_task_comments(
+    connection: &Connection,
+    task_id: &str,
+    limit: usize,
+) -> Result<Vec<TaskComment>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, diff_anchor_json, created_at, updated_at
+            FROM (
+                SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, diff_anchor_json, created_at, updated_at
+                FROM task_comments
+                WHERE task_id = ?1
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?2
+            )
+            ORDER BY created_at ASC, id ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare recent task comments query: {error}"))?;
+
+    let rows = statement
+        .query_map(params![task_id, limit as i64], read_task_comment_from_row)
+        .map_err(|error| format!("Unable to read recent task comments for {task_id}: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect recent task comments for {task_id}: {error}"))
+}
+
 fn load_task_lane_runs(connection: &Connection, task_id: &str) -> Result<Vec<TaskLaneRun>, String> {
     let mut statement = connection
         .prepare(
@@ -2568,6 +2774,47 @@ fn load_task_lane_runs(connection: &Connection, task_id: &str) -> Result<Vec<Tas
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Unable to collect task lane runs for {task_id}: {error}"))
+}
+
+fn load_task_lane_runs_limited(
+    connection: &Connection,
+    task_id: &str,
+    limit: usize,
+) -> Result<Vec<TaskLaneRun>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, task_id, lane_id, session_id, result, summary, notes, started_at, completed_at
+            FROM (
+                SELECT id, task_id, lane_id, session_id, result, summary, notes, started_at, completed_at
+                FROM task_lane_runs
+                WHERE task_id = ?1
+                ORDER BY started_at DESC, id DESC
+                LIMIT ?2
+            )
+            ORDER BY started_at ASC, id ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare limited task lane run query: {error}"))?;
+
+    let rows = statement
+        .query_map(params![task_id, limit as i64], |row| {
+            Ok(TaskLaneRun {
+                id: row.get(0)?,
+                task_id: row.get(1)?,
+                lane_id: row.get(2)?,
+                session_id: row.get(3)?,
+                result: row.get(4)?,
+                summary: row.get(5)?,
+                notes: row.get(6)?,
+                started_at: row.get(7)?,
+                completed_at: row.get(8)?,
+            })
+        })
+        .map_err(|error| format!("Unable to read limited task lane runs for {task_id}: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect limited task lane runs for {task_id}: {error}"))
 }
 
 fn load_task_lane_summaries(
@@ -2726,6 +2973,59 @@ fn load_task_todos(
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Unable to collect task todos for {task_id}: {error}"))
+}
+
+fn load_task_todos_limited(
+    connection: &Connection,
+    task_id: &str,
+    lane_id: Option<&str>,
+    completed: Option<bool>,
+    limit: usize,
+) -> Result<Vec<TaskTodo>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, task_id, lane_id, description, completed, created_at, updated_at
+            FROM task_todos
+            WHERE task_id = ?1
+              AND (?2 IS NULL OR lane_id = ?2)
+              AND (?3 IS NULL OR completed = ?3)
+            ORDER BY completed ASC, created_at DESC, id DESC
+            LIMIT ?4
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare limited task todo query: {error}"))?;
+
+    let completed_filter = completed.map(|value| if value { 1 } else { 0 });
+    let rows = statement
+        .query_map(params![task_id, lane_id, completed_filter, limit as i64], |row| {
+            Ok(TaskTodo {
+                id: row.get(0)?,
+                task_id: row.get(1)?,
+                lane_id: row.get(2)?,
+                description: row.get(3)?,
+                completed: row.get::<_, i64>(4)? != 0,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })
+        .map_err(|error| format!("Unable to read limited task todos for {task_id}: {error}"))?;
+
+    let mut todos = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect limited task todos for {task_id}: {error}"))?;
+    todos.reverse();
+    Ok(todos)
+}
+
+fn count_task_todos(connection: &Connection, task_id: &str) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM task_todos WHERE task_id = ?1",
+            [task_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Unable to count task todos for {task_id}: {error}"))
 }
 
 fn get_task_todo(connection: &Connection, todo_id: &str) -> Result<Option<TaskTodo>, String> {
@@ -2902,6 +3202,36 @@ fn load_child_tasks(connection: &Connection, task_id: &str) -> Result<Vec<TaskSu
         .map_err(|error| format!("Unable to collect child tasks for {task_id}: {error}"))
 }
 
+fn load_child_tasks_limited(
+    connection: &Connection,
+    task_id: &str,
+    limit: usize,
+) -> Result<Vec<TaskSummary>, String> {
+    let mut statement = connection
+        .prepare(&format!(
+            r#"
+            SELECT
+                {summary_columns}
+            FROM tasks t
+            WHERE t.parent_task_id = ?1
+            ORDER BY t.archived ASC, t.sequence_number DESC, t.created_at DESC
+            LIMIT ?2
+            "#,
+            summary_columns = task_summary_columns("t"),
+        ))
+        .map_err(|error| format!("Unable to prepare limited child task query: {error}"))?;
+
+    let rows = statement
+        .query_map(params![task_id, limit as i64], map_task_summary_row)
+        .map_err(|error| format!("Unable to query limited child tasks for {task_id}: {error}"))?;
+
+    let mut children = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect limited child tasks for {task_id}: {error}"))?;
+    children.reverse();
+    Ok(children)
+}
+
 fn load_task_summary(connection: &Connection, task_id: &str) -> Result<TaskSummary, String> {
     connection
         .query_row(
@@ -2996,6 +3326,57 @@ fn load_blocked_by_dependencies(
             })
         })
         .collect()
+}
+
+fn load_blocked_by_dependencies_limited(
+    connection: &Connection,
+    task_id: &str,
+    limit: usize,
+) -> Result<Vec<TaskDependency>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, blocker_task_id, blocked_task_id, created_at
+            FROM task_dependencies
+            WHERE blocked_task_id = ?1
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?2
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare limited blocked-by dependency query: {error}"))?;
+
+    let rows = statement
+        .query_map(params![task_id, limit as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|error| {
+            format!("Unable to query limited blocked-by dependencies for {task_id}: {error}")
+        })?;
+
+    let mut dependencies = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            format!("Unable to collect limited blocked-by dependencies for {task_id}: {error}")
+        })?
+        .into_iter()
+        .map(|(id, blocker_task_id, blocked_task_id, created_at)| {
+            Ok(TaskDependency {
+                id,
+                blocker: load_task_summary(connection, &blocker_task_id)?,
+                blocked: load_task_summary(connection, &blocked_task_id)?,
+                blocker_task_id,
+                blocked_task_id,
+                created_at,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    dependencies.reverse();
+    Ok(dependencies)
 }
 
 fn load_blocking_dependencies(
@@ -3455,6 +3836,88 @@ fn sync_task_tags(
     }
 
     Ok(())
+}
+
+fn load_blocking_dependencies_limited(
+    connection: &Connection,
+    task_id: &str,
+    limit: usize,
+) -> Result<Vec<TaskDependency>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, blocker_task_id, blocked_task_id, created_at
+            FROM task_dependencies
+            WHERE blocker_task_id = ?1
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?2
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare limited blocking dependency query: {error}"))?;
+
+    let rows = statement
+        .query_map(params![task_id, limit as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|error| {
+            format!("Unable to query limited blocking dependencies for {task_id}: {error}")
+        })?;
+
+    let mut dependencies = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            format!("Unable to collect limited blocking dependencies for {task_id}: {error}")
+        })?
+        .into_iter()
+        .map(|(id, blocker_task_id, blocked_task_id, created_at)| {
+            Ok(TaskDependency {
+                id,
+                blocker: load_task_summary(connection, &blocker_task_id)?,
+                blocked: load_task_summary(connection, &blocked_task_id)?,
+                blocker_task_id,
+                blocked_task_id,
+                created_at,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    dependencies.reverse();
+    Ok(dependencies)
+}
+
+fn bounded_collection_info(
+    total_count: i64,
+    limit: usize,
+    included_count: usize,
+) -> BoundedCollectionInfo {
+    let capped_included_count = included_count.min(limit) as i64;
+    BoundedCollectionInfo {
+        total_count,
+        included_count: capped_included_count,
+        omitted_count: (total_count - capped_included_count).max(0),
+        truncated: total_count > capped_included_count,
+    }
+}
+
+fn truncate_comment_for_agent_context(mut comment: TaskComment) -> TaskComment {
+    comment.message = truncate_string_chars(comment.message, AGENT_CONTEXT_COMMENT_MESSAGE_MAX_CHARS);
+    comment.selected_text = comment
+        .selected_text
+        .map(|value| truncate_string_chars(value, AGENT_CONTEXT_COMMENT_SELECTED_TEXT_MAX_CHARS));
+    comment
+}
+
+fn truncate_string_chars(value: String, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value;
+    }
+    let mut truncated = value.chars().take(max_chars).collect::<String>();
+    truncated.push('…');
+    truncated
 }
 
 fn task_summary_columns(alias: &str) -> String {
@@ -6307,5 +6770,183 @@ mod tests {
         let error = add_task_dependency(&mut connection, &gamma.id, &alpha.id)
             .expect_err("reject dependency cycle");
         assert!(error.contains("cycle"));
+    }
+
+    #[test]
+    fn get_agent_task_context_bounds_comments_and_attachment_manifests() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let task = create_named_task(&mut connection, "Bounded context", "in_progress", None);
+        for index in 0..9 {
+            add_task_comment(
+                &mut connection,
+                &task.id,
+                TaskCommentInput {
+                    author: format!("Reviewer {index}"),
+                    origin_type: None,
+                    origin_id: None,
+                    message: if index == 8 {
+                        "x".repeat(520)
+                    } else {
+                        format!("Comment {index}")
+                    },
+                    interrupt_agent: false,
+                    parent_comment_id: None,
+                    repository_id: None,
+                    relative_path: None,
+                    absolute_path: None,
+                    line_start: None,
+                    line_end: None,
+                    column_start: None,
+                    column_end: None,
+                    selected_text: None,
+                    anchor: None,
+                    diff_anchor: None,
+                },
+            )
+            .expect("comment should add");
+        }
+
+        for index in 0..11 {
+            task_attachments::add_task_attachment_bytes(
+                &mut connection,
+                &task.id,
+                task_attachments::TaskAttachmentBytesInput {
+                    file_name: format!("note-{index}.txt"),
+                    media_type: "text/plain".into(),
+                    bytes: format!("attachment-{index}").into_bytes(),
+                    caption: Some(format!("Attachment {index}")),
+                },
+            )
+            .expect("attachment should add");
+        }
+
+        let context = get_agent_task_context(&connection, &task.id)
+            .expect("bounded agent task context should load");
+
+        assert!(context.context_bounded);
+        assert_eq!(context.comments.len(), 8);
+        assert!(context.bounds.comments.truncated);
+        assert_eq!(context.bounds.comments.total_count, 9);
+        assert_eq!(context.bounds.comments.omitted_count, 1);
+        assert!(context.comments.last().expect("recent comment").message.chars().count() <= 501);
+        assert_eq!(context.attachments.len(), 10);
+        assert!(context.bounds.attachments.truncated);
+        assert_eq!(context.bounds.attachments.total_count, 11);
+        assert_eq!(context.bounds.attachments.omitted_count, 1);
+        assert!(context
+            .additional_data_hints
+            .iter()
+            .any(|hint| hint.contains("list_task_attachments")));
+    }
+
+    #[test]
+    fn search_task_comments_matches_message_author_path_and_selected_text() {
+        let mut connection = in_memory_connection();
+        seed_workflow(&connection);
+
+        let task = create_named_task(&mut connection, "Search comments", "in_progress", None);
+        add_task_comment(
+            &mut connection,
+            &task.id,
+            TaskCommentInput {
+                author: "Alice".into(),
+                origin_type: None,
+                origin_id: None,
+                message: "Investigate the payment retry failure".into(),
+                interrupt_agent: false,
+                parent_comment_id: None,
+                repository_id: None,
+                relative_path: None,
+                absolute_path: None,
+                line_start: None,
+                line_end: None,
+                column_start: None,
+                column_end: None,
+                selected_text: None,
+                anchor: None,
+                diff_anchor: None,
+            },
+        )
+        .expect("comment should add");
+
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-billing', ?1, 'billing', 'Billing', '/tmp/billing', NULL, 'main', ?2, ?2)",
+                params![task.project_id, now],
+            )
+            .expect("repository should insert");
+        connection
+            .execute(
+                r#"
+                INSERT INTO task_comments (
+                    id,
+                    task_id,
+                    parent_comment_id,
+                    author,
+                    origin_type,
+                    origin_id,
+                    message,
+                    interrupt_agent,
+                    repository_id,
+                    relative_path,
+                    line_start,
+                    line_end,
+                    column_start,
+                    column_end,
+                    selected_text,
+                    anchor_commit_hash,
+                    anchor_has_uncommitted_changes,
+                    anchor_kind,
+                    anchor_payload_json,
+                    diff_anchor_json,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?1, ?2, NULL, ?3, 'user', NULL, ?4, 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, NULL, NULL, NULL, NULL, ?12, ?12)
+                "#,
+                params![
+                    "task-comment-search-path",
+                    task.id,
+                    "Bob",
+                    "Look at the retry helper",
+                    "repo-billing",
+                    "src/billing/retries.rs",
+                    42,
+                    42,
+                    1,
+                    18,
+                    "retry_payment(now)",
+                    now,
+                ],
+            )
+            .expect("seeded path comment should insert");
+
+        assert_eq!(
+            search_task_comments(&connection, &task.id, "payment retry", Some(10))
+                .expect("message search should succeed")
+                .len(),
+            1
+        );
+        assert_eq!(
+            search_task_comments(&connection, &task.id, "alice", Some(10))
+                .expect("author search should succeed")
+                .len(),
+            1
+        );
+        assert_eq!(
+            search_task_comments(&connection, &task.id, "billing/retries", Some(10))
+                .expect("path search should succeed")
+                .len(),
+            1
+        );
+        assert_eq!(
+            search_task_comments(&connection, &task.id, "retry_payment", Some(10))
+                .expect("selected text search should succeed")
+                .len(),
+            1
+        );
     }
 }

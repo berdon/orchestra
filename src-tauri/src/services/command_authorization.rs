@@ -328,7 +328,7 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     ("get_task", "Get a task", "tasks.read"),
     (
         "get_task_context",
-        "Get a task with hierarchy, dependencies, attachments, file references, and lane context",
+        "Get a bounded agent-facing task context with recent comments, attachment manifests, and lane context",
         "tasks.read",
     ),
     (
@@ -359,6 +359,21 @@ const ORCHESTRA_TOOLS: &[(&str, &str, &str)] = &[
     (
         "list_task_comments",
         "List task comments with reply threading metadata",
+        "tasks.read",
+    ),
+    (
+        "list_task_attachments",
+        "List task attachment manifests without inline content",
+        "tasks.read",
+    ),
+    (
+        "search_task_comments",
+        "Search task comments by message, author, file path, or selected text",
+        "tasks.read",
+    ),
+    (
+        "search_task_comment_file_mentions",
+        "Search repository file-path mentions referenced in task comments",
         "tasks.read",
     ),
     ("list_task_todos", "List task todo items", "tasks.read"),
