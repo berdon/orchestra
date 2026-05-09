@@ -16,6 +16,7 @@ export interface TaskWorkflowSection {
 
 export interface TaskBoardModel {
   draftTasks: TaskSummary[];
+  missingWorkflowTasks: TaskSummary[];
   workflowSections: TaskWorkflowSection[];
 }
 
@@ -24,7 +25,9 @@ export function getVisibleTaskBoardTasks(board: TaskBoardModel, showDoneTasks: b
     ? board.workflowSections.flatMap((section) => section.doneTasks)
     : board.workflowSections.flatMap((section) => section.lanes.flatMap((lane) => lane.tasks));
 
-  return [...board.draftTasks, ...workflowTasks];
+  return showDoneTasks
+    ? workflowTasks
+    : [...board.missingWorkflowTasks, ...board.draftTasks, ...workflowTasks];
 }
 
 export function getVisibleTaskBoardTags(board: TaskBoardModel, showDoneTasks: boolean) {
@@ -33,7 +36,11 @@ export function getVisibleTaskBoardTags(board: TaskBoardModel, showDoneTasks: bo
 }
 
 export function isDraftTask(task: TaskSummary) {
-  return task.status === "draft" || !task.workflowId;
+  return task.status === "draft";
+}
+
+export function hasMissingWorkflow(task: TaskSummary) {
+  return task.status !== "draft" && !task.workflowId;
 }
 
 export function resolveTaskAssigneeLabel(
@@ -63,9 +70,10 @@ export function buildTaskBoardModel(
   workflowDefinitions: Record<string, WorkflowDefinition>,
 ): TaskBoardModel {
   const draftTasks = tasks.filter(isDraftTask);
+  const missingWorkflowTasks = tasks.filter(hasMissingWorkflow);
   const workflowBuckets = new Map<string, TaskSummary[]>();
 
-  tasks.filter((task) => !isDraftTask(task)).forEach((task) => {
+  tasks.filter((task) => !isDraftTask(task) && Boolean(task.workflowId)).forEach((task) => {
     const workflowId = task.workflowId!;
     const current = workflowBuckets.get(workflowId) ?? [];
     current.push(task);
@@ -102,6 +110,7 @@ export function buildTaskBoardModel(
 
   return {
     draftTasks,
+    missingWorkflowTasks,
     workflowSections,
   };
 }

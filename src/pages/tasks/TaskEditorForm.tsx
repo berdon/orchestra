@@ -80,6 +80,16 @@ export function TaskEditorForm({
         </select>
       </label>
 
+      {detailLayout && !draft.workflowId ? (
+        <div className="task-editor-grid__full task-workflow-warning" data-role="task-editor-missing-workflow-warning">
+          <div className="workflow-section__header">
+            <strong>No workflow configured</strong>
+            <span className="status-badge status-badge--warning">Needs setup</span>
+          </div>
+          <p className="supporting-copy">This task will not appear in workflow lanes or be dispatchable until a workflow is assigned.</p>
+        </div>
+      ) : null}
+
       <label className="field-group" {...getTooltipProps("Limit how many automatic re-prompts happen before Orchestra escalates to a user.")}>
         <span className="field-group__label">Whip max attempts</span>
         <input

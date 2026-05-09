@@ -355,6 +355,30 @@ export function TasksOverviewPage({
           </section>
         ) : null}
 
+        {board.missingWorkflowTasks.length ? (
+          <section className="task-board-section task-board-section--warning" data-role="task-missing-workflow-section">
+            <div className="task-board-section__header">
+              <div>
+                <p className="eyebrow">Workflow</p>
+                <h3>Needs workflow</h3>
+                <p className="supporting-copy">These tasks are missing a workflow and will not appear in workflow lanes until one is assigned.</p>
+              </div>
+              <span className="status-badge status-badge--warning">{board.missingWorkflowTasks.length}</span>
+            </div>
+            <div className="task-draft-grid">
+              {board.missingWorkflowTasks.map((task) => (
+                <TaskCompactCard
+                  assigneeLabel={resolveTaskAssigneeLabel(task, agents, roles)}
+                  key={task.id}
+                  task={task}
+                  onOpen={onOpenTask}
+                  onOpenTag={onOpenTag}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null}
+
         {board.draftTasks.length ? (
           <section className="task-board-section" data-role="draft-task-section">
             <div className="task-board-section__header">
