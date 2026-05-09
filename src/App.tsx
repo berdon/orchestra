@@ -3290,7 +3290,16 @@ export function App() {
         undefined,
         activeProject?.slug ?? null,
       );
-      mergeSessionRecord(session, { select: true });
+      const targetProjectId = activeProject?.id ?? activeProjectIdRef.current ?? null;
+      mergeSessionRecord(session, { select: false });
+      setPendingSessionOpenRequest((current) => ({
+        sessionId: session.id,
+        projectId: targetProjectId,
+        token: (current?.token ?? 0) + 1,
+      }));
+      setSelectedSessionId((current) =>
+        current === session.id ? current : session.id,
+      );
       if (!session.terminalAttached) {
         await ensureLiveSurfaceSessionSubscription(session.id);
       }
@@ -5485,9 +5494,18 @@ export function App() {
         activeProjectSlug: activeProject?.slug ?? null,
       });
       mergeSessionRecord(nextSession, { select: false });
-      setPendingSessionOpenRequest(null);
-      if (!effectiveChatAgentId) {
-        setSelectedSessionId(nextSession.id);
+      if (effectiveChatAgentId) {
+        setPendingSessionOpenRequest(null);
+      } else {
+        const targetProjectId = activeProject?.id ?? activeProjectIdRef.current ?? null;
+        setPendingSessionOpenRequest((current) => ({
+          sessionId: nextSession.id,
+          projectId: targetProjectId,
+          token: (current?.token ?? 0) + 1,
+        }));
+        setSelectedSessionId((current) =>
+          current === nextSession.id ? current : nextSession.id,
+        );
       }
 
       if (effectiveChatAgentId) {

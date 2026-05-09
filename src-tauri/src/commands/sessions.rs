@@ -656,7 +656,7 @@ fn session_messageability(
 fn decorate_session_record_with_runtime_state(
     connection: &rusqlite::Connection,
     terminal_attached_session_ids: &std::collections::HashSet<String>,
-    active_runtime_session_ids: &std::collections::HashSet<String>,
+    _active_runtime_session_ids: &std::collections::HashSet<String>,
     mut record: SessionRecord,
     include_debug_info: bool,
     surface: SessionDecorationSurface,
@@ -668,16 +668,7 @@ fn decorate_session_record_with_runtime_state(
 
     let decoration = session_list::load_session_list_decoration(connection, &record.id)?;
     let persistent_agent_session = decoration.persistent_agent_session;
-    let mut visibility = decoration.visibility.clone();
-    if active_runtime_session_ids.contains(record.id.as_str())
-        && decoration.task_id.is_some()
-        && matches!(
-            visibility,
-            Some(session_list::SessionListVisibility::Closed)
-        )
-    {
-        visibility = Some(session_list::SessionListVisibility::Active);
-    }
+    let visibility = decoration.visibility.clone();
     record.task_id = decoration.task_id;
     record.task_project_id = decoration.task_project_id;
     record.task_number = decoration.task_number;
@@ -3638,7 +3629,7 @@ mod tests {
     }
 
     #[test]
-    fn reactivated_completed_task_sessions_become_messageable_when_runtime_is_active() {
+    fn completed_task_sessions_stay_closed_when_runtime_is_active() {
         let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
         database::apply_migrations(&connection).expect("migrations should succeed");
         insert_completed_task_session_fixture(&connection, "session-reopened");
@@ -3655,14 +3646,14 @@ mod tests {
         )
         .expect("session decoration should succeed");
 
-        assert_eq!(decorated.status, "active");
+        assert_eq!(decorated.status, "closed");
         assert_eq!(
             decorated.list_visibility,
-            Some(SessionListVisibilityState::Active)
+            Some(SessionListVisibilityState::Closed)
         );
         assert_eq!(
             decorated.messageability,
-            Some(SessionMessageability::Messageable)
+            Some(SessionMessageability::Closed)
         );
     }
 

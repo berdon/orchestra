@@ -1,5 +1,5 @@
 import { parseTaskNumber } from "./taskPrefixes";
-import type { SessionRecord } from "../types";
+import type { SessionListVisibility, SessionRecord } from "../types";
 
 export function getSessionListMetadata(session: SessionRecord) {
   const metadata = [session.taskNumber, session.workerName].filter(Boolean).join(" · ");
@@ -10,6 +10,23 @@ export function getSessionListTitle(session: SessionRecord) {
   return session.taskTitle ?? session.title;
 }
 
+function sessionTaskIdentity(session: SessionRecord) {
+  return session.activeTaskId ?? session.taskId ?? session.taskNumber ?? null;
+}
+
+function sessionVisibilityRank(visibility?: SessionListVisibility | null) {
+  switch (visibility) {
+    case "active":
+      return 0;
+    case "closed":
+      return 1;
+    case "hidden":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
 export function compareSessionRecords(left: SessionRecord, right: SessionRecord) {
   const leftTask = parseTaskNumber(left.taskNumber);
   const rightTask = parseTaskNumber(right.taskNumber);
@@ -18,7 +35,11 @@ export function compareSessionRecords(left: SessionRecord, right: SessionRecord)
     return leftTask.hasTask ? -1 : 1;
   }
 
-  const prefixCompare = leftTask.prefix.localeCompare(rightTask.prefix, undefined, { numeric: true, sensitivity: "base" });
+  const prefixCompare = leftTask.prefix.localeCompare(
+    rightTask.prefix,
+    undefined,
+    { numeric: true, sensitivity: "base" },
+  );
   if (prefixCompare !== 0) {
     return prefixCompare;
   }
@@ -27,15 +48,52 @@ export function compareSessionRecords(left: SessionRecord, right: SessionRecord)
     return leftTask.sequence - rightTask.sequence;
   }
 
-  const suffixCompare = leftTask.suffix.localeCompare(rightTask.suffix, undefined, { numeric: true, sensitivity: "base" });
+  const suffixCompare = leftTask.suffix.localeCompare(
+    rightTask.suffix,
+    undefined,
+    { numeric: true, sensitivity: "base" },
+  );
   if (suffixCompare !== 0) {
     return suffixCompare;
   }
 
-  const workerCompare = (left.workerName ?? "").localeCompare(right.workerName ?? "", undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
+  const leftTaskIdentity = sessionTaskIdentity(left);
+  const rightTaskIdentity = sessionTaskIdentity(right);
+  const sameTask = Boolean(leftTaskIdentity) && leftTaskIdentity === rightTaskIdentity;
+
+  if (sameTask) {
+    const leftHasActiveTask = Boolean(left.activeTaskId);
+    const rightHasActiveTask = Boolean(right.activeTaskId);
+    if (leftHasActiveTask !== rightHasActiveTask) {
+      return leftHasActiveTask ? -1 : 1;
+    }
+
+    const visibilityCompare =
+      sessionVisibilityRank(left.listVisibility) -
+      sessionVisibilityRank(right.listVisibility);
+    if (visibilityCompare !== 0) {
+      return visibilityCompare;
+    }
+
+    const updatedCompare = right.updatedAt.localeCompare(left.updatedAt);
+    if (updatedCompare !== 0) {
+      return updatedCompare;
+    }
+
+    const createdCompare = right.createdAt.localeCompare(left.createdAt);
+    if (createdCompare !== 0) {
+      return createdCompare;
+    }
+  }
+
+  const workerCompare = (left.workerName ?? "").localeCompare(
+    right.workerName ?? "",
+    undefined,
+    {
+      numeric: true,
+      sensitivity: "base",
+    },
+  );
   if (workerCompare !== 0) {
     return workerCompare;
   }

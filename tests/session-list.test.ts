@@ -20,8 +20,12 @@ function makeSession(overrides: Partial<SessionRecord> = {}): SessionRecord {
     taskId: overrides.taskId ?? null,
     taskNumber: overrides.taskNumber ?? null,
     taskTitle: overrides.taskTitle ?? null,
+    activeTaskId: overrides.activeTaskId ?? null,
+    activeTaskNumber: overrides.activeTaskNumber ?? null,
+    activeTaskTitle: overrides.activeTaskTitle ?? null,
     workerType: overrides.workerType ?? null,
     workerName: overrides.workerName ?? null,
+    listVisibility: overrides.listVisibility ?? null,
   };
 }
 
@@ -69,5 +73,36 @@ describe("sessionList", () => {
     expect(getSessionListMetadata(session)).toBe("Standalone session");
     expect(getSessionListTitle(session)).toBe("Scratchpad");
     expect(compareSessionRecords(session, makeSession({ id: "session-2", title: "Zebra" }))).toBeLessThan(0);
+  });
+
+  it("prefers the live active task session over historical duplicates for the same task", () => {
+    const sessions = [
+      makeSession({
+        id: "session-historical",
+        taskId: "task-1",
+        taskNumber: "ORC-42",
+        taskTitle: "Implement deterministic session rows",
+        workerName: "Reviewer",
+        listVisibility: "closed",
+        updatedAt: "2026-04-10T00:00:00Z",
+        createdAt: "2026-04-10T00:00:00Z",
+      }),
+      makeSession({
+        id: "session-live",
+        taskId: "task-1",
+        activeTaskId: "task-1",
+        taskNumber: "ORC-42",
+        taskTitle: "Implement deterministic session rows",
+        workerName: "Reviewer",
+        listVisibility: "active",
+        updatedAt: "2026-04-11T00:00:00Z",
+        createdAt: "2026-04-11T00:00:00Z",
+      }),
+    ];
+
+    expect(sortSessionRecords(sessions).map((session) => session.id)).toEqual([
+      "session-live",
+      "session-historical",
+    ]);
   });
 });
