@@ -7,6 +7,7 @@ import {
   deleteWebdriverSession,
   ensureReactReady,
   executeScript,
+  invokeCommand,
   setInputValue,
   sleep,
   waitForEnabledSelector,
@@ -52,6 +53,32 @@ async function readAssistantTranscriptState(sessionId: string) {
     };
   `);
 }
+
+async function readComposerState(sessionId: string) {
+  return executeScript<{
+    composerDisabled: boolean;
+    sendDisabled: boolean;
+    messageabilityClosed: boolean;
+    terminalReadonly: boolean;
+    piSetupRequired: boolean;
+  }>(sessionId, `
+    const composer = document.querySelector('[data-role="composer-input"]');
+    const send = document.querySelector('[data-role="send-message"]');
+    return {
+      composerDisabled: composer instanceof HTMLTextAreaElement ? composer.disabled : true,
+      sendDisabled: send instanceof HTMLButtonElement ? send.disabled : true,
+      messageabilityClosed: Boolean(document.querySelector('[data-role="session-messageability-closed"]')),
+      terminalReadonly: Boolean(document.querySelector('[data-role="session-terminal-readonly"]')),
+      piSetupRequired: Boolean(document.querySelector('[data-role="session-pi-setup-required"]')),
+    };
+  `);
+}
+
+type SessionRecordLike = {
+  id: string;
+  status?: string;
+  messageability?: "messageable" | "closed" | null;
+};
 
 describe("desktop agent chat navigation", () => {
   it.skipIf(!isDesktopE2E)("opens focused agent chat from Chat nav and keeps Sessions available for debugging", async () => {
@@ -112,23 +139,7 @@ describe("desktop agent chat navigation", () => {
         return document.querySelector('[data-role="session-transcript"]')?.getAttribute('data-scroll-locked') || '';
       `)).toBe('true');
       await waitForEnabledSelector(sessionId, '[data-role="composer-input"]');
-      const initialComposerState = await executeScript<{
-        composerDisabled: boolean;
-        sendDisabled: boolean;
-        messageabilityClosed: boolean;
-        terminalReadonly: boolean;
-        piSetupRequired: boolean;
-      }>(sessionId, `
-        const composer = document.querySelector('[data-role="composer-input"]');
-        const send = document.querySelector('[data-role="send-message"]');
-        return {
-          composerDisabled: composer instanceof HTMLTextAreaElement ? composer.disabled : true,
-          sendDisabled: send instanceof HTMLButtonElement ? send.disabled : true,
-          messageabilityClosed: Boolean(document.querySelector('[data-role="session-messageability-closed"]')),
-          terminalReadonly: Boolean(document.querySelector('[data-role="session-terminal-readonly"]')),
-          piSetupRequired: Boolean(document.querySelector('[data-role="session-pi-setup-required"]')),
-        };
-      `);
+      const initialComposerState = await readComposerState(sessionId);
       expect(initialComposerState.composerDisabled).toBe(false);
       expect(initialComposerState.sendDisabled).toBe(false);
       expect(initialComposerState.messageabilityClosed).toBe(false);
@@ -258,4 +269,77 @@ describe("desktop agent chat navigation", () => {
       await deleteWebdriverSession(sessionId);
     }
   }, 180_000);
+
+  it.skipIf(!isDesktopE2E)("keeps direct agent chats messageable after stopping an in-flight run", async () => {
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+
+      await clickByText(sessionId, "button", "Chat");
+      await waitForSelector(sessionId, '[data-role="chat-agent-nav-supervisor"]');
+      await clickSelector(sessionId, '[data-role="chat-agent-nav-supervisor"]');
+      await waitForText(sessionId, 'Supervisor chat');
+      await waitForEnabledSelector(sessionId, '[data-role="composer-input"]');
+
+      const activeAgentSessionId = await waitForCondition(
+        () => executeScript<string>(sessionId, `
+          return document.querySelector('[data-role="session-chat-panel"]')?.getAttribute('data-session-id') || '';
+        `),
+        (value) => Boolean(value),
+        45_000,
+      );
+
+      const runToken = Date.now().toString(36);
+      const stoppablePrompt = [
+        'Use the bash tool exactly once and wait for it to finish.',
+        'Run exactly this command:',
+        `\`\`\`bash\nsleep 8 && printf "agent-stop-${runToken}"\n\`\`\``,
+        `After the tool completes, reply with exactly agent-stop-${runToken}.`,
+      ].join('\n\n');
+
+      await setInputValue(sessionId, '[data-role="composer-input"]', stoppablePrompt);
+      await waitForEnabledSelector(sessionId, '[data-role="send-message"]');
+      await clickSelector(sessionId, '[data-role="send-message"]');
+      await waitForText(sessionId, 'Use the bash tool exactly once');
+
+      await waitForCondition(
+        () => executeScript<{ disabled: boolean }>(sessionId, `
+          const button = document.querySelector('[data-role="stop-session-runtime"]');
+          return { disabled: !(button instanceof HTMLButtonElement) || button.disabled };
+        `),
+        (value) => value.disabled === false,
+        30_000,
+      );
+
+      await clickSelector(sessionId, '[data-role="stop-session-runtime"]');
+
+      const stoppedRecord = await waitForCondition(
+        () => invokeCommand<SessionRecordLike>(sessionId, 'get_session_record', { sessionId: activeAgentSessionId }),
+        (record) => record.status === 'paused' && record.messageability === 'messageable',
+        60_000,
+      );
+      expect(stoppedRecord.status).toBe('paused');
+      expect(stoppedRecord.messageability).toBe('messageable');
+
+      const composerState = await waitForCondition(
+        () => readComposerState(sessionId),
+        (state) => state.composerDisabled === false
+          && state.sendDisabled === false
+          && state.messageabilityClosed === false
+          && state.terminalReadonly === false,
+        30_000,
+      );
+      expect(composerState.messageabilityClosed).toBe(false);
+      expect(composerState.terminalReadonly).toBe(false);
+
+      expect(await executeScript<string>(sessionId, `
+        return document.querySelector('[data-role="session-chat-panel"]')?.getAttribute('data-session-id') || '';
+      `)).toBe(activeAgentSessionId);
+      expect(await executeScript<string>(sessionId, `
+        return document.querySelector('[data-role="session-transcript"]')?.textContent || '';
+      `)).toContain('Session run stopped by operator.');
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 240_000);
 });

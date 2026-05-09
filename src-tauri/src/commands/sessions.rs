@@ -91,6 +91,29 @@ fn resolve_session_create_title(
         .or_else(|| agent.map(|agent| format!("{} main session", agent.name)))
 }
 
+fn retry_on_locked_session_create<T, F>(mut operation: F) -> Result<T, String>
+where
+    F: FnMut() -> Result<T, String>,
+{
+    const RETRY_DELAYS_MS: [u64; 8] = [100, 250, 500, 1_000, 1_500, 2_000, 3_000, 5_000];
+
+    let mut attempt = 0;
+    loop {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if error.contains("database is locked")
+                    && attempt < RETRY_DELAYS_MS.len() =>
+            {
+                let delay_ms = RETRY_DELAYS_MS[attempt];
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn create_contextual_agent_main_successor(
     connection: &mut rusqlite::Connection,
     runtime_root: &Path,
@@ -101,57 +124,59 @@ fn create_contextual_agent_main_successor(
     agent: &crate::models::AgentDefinition,
     runtime_state: &crate::models::AgentRuntimeState,
 ) -> Result<crate::services::pi_sessions::StoredSession, String> {
-    let runtime_cwd = runtime_state
-        .runtime_cwd
-        .clone()
-        .unwrap_or_else(|| runtime_root.display().to_string());
-    let tx = connection.transaction().map_err(|error| {
-        format!("Unable to start contextual agent main-session rotation transaction: {error}")
-    })?;
-    let created = session_records::rotate_session_record(
-        &tx,
-        runtime_root,
-        session_dir,
-        old_session_id,
-        session_records::RotateSessionRecordInput {
-            project_id: Some(project_id),
-            title: Some(title),
-            session_kind: session_records::SESSION_KIND_AGENT_MAIN,
-            agent_id: Some(agent.id.as_str()),
-            role_instance_id: None,
-            task_id: None,
-            workflow_id: None,
-            lane_id: None,
-            assignment: None,
-            worker_type: None,
-            worker_id: None,
-            runtime_cwd: Some(runtime_cwd.as_str()),
-            subscribed: false,
-            agent_runtime: Some(session_records::AgentRuntimeBinding {
-                project_id,
-                agent_id: agent.id.as_str(),
+    retry_on_locked_session_create(|| {
+        let runtime_cwd = runtime_state
+            .runtime_cwd
+            .clone()
+            .unwrap_or_else(|| runtime_root.display().to_string());
+        let tx = connection.transaction().map_err(|error| {
+            format!("Unable to start contextual agent main-session rotation transaction: {error}")
+        })?;
+        let created = session_records::rotate_session_record(
+            &tx,
+            runtime_root,
+            session_dir,
+            old_session_id,
+            session_records::RotateSessionRecordInput {
+                project_id: Some(project_id),
+                title: Some(title),
+                session_kind: session_records::SESSION_KIND_AGENT_MAIN,
+                agent_id: Some(agent.id.as_str()),
+                role_instance_id: None,
+                task_id: None,
+                workflow_id: None,
+                lane_id: None,
+                assignment: None,
+                worker_type: None,
+                worker_id: None,
                 runtime_cwd: Some(runtime_cwd.as_str()),
-                current_queue_entry_id: runtime_state.current_queue_entry_id.as_deref(),
-                status: &runtime_state.status,
-                last_error: runtime_state.last_error.as_deref(),
-            }),
-            update_role_instance_session: false,
-        },
-    )?;
-    task_runtime::apply_agent_session_defaults(
-        runtime_root,
-        session_dir,
-        &created.record.id,
-        agent,
-    )?;
-    tx.commit().map_err(|error| {
-        format!(
-            "Unable to commit contextual agent main-session rotation for project {}: {error}",
-            project_id
-        )
-    })?;
+                subscribed: false,
+                agent_runtime: Some(session_records::AgentRuntimeBinding {
+                    project_id,
+                    agent_id: agent.id.as_str(),
+                    runtime_cwd: Some(runtime_cwd.as_str()),
+                    current_queue_entry_id: runtime_state.current_queue_entry_id.as_deref(),
+                    status: &runtime_state.status,
+                    last_error: runtime_state.last_error.as_deref(),
+                }),
+                update_role_instance_session: false,
+            },
+        )?;
+        task_runtime::apply_agent_session_defaults(
+            runtime_root,
+            session_dir,
+            &created.record.id,
+            agent,
+        )?;
+        tx.commit().map_err(|error| {
+            format!(
+                "Unable to commit contextual agent main-session rotation for project {}: {error}",
+                project_id
+            )
+        })?;
 
-    Ok(created)
+        Ok(created)
+    })
 }
 
 fn session_project_id(connection: &rusqlite::Connection, session_id: &str) -> Option<String> {
@@ -901,9 +926,6 @@ fn collect_listed_session_records_from_rows_with_runtime_state(
         if matches!(
             decorated.list_visibility,
             Some(SessionListVisibilityState::Hidden)
-        ) && session_list::hide_session_from_normal_list(
-            row.hidden_reason.as_deref(),
-            row.dismissed_at.as_deref(),
         ) {
             continue;
         }
@@ -1096,9 +1118,9 @@ pub async fn create_session(
     let project_slug_for_task = project_slug.clone();
     let agent_id_for_task = agent_id.clone();
     let agent_id_for_create = agent_id_for_task.clone();
-    let (project_root, session_dir, created) = spawn_blocking(move || {
+    let (project_root, session_dir, created, rotated_from_session_id) = spawn_blocking(move || {
         let context = detect_session_context(project_slug_for_task.as_deref())?;
-        let connection = database::open_connection()?;
+        let mut connection = database::open_connection()?;
         let project_id = connection
             .query_row(
                 "SELECT id FROM projects WHERE slug = ?1 LIMIT 1",
@@ -1119,54 +1141,138 @@ pub async fn create_session(
             .transpose()?;
         let resolved_title =
             resolve_session_create_title(title_for_task.as_deref(), agent.as_ref());
-        let created = session_records::create_session_record(
-            &connection,
-            &context.project_root,
-            &context.session_dir,
-            session_records::CreateSessionRecordInput {
-                project_id: project_id.as_deref(),
-                title: resolved_title.as_deref(),
-                session_kind: if agent_id_for_create.is_some() {
-                    session_records::SESSION_KIND_AGENT_MAIN
-                } else {
-                    session_records::SESSION_KIND_STANDALONE
-                },
-                agent_id: agent_id_for_create.as_deref(),
-                role_instance_id: None,
-                task_id: None,
-                workflow_id: None,
-                lane_id: None,
-                assignment: None,
-                worker_type: None,
-                worker_id: None,
-                runtime_cwd: Some(runtime_cwd.as_str()),
-                subscribed: true,
-                agent_runtime: agent_id_for_create.as_deref().map(|agent_id| {
-                    session_records::AgentRuntimeBinding {
-                        project_id: project_id.as_deref().unwrap_or("orchestra"),
-                        agent_id,
+        let (project_root, session_dir, created, rotated_from_session_id) = if let Some(agent) =
+            agent.as_ref()
+        {
+            let resolved_project_id = project_id.clone().unwrap_or_else(|| {
+                crate::services::projects::require_requested_or_default_project_id(
+                    &connection,
+                    None,
+                    "Create a project first before managing agent sessions.",
+                )
+                .unwrap_or_else(|_| "orchestra".to_string())
+            });
+            let runtime_state = agent_runtime::ensure_agent_runtime_state_for_project(
+                &connection,
+                &resolved_project_id,
+                &agent.id,
+            )?;
+
+            if let Some(current_main_session_id) = runtime_state
+                .main_session_id
+                .as_deref()
+                .filter(|session_id| !session_id.trim().is_empty())
+            {
+                let current_context = find_session_context_for_session(current_main_session_id)?;
+                let current_record =
+                    get_session(&current_context.session_dir, current_main_session_id, false)?;
+                let runtime_root = runtime_state
+                    .runtime_cwd
+                    .clone()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| current_context.project_root.clone());
+                ensure_session_runtime_root(&runtime_root)?;
+                let created = create_contextual_agent_main_successor(
+                    &mut connection,
+                    &runtime_root,
+                    &current_context.session_dir,
+                    current_main_session_id,
+                    resolved_title
+                        .as_deref()
+                        .unwrap_or(current_record.title.as_str()),
+                    runtime_state.project_id.as_str(),
+                    agent,
+                    &runtime_state,
+                )?;
+                (
+                    runtime_root,
+                    current_context.session_dir,
+                    created,
+                    Some(current_main_session_id.to_string()),
+                )
+            } else {
+                let created = retry_on_locked_session_create(|| {
+                    session_records::create_session_record(
+                        &connection,
+                        &context.project_root,
+                        &context.session_dir,
+                        session_records::CreateSessionRecordInput {
+                            project_id: project_id.as_deref(),
+                            title: resolved_title.as_deref(),
+                            session_kind: session_records::SESSION_KIND_AGENT_MAIN,
+                            agent_id: Some(agent.id.as_str()),
+                            role_instance_id: None,
+                            task_id: None,
+                            workflow_id: None,
+                            lane_id: None,
+                            assignment: None,
+                            worker_type: None,
+                            worker_id: None,
+                            runtime_cwd: Some(runtime_cwd.as_str()),
+                            subscribed: true,
+                            agent_runtime: Some(session_records::AgentRuntimeBinding {
+                                project_id: runtime_state.project_id.as_str(),
+                                agent_id: agent.id.as_str(),
+                                runtime_cwd: Some(runtime_cwd.as_str()),
+                                current_queue_entry_id: None,
+                                status: "",
+                                last_error: None,
+                            }),
+                            update_role_instance_session: false,
+                        },
+                    )
+                })?;
+                (context.project_root.clone(), context.session_dir.clone(), created, None)
+            }
+        } else {
+            let created = retry_on_locked_session_create(|| {
+                session_records::create_session_record(
+                    &connection,
+                    &context.project_root,
+                    &context.session_dir,
+                    session_records::CreateSessionRecordInput {
+                        project_id: project_id.as_deref(),
+                        title: resolved_title.as_deref(),
+                        session_kind: session_records::SESSION_KIND_STANDALONE,
+                        agent_id: None,
+                        role_instance_id: None,
+                        task_id: None,
+                        workflow_id: None,
+                        lane_id: None,
+                        assignment: None,
+                        worker_type: None,
+                        worker_id: None,
                         runtime_cwd: Some(runtime_cwd.as_str()),
-                        current_queue_entry_id: None,
-                        status: "",
-                        last_error: None,
-                    }
-                }),
-                update_role_instance_session: false,
-            },
-        )?;
+                        subscribed: true,
+                        agent_runtime: None,
+                        update_role_instance_session: false,
+                    },
+                )
+            })?;
+            (context.project_root.clone(), context.session_dir.clone(), created, None)
+        };
+
         if let Some(agent) = agent.as_ref() {
             agent_dispatch::seed_direct_agent_session_context(
                 &connection,
-                &context.session_dir,
+                &session_dir,
                 &created.record.id,
                 agent,
                 project_id.as_deref(),
             )?;
         }
-        Ok::<_, String>((context.project_root, context.session_dir, created))
+        Ok::<_, String>((project_root, session_dir, created, rotated_from_session_id))
     })
     .await
     .map_err(|error| format!("Unable to join create_session task: {error}"))??;
+
+    if let Some(previous_session_id) = rotated_from_session_id.as_deref() {
+        if let Some(runtime) = state.remove_session_runtime(previous_session_id)? {
+            runtime.shutdown();
+        }
+        state.clear_active_session_run(previous_session_id)?;
+        state.set_session_subscription(previous_session_id, false)?;
+    }
 
     state.set_session_subscription(&created.record.id, true)?;
     let runtime = ensure_runtime(
@@ -1218,6 +1324,7 @@ pub async fn create_session(
             json!({
                 "sessionId": created.record.id.clone(),
                 "title": created.record.title.clone(),
+                "replacedSessionId": rotated_from_session_id.clone(),
             }),
         );
         if let Some(ref agent_id_str) = agent_id_for_task {
@@ -1229,7 +1336,12 @@ pub async fn create_session(
             )?;
         }
     }
-    let _ = app_events::emit_session_change(&app, "sessions.create", [created.record.id.clone()]);
+    let changed_session_ids = rotated_from_session_id
+        .clone()
+        .into_iter()
+        .chain(std::iter::once(created.record.id.clone()))
+        .collect::<Vec<_>>();
+    let _ = app_events::emit_session_change(&app, "sessions.create", changed_session_ids);
 
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let decorated_record = spawn_blocking(move || {
@@ -4151,6 +4263,52 @@ mod tests {
         assert_eq!(
             decorated.messageability,
             Some(SessionMessageability::Messageable)
+        );
+    }
+
+    #[test]
+    fn superseded_hidden_agent_sessions_are_closed_in_detail() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        database::apply_migrations(&connection).expect("migrations should succeed");
+
+        connection
+            .execute(
+                "INSERT INTO agents (id, slug, name, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES ('agent-1', 'agent-1', 'Agent 1', 'off', '[]', 0, 0, 0, ?1, ?1)",
+                rusqlite::params!["2026-03-21T00:00:00Z"],
+            )
+            .expect("agent insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO sessions (id, project_id, session_path, transcript_path, title, session_kind, session_status, list_visibility, hidden_reason, dismissed_at, agent_id, worker_type, worker_id, owner_worker_type, owner_worker_id, first_seen_at, last_seen_at, transcript_exists, lifecycle_state, created_at, updated_at) VALUES (?1, NULL, ?2, ?2, 'Hidden superseded agent session', 'agent_main', 'idle', 'hidden', ?3, ?4, 'agent-1', 'agent', 'agent-1', 'agent', 'agent-1', ?5, ?5, 0, 'superseded', ?5, ?5)",
+                rusqlite::params![
+                    "session-agent-superseded-hidden",
+                    "/tmp/session-agent-superseded-hidden.jsonl",
+                    session_list::SESSION_HIDDEN_REASON_SUPERSEDED,
+                    "2026-03-21T00:01:00Z",
+                    "2026-03-21T00:00:00Z"
+                ],
+            )
+            .expect("canonical superseded agent session row should insert");
+
+        let mut record = make_session_record("session-agent-superseded-hidden");
+        record.status = "idle".into();
+        let decorated = decorate_session_record_with_connection(
+            &connection,
+            &std::collections::HashSet::new(),
+            record,
+            false,
+            SessionDecorationSurface::Detail,
+        )
+        .expect("session decoration should succeed");
+
+        assert_eq!(decorated.status, "closed");
+        assert_eq!(
+            decorated.list_visibility,
+            Some(SessionListVisibilityState::Hidden)
+        );
+        assert_eq!(
+            decorated.messageability,
+            Some(SessionMessageability::Closed)
         );
     }
 

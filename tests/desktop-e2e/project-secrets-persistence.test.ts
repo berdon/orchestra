@@ -82,6 +82,7 @@ async function verifySecretViaAgent(
   webdriverSessionId: string,
   options: {
     agentId: string;
+    projectId: string;
     projectSlug: string;
     secretKey: string;
     expectedValue: string;
@@ -90,10 +91,9 @@ async function verifySecretViaAgent(
 ) {
   rmSync(options.outputFile, { force: true });
   const successToken = "SECRET_MATCH_OK";
-  const createdSession = await invokeCommand<{ id: string }>(webdriverSessionId, "create_session", {
-    title: `Secret verification ${Date.now()}`,
-    projectSlug: options.projectSlug,
+  const createdSession = await invokeCommand<{ id: string }>(webdriverSessionId, "ensure_agent_session", {
     agentId: options.agentId,
+    projectId: options.projectId,
   });
 
   await invokeCommand(webdriverSessionId, "send_session_message", {
@@ -124,6 +124,9 @@ async function verifySecretViaAgent(
     (contents) => contents === `${successToken}\n`,
     240_000,
   );
+  await invokeCommand(webdriverSessionId, "unsubscribe_session", {
+    sessionId: createdSession.id,
+  }).catch(() => undefined);
 }
 
 describe("desktop project secret persistence", () => {
@@ -205,6 +208,7 @@ describe("desktop project secret persistence", () => {
       await waitForText(webdriverSessionId, initialDescription);
       await verifySecretViaAgent(webdriverSessionId, {
         agentId: agent.id,
+        projectId: project!.id,
         projectSlug: project!.slug,
         secretKey,
         expectedValue: initialValue,
@@ -230,6 +234,7 @@ describe("desktop project secret persistence", () => {
       await waitForText(webdriverSessionId, rotatedDescription);
       await verifySecretViaAgent(webdriverSessionId, {
         agentId: agent.id,
+        projectId: project!.id,
         projectSlug: project!.slug,
         secretKey,
         expectedValue: rotatedValue,

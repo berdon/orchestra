@@ -50,4 +50,12 @@ if (( ${#positional_args[@]} == 0 )); then
   positional_args=("${AUTO_TEST_FILES[@]}")
 fi
 
-exec npx playwright test --config "${CONFIG_PATH}" "${option_args[@]}" "${positional_args[@]}"
+command=(npx playwright test --config "${CONFIG_PATH}")
+
+if (( ${#option_args[@]} > 0 )); then
+  command+=("${option_args[@]}")
+fi
+
+command+=("${positional_args[@]}")
+
+exec "${command[@]}"

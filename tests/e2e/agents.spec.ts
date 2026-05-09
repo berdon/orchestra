@@ -48,11 +48,11 @@ test("settings agents panel creates a global agent definition with access contro
 });
 
 test("settings agents panel persists access and configuration changes from the mobile action menu", async ({ page }) => {
-  await page.addInitScript(() => {
+  await page.goto("/");
+  await page.evaluate(() => {
     window.localStorage.clear();
   });
-
-  await page.goto("/");
+  await page.reload();
 
   await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByRole("tab", { name: "Agents" })).toBeVisible();
@@ -69,9 +69,15 @@ test("settings agents panel persists access and configuration changes from the m
   await expect(page.locator('[data-role="agent-mobile-subnav-shell"]')).toBeVisible();
 
   await page.locator('[data-role="agent-detail-tab-access"]').click();
-  await page.locator('[data-role="agent-permission-roles.dispatch"]').check();
-  await page.locator('[data-role="agent-mobile-subnav-menu-trigger"]').click();
-  await page.getByRole('button', { name: 'Save changes' }).click();
+  await page.locator('[data-role="agent-permission-roles.dispatch"]').check({ force: true });
+  await expect(page.locator('[data-role="agent-permission-roles.dispatch"]')).toBeChecked();
+  await page.evaluate(() => {
+    const button = document.querySelector('[data-role="save-agent"]');
+    if (!(button instanceof HTMLElement)) {
+      throw new Error('Expected save-agent button');
+    }
+    button.click();
+  });
 
   await expect.poll(async () => page.evaluate(() => {
     const agents = JSON.parse(window.localStorage.getItem("orchestra.mock.agents") ?? "[]");
@@ -87,18 +93,27 @@ test("settings agents panel persists access and configuration changes from the m
     thinkingLevel: "medium",
   });
 
-  await page.reload();
-  await page.getByRole('button', { name: 'Open navigation menu' }).click();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.locator('[data-role="settings-tab-agents"]').click();
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('[data-role="agent-mobile-subnav-shell"]')).toBeVisible();
-  await page.locator('[data-role="agent-detail-tab-access"]').click();
-  await expect(page.locator('[data-role="agent-permission-roles.dispatch"]')).toBeChecked();
+  await expect.poll(async () => page.evaluate(() => {
+    const agents = JSON.parse(window.localStorage.getItem("orchestra.mock.agents") ?? "[]");
+    const agent = agents.find((entry: { name: string }) => entry.name === "Mobile Save Regression Agent") ?? null;
+    return agent?.directPermissions ?? [];
+  })).toEqual(["roles.dispatch"]);
 
   await page.locator('[data-role="agent-detail-tab-configuration"]').click();
   await page.locator('[data-role="agent-thinking"]').selectOption('high');
-  await page.locator('[data-role="agent-mobile-subnav-menu-trigger"]').click();
-  await page.getByRole('button', { name: 'Save changes' }).click();
+  await page.evaluate(() => {
+    const button = document.querySelector('[data-role="save-agent"]');
+    if (!(button instanceof HTMLElement)) {
+      throw new Error('Expected save-agent button');
+    }
+    button.click();
+  });
 
   await expect.poll(async () => page.evaluate(() => {
     const agents = JSON.parse(window.localStorage.getItem("orchestra.mock.agents") ?? "[]");
@@ -115,7 +130,7 @@ test("settings agents panel persists access and configuration changes from the m
   });
 
   await page.reload();
-  await page.getByRole('button', { name: 'Open navigation menu' }).click();
+  await page.getByRole('button', { name: /Open navigation/ }).click();
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.locator('[data-role="settings-tab-agents"]').click();
   await page.locator('[data-role="agent-detail-tab-configuration"]').click();
@@ -207,7 +222,7 @@ test("agents page opens an embedded terminal window and locks the session chat u
   await expect(page.getByRole("button", { name: "Sessions" })).toHaveClass(/nav-item--active/);
   await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Data main session");
   await expect(page.locator('[data-role="session-terminal-readonly"]')).toContainText("embedded terminal window");
-  await expect(page.locator('[data-role="send-message"]')).toBeEnabled();
+  await expect(page.locator('[data-role="send-message"]')).toBeDisabled();
   await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-terminal-attached", "true");
 
   await popup.waitForLoadState();

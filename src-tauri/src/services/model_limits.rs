@@ -535,14 +535,24 @@ fn enforce_capped_model(
         .collect::<HashSet<_>>();
 
     let mut actions = 0;
+    let mut processed_task_ids = HashSet::new();
     for candidate in task_candidates {
+        if !processed_task_ids.insert(candidate.task_id.clone()) {
+            continue;
+        }
         let previous_assignment =
             task_runtime::get_current_lane_assignment(connection, &candidate.task_id)?;
-        let task = task_runtime::pause_task_lane(
+        let task = match task_runtime::pause_task_lane(
             connection,
             &candidate.task_id,
             Some(reason.to_string()),
-        )?;
+        ) {
+            Ok(task) => task,
+            Err(error) if error.contains("is not active or queued and cannot be paused") => {
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         if let Some(session_id) = previous_assignment
             .as_ref()
             .and_then(|assignment| assignment.session_id.as_deref())

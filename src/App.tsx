@@ -46,6 +46,7 @@ import {
 import { listenToAgentCatalogChanges } from "./lib/agentCatalogEvents";
 import {
   isFallbackChatSessionView,
+  shouldSuppressChatSessionRecoveryError,
   shouldSuppressPassiveChatSessionLoadError,
 } from "./lib/sessionErrorBehavior";
 import {
@@ -1883,11 +1884,13 @@ export function App() {
       error: unknown,
       fallback: string,
     ) => {
+      const normalizedError = toUiErrorState(error, fallback);
       if (!shouldSuppressPassiveChatSessionLoadError({
         activePage: activePageRef.current,
         visibleChatSessionId: chatSessionIdStateRef.current,
         erroredSessionId: sessionId,
         liveSessionIds: sessionsRef.current.map((session) => session.id),
+        errorCode: normalizedError.code,
       })) {
         return false;
       }
@@ -3755,6 +3758,7 @@ export function App() {
     }
 
     let cancelled = false;
+    let retryTimeoutId: number | null = null;
     console.info("[orchestra][chat-load:start]", {
       agentId: selectedChatAgentId,
       activeProjectId: activeProject?.id ?? null,
@@ -3766,12 +3770,14 @@ export function App() {
     setLoadingChatSessionAgentId(selectedChatAgentId);
     setSessionActionError(null);
 
-    const recoverChatSession = async () => {
-      return ensureAgentSession(selectedChatAgentId, activeProject?.id ?? null);
-    };
+    const attemptRecoverChatSession = async () => {
+      let retryScheduled = false;
 
-    void recoverChatSession()
-      .then((session) => {
+      try {
+        const session = await ensureAgentSession(
+          selectedChatAgentId,
+          activeProject?.id ?? null,
+        );
         if (cancelled || !session) {
           return;
         }
@@ -3797,41 +3803,92 @@ export function App() {
         lastKnownChatSessionRef.current = session;
         lastKnownChatSessionIdRef.current = session.id;
         lastKnownChatSessionAgentIdRef.current = selectedChatAgentId;
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.error("[orchestra][chat-load:error]", {
-            agentId: selectedChatAgentId,
-            activeProjectId: activeProject?.id ?? null,
-            activeProjectSlug: activeProject?.slug ?? null,
-            visibleChatSessionId: chatSessionId,
-            selectedSnapshotMainSessionId:
-              selectedChatAgentSnapshot?.runtimeState.mainSessionId ?? null,
-            error,
-          });
-          setSessionActionError(
-            toUiErrorState(error, "Unable to open chat session."),
-          );
+      } catch (error) {
+        if (cancelled) {
+          return;
         }
-      })
-      .finally(() => {
-        if (!cancelled) {
+
+        console.error("[orchestra][chat-load:error]", {
+          agentId: selectedChatAgentId,
+          activeProjectId: activeProject?.id ?? null,
+          activeProjectSlug: activeProject?.slug ?? null,
+          visibleChatSessionId: chatSessionId,
+          selectedSnapshotMainSessionId:
+            selectedChatAgentSnapshot?.runtimeState.mainSessionId ?? null,
+          error,
+        });
+
+        const uiError = toUiErrorState(error, "Unable to open chat session.");
+        const fallbackSessionId =
+          chatSessionIdStateRef.current ?? lastKnownChatSessionIdRef.current;
+        const fallbackAgentId =
+          chatSessionAgentIdRef.current ??
+          lastKnownChatSessionAgentIdRef.current;
+        const now = Date.now();
+        const currentRecoveryMiss = chatSessionRecoveryMissRef.current;
+        const recoveryStartedAt =
+          currentRecoveryMiss?.sessionId === fallbackSessionId
+            ? currentRecoveryMiss.startedAt
+            : now;
+
+        if (
+          shouldSuppressChatSessionRecoveryError({
+            activePage: activePageRef.current,
+            selectedAgentId: selectedChatAgentId,
+            fallbackAgentId,
+            fallbackSessionId,
+            errorCode: uiError.code,
+          })
+        ) {
+          chatSessionRecoveryMissRef.current = fallbackSessionId
+            ? {
+                sessionId: fallbackSessionId,
+                startedAt: recoveryStartedAt,
+              }
+            : null;
+          setSessionActionError((current) =>
+            current && isPassiveSessionLoadOperation(current.error.operation)
+              ? null
+              : current,
+          );
+
+          if (now - recoveryStartedAt < CHAT_SESSION_RECOVERY_GRACE_MS) {
+            retryScheduled = true;
+            retryTimeoutId = window.setTimeout(() => {
+              retryTimeoutId = null;
+              void attemptRecoverChatSession();
+            }, 500);
+            return;
+          }
+        }
+
+        setSessionActionError(uiError);
+      } finally {
+        if (!cancelled && !retryScheduled) {
           setLoadingChatSessionAgentId((current) =>
             current === selectedChatAgentId ? null : current,
           );
         }
-      });
+      }
+    };
+
+    void attemptRecoverChatSession();
 
     return () => {
       cancelled = true;
+      if (retryTimeoutId != null) {
+        window.clearTimeout(retryTimeoutId);
+      }
     };
   }, [
     activePage,
     activeProject?.id,
     activeProject?.slug,
+    chatSessionId,
     isDetachedWindow,
     mergeSessionRecord,
     selectedChatAgentId,
+    selectedChatAgentSnapshot?.runtimeState.mainSessionId,
   ]);
 
   useEffect(() => {

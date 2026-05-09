@@ -180,6 +180,9 @@ pub fn dispatch_agent_queue(
     };
 
     let runtime_state = ensure_main_session(project_root, session_dir, project_id, agent_id)?;
+    if entry.delivery_mode == "prompt" && agent_session_has_active_prompt(state, &runtime_state)? {
+        return Ok(false);
+    }
     if entry.delivery_mode == "prompt" {
         deliver_prompt_entry(app, state, session_dir, &runtime_state, &entry)?;
     } else {
@@ -296,6 +299,12 @@ fn deliver_prompt_entry(
     if claimed.is_none() {
         return Ok(());
     }
+    crate::services::task_runtime::activate_queued_agent_assignment_for_queue_entry(
+        &connection,
+        entry,
+        session_id,
+        runtime_cwd,
+    )?;
     let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
         &connection,
         &runtime_state.project_id,
@@ -334,6 +343,22 @@ fn deliver_prompt_entry(
             Err(error)
         }
     }
+}
+
+fn agent_session_has_active_prompt(
+    state: &AppState,
+    runtime_state: &AgentRuntimeState,
+) -> Result<bool, String> {
+    let Some(session_id) = runtime_state.main_session_id.as_deref() else {
+        return Ok(false);
+    };
+
+    if state.is_session_running(session_id)? {
+        return Ok(true);
+    }
+
+    Ok(live_sessions::maybe_runtime(&state.session_runtimes, session_id)
+        .is_some_and(|runtime| runtime.has_active_prompt()))
 }
 
 fn deliver_nonblocking_entry(

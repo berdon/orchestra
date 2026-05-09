@@ -496,6 +496,16 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
     task.blocking = load_blocking_dependencies(connection, task_id)?;
     task.attachments = task_attachments::load_task_attachments(connection, task_id)?;
     task.active_lane_assignment = task_runtime::get_current_lane_assignment(connection, task_id)?;
+    let effective_active_assignment_status = task
+        .active_lane_assignment
+        .as_ref()
+        .map(|assignment| task_runtime::effective_task_review_assignment_status(&task, assignment));
+    if let (Some(assignment), Some(status)) = (
+        task.active_lane_assignment.as_mut(),
+        effective_active_assignment_status,
+    ) {
+        assignment.status = status;
+    }
     task.active_lane_assignment_status = task
         .active_lane_assignment
         .as_ref()

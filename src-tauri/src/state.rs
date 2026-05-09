@@ -15,6 +15,7 @@ use tokio::sync::{broadcast, oneshot};
 use crate::{
     models::{
         AuthorizationContext, LogEntry, RemoteClientRecord, RemoteDeviceRecord, RemoteEventEnvelope,
+        SessionControlOperationState,
     },
     services::{
         agent_terminal::AgentTerminalSession, channels::ChannelRuntimeHandle,
@@ -49,6 +50,7 @@ pub struct AppState {
     pub logs: Mutex<Vec<LogEntry>>,
     desktop_subscribed_sessions: Mutex<HashSet<String>>,
     active_session_runs: Mutex<HashMap<String, String>>,
+    last_session_control_operations: Mutex<HashMap<String, SessionControlOperationState>>,
     pub session_runtimes: Mutex<HashMap<String, Arc<SessionRuntime>>>,
     pub channel_runtimes: Mutex<HashMap<String, ChannelRuntimeHandle>>,
     terminal_windows: Mutex<HashMap<String, String>>,
@@ -105,6 +107,7 @@ impl AppState {
             ]),
             desktop_subscribed_sessions: Mutex::new(HashSet::new()),
             active_session_runs: Mutex::new(HashMap::new()),
+            last_session_control_operations: Mutex::new(HashMap::new()),
             session_runtimes: Mutex::new(HashMap::new()),
             channel_runtimes: Mutex::new(HashMap::new()),
             terminal_windows: Mutex::new(HashMap::new()),
@@ -561,6 +564,36 @@ impl AppState {
         Ok(())
     }
 
+    pub fn set_last_session_control_operation(
+        &self,
+        session_id: &str,
+        operation: SessionControlOperationState,
+    ) -> Result<(), String> {
+        self.last_session_control_operations
+            .lock()
+            .map_err(|_| "Unable to access session control operation state".to_string())?
+            .insert(session_id.to_string(), operation);
+        Ok(())
+    }
+
+    pub fn last_session_control_operation(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<SessionControlOperationState>, String> {
+        self.last_session_control_operations
+            .lock()
+            .map_err(|_| "Unable to access session control operation state".to_string())
+            .map(|operations| operations.get(session_id).cloned())
+    }
+
+    pub fn clear_last_session_control_operation(&self, session_id: &str) -> Result<(), String> {
+        self.last_session_control_operations
+            .lock()
+            .map_err(|_| "Unable to access session control operation state".to_string())?
+            .remove(session_id);
+        Ok(())
+    }
+
     pub fn end_session_run(&self, session_id: &str, run_id: &str) -> Result<(), String> {
         let mut active_runs = self
             .active_session_runs
@@ -735,6 +768,7 @@ impl AppState {
             .lock()
             .map_err(|_| "Unable to access active session run state".to_string())?
             .remove(session_id);
+        let _ = self.clear_last_session_control_operation(session_id);
         let _ = self.sync_session_runtime_subscription(session_id);
         Ok(())
     }

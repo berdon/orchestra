@@ -707,8 +707,8 @@ fn resolve_recipient(
             let task_id = task_id.ok_or_else(|| {
                 "taskId: taskId is required when sending mail to the active assignment.".to_string()
             })?;
-            let assignment = task_runtime::get_active_lane_assignment(connection, task_id)?
-                .ok_or_else(|| format!("Task {task_id} has no active assignment mailbox."))?;
+            let assignment = task_runtime::get_current_lane_assignment(connection, task_id)?
+                .ok_or_else(|| format!("Task {task_id} has no current assignment mailbox."))?;
             if assignment.worker_type == "user" {
                 return Err("User-owned lanes do not expose an active assignment mailbox.".into());
             }
@@ -807,15 +807,19 @@ fn deliver_message(
                 "Active-assignment mail delivery requires live Orchestra app state".to_string()
             })?;
             let context = pi_sessions::session_context_for_project_id(project_id)?;
-            task_runtime::notify_active_assignment_of_unread_mail(
+            match task_runtime::notify_active_assignment_of_unread_mail(
                 app.clone(),
                 state,
                 PathBuf::from(context.session_dir),
                 assignment,
                 &build_unread_mail_delivery_message(task_id, sender_label, priority),
                 priority == PRIORITY_INTERRUPT,
-            )?;
-            mark_delivery_notified(connection, delivery_id)?;
+            ) {
+                Ok(()) => {
+                    mark_delivery_notified(connection, delivery_id)?;
+                }
+                Err(_error) => {}
+            }
             Ok(())
         }
         _ => Ok(()),

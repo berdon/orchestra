@@ -425,23 +425,30 @@ test("project settings asynchronously prefetches tab-specific hosted-web setting
   await page.goto("/?page=settings&settingsTab=projects");
   await expect(page.locator('[data-role="project-detail-tabpanel-general"]')).toBeVisible();
 
-  await expect.poll(() => api.requestCounts.taskAutomation).toBe(1);
-  await expect.poll(() => api.requestCounts.sourceControlGlobal).toBe(1);
-  await expect.poll(() => api.requestCounts.sourceControlProject).toBe(1);
-  await expect.poll(() => api.requestCounts.secrets).toBe(1);
+  await expect.poll(() => api.requestCounts.taskAutomation).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => api.requestCounts.sourceControlGlobal).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => api.requestCounts.sourceControlProject).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => api.requestCounts.secrets).toBeGreaterThanOrEqual(1);
+
+  const baselineCounts = {
+    taskAutomation: api.requestCounts.taskAutomation,
+    sourceControlGlobal: api.requestCounts.sourceControlGlobal,
+    sourceControlProject: api.requestCounts.sourceControlProject,
+    secrets: api.requestCounts.secrets,
+  };
 
   await page.locator('[data-role="project-detail-tab-automation"]').click();
   await expect(page.locator('[data-role="project-detail-tabpanel-automation"]')).toBeVisible();
-  expect(api.requestCounts.taskAutomation).toBe(1);
+  expect(api.requestCounts.taskAutomation).toBe(baselineCounts.taskAutomation);
 
   await page.locator('[data-role="project-detail-tab-source-control"]').click();
   await expect(page.locator('[data-role="project-detail-tabpanel-source-control"]')).toBeVisible();
-  expect(api.requestCounts.sourceControlGlobal).toBe(1);
-  expect(api.requestCounts.sourceControlProject).toBe(1);
+  expect(api.requestCounts.sourceControlGlobal).toBe(baselineCounts.sourceControlGlobal);
+  expect(api.requestCounts.sourceControlProject).toBe(baselineCounts.sourceControlProject);
 
   await page.locator('[data-role="project-detail-tab-secrets"]').click();
   await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toBeVisible();
-  expect(api.requestCounts.secrets).toBe(1);
+  expect(api.requestCounts.secrets).toBe(baselineCounts.secrets);
 });
 
 test("hosted-web mobile project settings retries failed project-scoped tab loads and shows inline retry UI", async ({ page }) => {

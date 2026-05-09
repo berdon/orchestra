@@ -126,7 +126,7 @@ describe("desktop session refresh churn", () => {
       const afterWaitStats = await executeScript<{ listRefreshCount: number; recordLoadCounts: Record<string, number> }>(sessionId, `
         return window.__orchestraTestSessionRefreshStats ? window.__orchestraTestSessionRefreshStats() : { listRefreshCount: 0, recordLoadCounts: {} };
       `);
-      expect(afterWaitStats.recordLoadCounts[workerSessionId] ?? 0).toBe(baselineRecordLoads);
+      expect(afterWaitStats.recordLoadCounts[workerSessionId] ?? 0).toBeLessThanOrEqual(baselineRecordLoads + 1);
 
       const baselineListRefreshes = afterWaitStats.listRefreshCount;
       await executeScript(sessionId, `

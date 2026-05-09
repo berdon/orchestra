@@ -845,6 +845,18 @@ mod tests {
     #[test]
     fn creates_task_browser_session_once_per_task() {
         let mut connection = database::open_connection().expect("connection");
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES (?1, ?2, ?3, NULL, ?4, NULL, ?5, ?5)",
+                rusqlite::params![
+                    "project-3248d9960c2b453e9d7e1b6894db2409",
+                    "browser-test-project",
+                    "Browser Test Project",
+                    "BTP",
+                    "2026-03-21T00:00:00Z"
+                ],
+            )
+            .expect("project should exist");
         let task = tasks::create_task(
             &mut connection,
             Some("project-3248d9960c2b453e9d7e1b6894db2409"),

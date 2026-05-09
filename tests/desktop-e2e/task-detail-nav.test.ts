@@ -50,6 +50,25 @@ async function injectSessionRecord(sessionId: string, record: Record<string, unk
   );
 }
 
+async function dispatchTaskLaneWithRetries(sessionId: string, taskId: string, timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "";
+  while (Date.now() < deadline) {
+    try {
+      await invokeCommand(sessionId, "dispatch_task_lane", { taskId });
+      return;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (!lastError.includes("already processing a message")) {
+        throw error;
+      }
+    }
+    await invokeCommand(sessionId, "run_dispatcher_tick").catch(() => undefined);
+    await sleep(1_000);
+  }
+  throw new Error(`Timed out dispatching task lane ${taskId}: ${lastError}`);
+}
+
 describe("desktop task detail navigation", () => {
   it.skipIf(!isDesktopE2E)("shows the task overview description and returns to the task list from the Tasks nav", async () => {
     const sessionId = await createReadyWebdriverSession();
@@ -156,7 +175,7 @@ describe("desktop task detail navigation", () => {
       });
 
       await setActiveProject(sessionId, project.id);
-      await invokeCommand(sessionId, "dispatch_task_lane", { taskId: task.id });
+      await dispatchTaskLaneWithRetries(sessionId, task.id);
 
       const activeTask = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: task.id }),

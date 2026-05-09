@@ -303,7 +303,7 @@ mod tests {
         services::{database, projects, roles, workflows},
     };
     use std::{
-        env,
+        env, fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
@@ -319,6 +319,32 @@ mod tests {
                 .as_millis()
         );
         env::temp_dir().join(suffix).join("orchestra.db")
+    }
+
+    fn with_temp_storage_root<T>(label: &str, action: impl FnOnce(PathBuf) -> T) -> T {
+        let _guard = crate::test_support::global_test_env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let previous_root = env::var_os("ORCHESTRA_STORAGE_ROOT");
+        let root = env::temp_dir().join(format!(
+            "install-seed-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_millis()
+        ));
+        fs::create_dir_all(&root).expect("temp storage root should create");
+        unsafe {
+            env::set_var("ORCHESTRA_STORAGE_ROOT", &root);
+        }
+        let result = action(root.clone());
+        match previous_root {
+            Some(value) => unsafe { env::set_var("ORCHESTRA_STORAGE_ROOT", value) },
+            None => unsafe { env::remove_var("ORCHESTRA_STORAGE_ROOT") },
+        }
+        let _ = fs::remove_dir_all(root);
+        result
     }
 
     #[test]
@@ -390,21 +416,24 @@ mod tests {
 
     #[test]
     fn seeded_project_deletes_cleanly_and_does_not_reseed() {
-        let path = unique_temp_db("install-seed-delete");
-        database::initialize_database_at(&path).expect("database should initialize");
-        let mut connection = Connection::open(&path).expect("database should open");
+        with_temp_storage_root("delete", |_| {
+            let path = unique_temp_db("install-seed-delete");
+            database::initialize_database_at(&path).expect("database should initialize");
+            let mut connection = Connection::open(&path).expect("database should open");
 
-        ensure_install_baseline_seeded(&mut connection).expect("baseline should seed");
-        projects::delete_project(&connection, "orchestra").expect("seeded project should delete");
-        assert!(projects::list_projects(&connection)
-            .expect("projects should list after delete")
-            .is_empty());
+            ensure_install_baseline_seeded(&mut connection).expect("baseline should seed");
+            projects::delete_project(&connection, "orchestra")
+                .expect("seeded project should delete");
+            assert!(projects::list_projects(&connection)
+                .expect("projects should list after delete")
+                .is_empty());
 
-        ensure_install_baseline_seeded(&mut connection)
-            .expect("baseline state should prevent reseed");
-        assert!(projects::list_projects(&connection)
-            .expect("projects should still be empty")
-            .is_empty());
+            ensure_install_baseline_seeded(&mut connection)
+                .expect("baseline state should prevent reseed");
+            assert!(projects::list_projects(&connection)
+                .expect("projects should still be empty")
+                .is_empty());
+        });
     }
 
     #[test]

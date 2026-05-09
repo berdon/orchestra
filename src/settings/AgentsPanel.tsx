@@ -35,6 +35,34 @@ import type {
   SessionModel,
 } from "../types";
 
+const AGENT_SELECTION_STORAGE_KEY_PREFIX = "orchestra.settings.agents.selected";
+
+function selectedAgentStorageKey(activeProjectId?: string | null) {
+  return `${AGENT_SELECTION_STORAGE_KEY_PREFIX}.${activeProjectId ?? "global"}`;
+}
+
+function loadPersistedSelectedAgentId(activeProjectId?: string | null) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.localStorage.getItem(selectedAgentStorageKey(activeProjectId));
+}
+
+function persistSelectedAgentId(activeProjectId: string | null | undefined, agentId: string | null) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const storageKey = selectedAgentStorageKey(activeProjectId);
+  if (agentId) {
+    window.localStorage.setItem(storageKey, agentId);
+    return;
+  }
+
+  window.localStorage.removeItem(storageKey);
+}
+
 function createBlankAgentDraft(activeProjectId?: string | null): AgentUpsertInput {
   return {
     name: "",
@@ -90,7 +118,7 @@ function formatPiRuntimeDiagnostic(diagnostic: PiExecutableDiagnostic | null) {
 export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpenPiSettings, onOpenSkill, canReadSkills = false }: { activeProjectId?: string | null; piSetupState?: PiSetupState | null; onOpenPiSettings?: () => void; onOpenSkill?: (skillId: string) => void; canReadSkills?: boolean }) {
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => loadPersistedSelectedAgentId(activeProjectId));
   const [agentDraft, setAgentDraft] = useState<AgentUpsertInput>(() => createBlankAgentDraft(activeProjectId));
   const [agentValidation, setAgentValidation] = useState<AgentValidationError[]>([]);
   const [agentActionError, setAgentActionError] = useState<string | null>(null);
@@ -115,6 +143,7 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
   const loadedAgentIdRef = useRef(loadedAgentId);
   const isCreatingAgentRef = useRef(isCreatingAgent);
   const activeProjectIdRef = useRef(activeProjectId);
+  const agentDetailLoadRequestRef = useRef(0);
 
   agentDraftRef.current = agentDraft;
   loadedAgentIdRef.current = loadedAgentId;
@@ -187,12 +216,17 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
       const nextAgents = await listAgents(includeArchivedAgents, activeProjectId);
       setAgents(nextAgents);
       setSelectedAgentId((current) => {
-        if (isCreatingAgent) {
+        if (isCreatingAgentRef.current) {
           return current;
         }
 
         if (current && nextAgents.some((agent) => agent.id === current)) {
           return current;
+        }
+
+        const persisted = loadPersistedSelectedAgentId(activeProjectIdRef.current);
+        if (persisted && nextAgents.some((agent) => agent.id === persisted)) {
+          return persisted;
         }
 
         return nextAgents[0]?.id ?? null;
@@ -205,11 +239,16 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
   }
 
   async function loadAgentDetail(agentId: string) {
+    const requestId = ++agentDetailLoadRequestRef.current;
     setLoadingAgentDetail(true);
     setAgentActionError(null);
 
     try {
       const agent = await getAgent(agentId, activeProjectId);
+      if (requestId !== agentDetailLoadRequestRef.current) {
+        return;
+      }
+
       setAgentDraft(agentToDraft(agent));
       setAgentValidation([]);
       setLoadedAgentId(agent.id);
@@ -223,6 +262,10 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
 
       void Promise.allSettled([getAgentMemoryInfo(agentId), getWorkerOverlay("agent", agent.slug)])
         .then(([memoryResult, overlayResult]) => {
+          if (requestId !== agentDetailLoadRequestRef.current) {
+            return;
+          }
+
           if (memoryResult.status === "fulfilled") {
             setAgentMemoryInfo(memoryResult.value);
           } else {
@@ -251,6 +294,15 @@ export function AgentsPanel({ activeProjectId = null, piSetupState = null, onOpe
   useEffect(() => {
     void loadAgents();
   }, [includeArchivedAgents, activeProjectId]);
+
+  useEffect(() => {
+    if (isCreatingAgent) {
+      persistSelectedAgentId(activeProjectId, null);
+      return;
+    }
+
+    persistSelectedAgentId(activeProjectId, selectedAgentId);
+  }, [activeProjectId, isCreatingAgent, selectedAgentId]);
 
   useEffect(() => {
     let cancelled = false;
