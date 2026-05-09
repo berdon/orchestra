@@ -3694,6 +3694,89 @@ fn dispatch_agent_lane(
     })
 }
 
+fn join_completion_attention_items(items: &[String]) -> String {
+    match items.len() {
+        0 => String::new(),
+        1 => items[0].clone(),
+        2 => format!("{} and {}", items[0], items[1]),
+        _ => format!(
+            "{}, and {}",
+            items[..items.len() - 1].join(", "),
+            items[items.len() - 1]
+        ),
+    }
+}
+
+fn validate_completion_attention_guards(
+    connection: &Connection,
+    task_id: &str,
+    assignment: &TaskLaneAssignment,
+    outcome: &str,
+    authorization: Option<&AuthorizationContext>,
+) -> Result<(), String> {
+    let unread_comments = tasks::list_unread_task_comments(connection, task_id, assignment)?;
+    let unread_mail = if outcome == "success" {
+        messages::list_unread_mail_for_authorization(
+            connection,
+            authorization,
+            assignment.session_id.as_deref(),
+            Some(task_id),
+        )?
+    } else {
+        Vec::new()
+    };
+    let unfinished_todos = if outcome == "success" {
+        tasks::list_unfinished_task_todos(connection, task_id, Some(assignment.lane_id.as_str()))?
+    } else {
+        Vec::new()
+    };
+
+    if unread_comments.is_empty() && unread_mail.is_empty() && unfinished_todos.is_empty() {
+        return Ok(());
+    }
+
+    let mut blockers = Vec::new();
+    let mut next_steps = Vec::new();
+
+    if !unread_comments.is_empty() {
+        blockers.push(format!("{} unread comment(s)", unread_comments.len()));
+        next_steps.push(format!(
+            "Call get_unread_task_comments({task_id}), review them, then call mark_task_comments_read({task_id})."
+        ));
+    }
+
+    if !unread_mail.is_empty() {
+        blockers.push(format!("{} unread mail message(s)", unread_mail.len()));
+        next_steps.push(format!(
+            "Call get_unread_mail({task_id}), review them, then call mark_mail_read({task_id})."
+        ));
+    }
+
+    if !unfinished_todos.is_empty() {
+        blockers.push(format!(
+            "{} unfinished todo item(s) for lane {}",
+            unfinished_todos.len(),
+            assignment.lane_id,
+        ));
+        next_steps.push(format!(
+            "Call list_unfinished_task_todos({task_id}, laneId={}), review them, then finish or reopen them.",
+            assignment.lane_id,
+        ));
+    }
+
+    let blocked_action = if outcome == "success" {
+        "complete as success"
+    } else {
+        "use a completion tool"
+    };
+
+    Err(format!(
+        "Task {task_id} cannot {blocked_action} yet because it has {}. {} Clear those items and then try the completion tool again.",
+        join_completion_attention_items(&blockers),
+        next_steps.join(" "),
+    ))
+}
+
 fn complete_lane(
     connection: &mut Connection,
     project_root: &Path,
@@ -3726,38 +3809,13 @@ fn complete_lane(
             return Err(format!("Task {task_id} is not currently running"));
         }
         validate_assignment_authorization(assignment, authorization)?;
-        let unread_comments = tasks::list_unread_task_comments(connection, task_id, assignment)?;
-        if !unread_comments.is_empty() {
-            return Err(format!(
-                "Task {task_id} has {} unread comment(s). Call get_unread_task_comments({task_id}), review them, then call mark_task_comments_read({task_id}) before using a completion tool.",
-                unread_comments.len()
-            ));
-        }
-        let unread_mail = messages::list_unread_mail_for_authorization(
-            connection,
-            authorization,
-            assignment.session_id.as_deref(),
-            Some(task_id),
-        )?;
-        if !unread_mail.is_empty() {
-            return Err(format!(
-                "Task {task_id} has {} unread mail message(s). Call get_unread_mail({task_id}), review them, then call mark_mail_read({task_id}) before using a completion tool.",
-                unread_mail.len()
-            ));
-        }
-        let unfinished_todos = tasks::list_unfinished_task_todos(
+        validate_completion_attention_guards(
             connection,
             task_id,
-            Some(assignment.lane_id.as_str()),
+            assignment,
+            outcome,
+            authorization,
         )?;
-        if !unfinished_todos.is_empty() {
-            return Err(format!(
-                "Task {task_id} still has {} unfinished todo item(s) for lane {}. Call list_unfinished_task_todos({task_id}, laneId={}) to review them, then finish or reopen them before using a completion tool.",
-                unfinished_todos.len(),
-                assignment.lane_id,
-                assignment.lane_id,
-            ));
-        }
     } else {
         if current_assignment.as_ref().is_some_and(|assignment| {
             matches!(
@@ -5526,8 +5584,7 @@ fn orchestra_working_rules_block() -> String {
         "14. Use list_task_comments, search_task_comments, and list_task_attachments when you need discussion or attachment details beyond the intentionally bounded task context.",
         "15. If you need to come back to something after a short wait, external delay, or timed checkpoint, call remind_me with a concrete message and a delay in seconds or minutes so Orchestra can re-prompt you later.",
         "16. Before you transition the task or request help, add a comment explaining exactly what happened, what changed, and why you are choosing that transition or asking for help.",
-        "17. Immediately before any completion tool, call list_unfinished_task_todos for the canonical task ID and current lane. Finish or explicitly reopen every remaining lane todo before you try to transition.",
-        "18. When the lane is finished, explicitly transition it with the correct completion tool.",
+        "17. When the lane is finished, explicitly transition it with the correct completion tool. Orchestra will enforce any remaining unread-comment, unread-mail, or unfinished-todo guardrails at completion time.",
     ]
     .join("\n")
 }
@@ -5542,15 +5599,15 @@ fn orchestra_tool_help_block() -> String {
         "- search_task_comments(taskId, query, limit?): Call this tool to search older or targeted task comments without pulling the full thread history.",
         "- search_task_comment_file_mentions(taskId, query, limit?): Call this tool to search repository file-path mentions referenced in task comments.",
         "- list_task_todos(taskId): Call this tool to inspect every todo recorded on the task across lanes.",
-        "- list_unfinished_task_todos(taskId, laneId?): Call this tool to inspect only unfinished todos. Use it before any completion tool, usually scoped to the current lane.",
+        "- list_unfinished_task_todos(taskId, laneId?): Call this tool to inspect only unfinished todos. Provide laneId when you want just the current lane's checklist items.",
         "- get_task_repositories(taskId): Call this tool to list the task-associated repositories and their current workspace paths before you read or modify repository files.",
         "- list_task_file_references(taskId): Call this tool to inspect which repository files are already tracked on the task before adding more.",
         "- add_task_file_reference(taskId, repositoryId, relativePath): Call this tool when you create or materially change a large or central repository file that should stay visible on the task. Provide the repository id plus a repository-relative path such as docs/design.md. Good candidates are design docs, diagrams, plans, ADRs, runbooks, and similar non-source artifacts. Do not use this for ordinary source code changes unless explicitly asked.",
         "- remove_task_file_reference(referenceId): Call this tool if a tracked repository file reference is no longer relevant or was added by mistake.",
         "- comment_on_task(taskId, author, message, interruptAgent?, parentCommentId?): Call this tool to leave a durable note in Orchestra. Set parentCommentId when you are replying to a specific existing comment so the discussion stays threaded.",
-        "- get_unread_task_comments(taskId): Call this tool whenever you resume work, when Orchestra tells you to check unread mail, and again immediately before any completion tool. It returns task comments you have not yet acknowledged for the active session.",
+        "- get_unread_task_comments(taskId): Call this tool whenever you resume work or when Orchestra tells you to check unread comments. It returns task comments you have not yet acknowledged for the active session.",
         "- mark_task_comments_read(taskId, commentIds?): After you read and incorporate unread task comments, call this tool to acknowledge them. If commentIds is omitted, it marks all current unread comments for the active session as read.",
-        "- get_unread_mail(taskId?): Call this tool whenever you resume work, when Orchestra tells you to check mail, and again immediately before any completion tool. With a taskId it includes both the active assignment mailbox and any direct unread agent mail for the current worker; without taskId it returns direct unread mail for the current worker session.",
+        "- get_unread_mail(taskId?): Call this tool whenever you resume work or when Orchestra tells you to check mail. With a taskId it includes both the active assignment mailbox and any direct unread agent mail for the current worker; without taskId it returns direct unread mail for the current worker session.",
         "- mark_mail_read(taskId?, deliveryIds?): After you read and handle unread mail, call this tool to acknowledge it. If deliveryIds is omitted, it marks all currently visible unread mail for the worker session as read.",
         "- send_mail(projectId?, taskId?, recipientType, recipientId?, body, priority?): Call this tool to send mailbox messages to the user, another agent, or the active assignment mailbox for a task. Use recipientType user, agent, or active_assignment. Set priority to interrupt when the recipient should be steered immediately.",
         "- remind_me(message, delaySeconds? | delayMinutes?): Call this tool to schedule a message back to yourself after a short delay. Use it when you need Orchestra to nudge you after waiting, polling, or giving another process time to finish.",
@@ -5575,9 +5632,7 @@ fn orchestra_completion_rules_block() -> String {
         "- You must end this lane by invoking exactly one Orchestra completion tool: complete_lane_as_success, complete_lane_as_failure, or request_user_intervention.",
         "- You are not done and cannot stop until you have actually called one of those tools.",
         "- Every completion tool requires a concise lane summary. Prepare that summary before you transition.",
-        "- Immediately before any completion tool, call get_unread_task_comments for the canonical task ID, review any unread comments, and then call mark_task_comments_read before completing the lane.",
-        "- Immediately before any completion tool, call get_unread_mail for the canonical task ID, review any unread mail, and then call mark_mail_read before completing the lane.",
-        "- Immediately before any completion tool, call list_unfinished_task_todos for the canonical task ID and current lane. Finish or intentionally reopen every remaining lane todo before you transition.",
+        "- Completion tools will stop and tell you what to clear next if unread comments, unread mail, or unfinished lane todos still block the transition.",
         "- If any completion or transition step fails, add a task comment describing the failure and then call request_user_intervention instead of silently stopping.",
         "- If you are unsure whether the lane is complete, refresh with get_task_context, leave a comment explaining the uncertainty, and then choose the correct transition deliberately.",
         "- Do not just summarize what you would do. Actually call the Orchestra tools to update the task state and leave comments that explain what happened and why.",
@@ -6706,6 +6761,7 @@ mod tests {
         assert!(prompt.contains(
             "- get_unread_task_comments(taskId): Call this tool whenever you resume work"
         ));
+        assert!(!prompt.contains("again immediately before any completion tool"));
         assert!(prompt.contains("- mark_task_comments_read(taskId, commentIds?): After you read and incorporate unread task comments"));
         assert!(
             prompt.contains("- get_unread_mail(taskId?): Call this tool whenever you resume work")
@@ -6724,10 +6780,13 @@ mod tests {
         assert!(prompt
             .contains("You must end this lane by invoking exactly one Orchestra completion tool"));
         assert!(prompt.contains("Every completion tool requires a concise lane summary"));
-        assert!(prompt
+        assert!(prompt.contains(
+            "Completion tools will stop and tell you what to clear next if unread comments, unread mail, or unfinished lane todos still block the transition."
+        ));
+        assert!(!prompt
             .contains("Immediately before any completion tool, call get_unread_task_comments"));
-        assert!(prompt.contains("Immediately before any completion tool, call get_unread_mail"));
-        assert!(prompt
+        assert!(!prompt.contains("Immediately before any completion tool, call get_unread_mail"));
+        assert!(!prompt
             .contains("Immediately before any completion tool, call list_unfinished_task_todos"));
         assert!(prompt.contains(
             "If any completion or transition step fails, add a task comment describing the failure"
@@ -9342,7 +9401,139 @@ mod tests {
     }
 
     #[test]
-    fn completion_fails_while_current_lane_todos_remain_unfinished() {
+    fn completion_requires_unread_mail_to_be_acknowledged_before_success() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Mail Completer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let now = now_iso();
+        let project_root = init_test_repo("task-runtime-unread-mail");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Unread mail completion guard".into(),
+                description: Some("Do not finish before reading mail.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-review".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("agent lane should dispatch");
+        let authorization = AuthorizationContext {
+            actor_type: "agent".into(),
+            actor_id: agent.id.clone(),
+        };
+        let _message = messages::send_mailbox_message_from_user_without_app(
+            &connection,
+            crate::models::SendMailboxMessageInput {
+                project_id: None,
+                task_id: Some(task.id.clone()),
+                recipient_type: "agent".into(),
+                recipient_id: Some(agent.id.clone()),
+                sender_label: Some("User".into()),
+                body: "Please read this before finishing.".into(),
+                priority: None,
+            },
+        )
+        .expect("mail should send");
+
+        let error = complete_lane_as_success(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("Tried to finish before reading mail".into()),
+            Some(&authorization),
+        )
+        .expect_err("completion should fail while unread mail remains");
+        assert!(error.contains("unread mail message"));
+        assert!(error.contains("get_unread_mail"));
+        assert!(error.contains("mark_mail_read"));
+
+        let unread = messages::list_unread_mail_for_authorization(
+            &connection,
+            Some(&authorization),
+            assignment.session_id.as_deref(),
+            Some(task.id.as_str()),
+        )
+        .expect("unread mail should load");
+        assert_eq!(unread.len(), 1);
+        messages::mark_mail_read_for_authorization(
+            &connection,
+            Some(&authorization),
+            assignment.session_id.as_deref(),
+            Some(task.id.as_str()),
+            None,
+        )
+        .expect("unread mail should mark read");
+
+        let updated = complete_lane_as_success(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("Mail handled".into()),
+            Some(&authorization),
+        )
+        .expect("completion should succeed after acknowledging mail");
+        assert_eq!(updated.status, "completed");
+    }
+
+    #[test]
+    fn success_completion_reports_mail_and_todo_blockers_together() {
         let mut connection = in_memory_connection();
         let role = roles::create_role(
             &mut connection,
@@ -9413,6 +9604,10 @@ mod tests {
 
         let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
             .expect("agent lane should dispatch");
+        let authorization = AuthorizationContext {
+            actor_type: "agent".into(),
+            actor_id: agent.id.clone(),
+        };
         let todo = tasks::add_task_todo(
             &mut connection,
             &task.id,
@@ -9422,6 +9617,19 @@ mod tests {
             },
         )
         .expect("todo should add");
+        let _message = messages::send_mailbox_message_from_user_without_app(
+            &connection,
+            crate::models::SendMailboxMessageInput {
+                project_id: None,
+                task_id: Some(task.id.clone()),
+                recipient_type: "agent".into(),
+                recipient_id: Some(agent.id.clone()),
+                sender_label: Some("User".into()),
+                body: "Please read this before finishing.".into(),
+                priority: None,
+            },
+        )
+        .expect("mail should send");
 
         let error = complete_lane_as_success(
             &mut connection,
@@ -9429,13 +9637,13 @@ mod tests {
             &session_dir,
             &task.id,
             Some("Tried to finish too early".into()),
-            Some(&AuthorizationContext {
-                actor_type: "agent".into(),
-                actor_id: agent.id.clone(),
-            }),
+            Some(&authorization),
         )
-        .expect_err("completion should fail while todos remain");
+        .expect_err("completion should fail while mail and todos remain");
+        assert!(error.contains("unread mail message"));
         assert!(error.contains("unfinished todo item"));
+        assert!(error.contains("get_unread_mail"));
+        assert!(error.contains("mark_mail_read"));
         assert!(error.contains("list_unfinished_task_todos"));
 
         let unfinished = tasks::list_unfinished_task_todos(
@@ -9447,20 +9655,147 @@ mod tests {
         assert_eq!(unfinished.len(), 1);
         assert_eq!(unfinished[0].id, todo.id);
 
+        messages::mark_mail_read_for_authorization(
+            &connection,
+            Some(&authorization),
+            assignment.session_id.as_deref(),
+            Some(task.id.as_str()),
+            None,
+        )
+        .expect("unread mail should mark read");
         tasks::mark_task_todo_finished(&connection, &todo.id).expect("todo should mark finished");
         let updated = complete_lane_as_success(
             &mut connection,
             &project_root,
             &session_dir,
             &task.id,
-            Some("Todo finished".into()),
-            Some(&AuthorizationContext {
-                actor_type: "agent".into(),
-                actor_id: agent.id.clone(),
-            }),
+            Some("Checklist cleared".into()),
+            Some(&authorization),
         )
-        .expect("completion should succeed once todos are finished");
+        .expect("completion should succeed once mail and todos are cleared");
         assert_eq!(updated.status, "completed");
+    }
+
+    #[test]
+    fn request_user_intervention_is_not_blocked_by_unread_mail_or_unfinished_todos() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Intervention Completer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let now = now_iso();
+        let project_root = init_test_repo("task-runtime-intervention-gating");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Intervention should bypass success-only checklist".into(),
+                description: Some(
+                    "Allow user intervention even while success-only checklist items remain."
+                        .into(),
+                ),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-review".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("agent lane should dispatch");
+        let authorization = AuthorizationContext {
+            actor_type: "agent".into(),
+            actor_id: agent.id.clone(),
+        };
+        let _todo = tasks::add_task_todo(
+            &mut connection,
+            &task.id,
+            crate::models::TaskTodoInput {
+                lane_id: Some(assignment.lane_id.clone()),
+                description: "Confirm reviewer checklist is done".into(),
+            },
+        )
+        .expect("todo should add");
+        let _message = messages::send_mailbox_message_from_user_without_app(
+            &connection,
+            crate::models::SendMailboxMessageInput {
+                project_id: None,
+                task_id: Some(task.id.clone()),
+                recipient_type: "agent".into(),
+                recipient_id: Some(agent.id.clone()),
+                sender_label: Some("User".into()),
+                body: "Please read this before finishing.".into(),
+                priority: None,
+            },
+        )
+        .expect("mail should send");
+
+        let awaiting_intervention = request_user_intervention(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("Need help from the user".into()),
+            Some(&authorization),
+        )
+        .expect("user intervention should not be blocked by success-only checks");
+        assert_eq!(awaiting_intervention.status, "in_review");
+        assert_eq!(awaiting_intervention.assignee_type, "user");
+        assert_eq!(
+            awaiting_intervention
+                .active_lane_assignment
+                .as_ref()
+                .map(|entry| entry.status.as_str()),
+            Some(ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION)
+        );
     }
 
     #[test]

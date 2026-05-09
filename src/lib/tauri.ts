@@ -6110,6 +6110,40 @@ function resolveMockTaskTodo(todoId: string) {
   throw new Error(`Task todo ${todoId} was not found`);
 }
 
+function joinMockCompletionAttentionItems(items: string[]) {
+  if (items.length === 0) {
+    return "";
+  }
+  if (items.length === 1) {
+    return items[0]!;
+  }
+  if (items.length === 2) {
+    return `${items[0]} and ${items[1]}`;
+  }
+  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+}
+
+function listMockCompletionBlockingMail(task: TaskDetail) {
+  const assignment = task.activeLaneAssignment;
+  if (!assignment) {
+    return [] as MailboxMessage[];
+  }
+
+  return getStoredMailboxMessages().filter((message) => {
+    if (message.readAt || message.archivedAt) {
+      return false;
+    }
+    if (message.assignmentId === assignment.id) {
+      return true;
+    }
+    return (
+      assignment.workerType === "agent" &&
+      message.recipientType === "agent" &&
+      message.recipientId === assignment.workerId
+    );
+  });
+}
+
 async function completeMockTaskLane(
   taskId: string,
   outcome: "success" | "failure" | "needs_user",
@@ -6138,10 +6172,28 @@ async function completeMockTaskLane(
     throw new Error("summary: Lane summaries must be 500 characters or fewer.");
   }
   const normalizedNotes = notes?.trim() || null;
-  const unfinishedLaneTodos = listMockTaskTodos(taskId, lane.id, false);
-  if (unfinishedLaneTodos.length > 0) {
+  const unreadMail = outcome === "success" ? listMockCompletionBlockingMail(task) : [];
+  const unfinishedLaneTodos =
+    outcome === "success" ? listMockTaskTodos(taskId, lane.id, false) : [];
+  if (unreadMail.length > 0 || unfinishedLaneTodos.length > 0) {
+    const blockers: string[] = [];
+    const nextSteps: string[] = [];
+    if (unreadMail.length > 0) {
+      blockers.push(`${unreadMail.length} unread mail message(s)`);
+      nextSteps.push(
+        `Call get_unread_mail(${taskId}), review them, then call mark_mail_read(${taskId}).`,
+      );
+    }
+    if (unfinishedLaneTodos.length > 0) {
+      blockers.push(
+        `${unfinishedLaneTodos.length} unfinished todo item(s) for lane ${lane.id}`,
+      );
+      nextSteps.push(
+        `Call list_unfinished_task_todos(${taskId}, laneId=${lane.id}), review them, then finish or reopen them.`,
+      );
+    }
     throw new Error(
-      `Task ${taskId} still has ${unfinishedLaneTodos.length} unfinished todo item(s) for lane ${lane.id}. Finish or reopen them before using a completion tool.`,
+      `Task ${taskId} cannot complete as success yet because it has ${joinMockCompletionAttentionItems(blockers)}. ${nextSteps.join(" ")} Clear those items and then try the completion tool again.`,
     );
   }
 

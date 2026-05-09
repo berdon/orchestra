@@ -333,6 +333,194 @@ describe("blocked task runtime mock parity", () => {
     expect(unblocked.readyForDispatch).toBe(true);
   });
 
+  test("mock mode blocks successful completion on unread mail and unfinished todos until both are cleared", async () => {
+    const { createProject } = await import("../src/lib/projects");
+    const { createRole } = await import("../src/lib/roles");
+    const {
+      addTaskTodo,
+      completeLaneAsSuccess,
+      createTask,
+      createWorkflow,
+      dispatchTaskLane,
+      markTaskTodoFinished,
+      sendMailboxMessage,
+    } = await import("../src/lib/tauri");
+
+    await createProject({
+      name: "Mock Completion Guard Project",
+      description: "mock project",
+      taskPrefix: "MCG",
+    });
+    const role = await createRole({
+      name: "Mock Completion Guard Role",
+      description: "Role for mock completion guard coverage.",
+      systemPrompt: "Work the task.",
+      capacity: 1,
+    });
+    const workflow = await createWorkflow({
+      name: "Mock Completion Guard Flow",
+      description: "Single role lane flow.",
+      lanes: [
+        {
+          id: "lane-review",
+          key: "review",
+          name: "Review",
+          order: 0,
+          assignedEntityType: "role",
+          assignedEntityId: role.slug,
+          entryPromptTemplate: "Review the work.",
+          useSeparateWorktree: false,
+          requireUserApprovalOnSuccess: false,
+          needsWorkTargetLaneId: null,
+          successTransitionType: "end",
+          successTargetLaneId: null,
+          failureTransitionType: "end",
+          failureTargetLaneId: null,
+        },
+      ],
+    });
+    const task = await createTask({
+      title: "Mock completion guard task",
+      description: "Completion should stop until mail and todos are cleared.",
+      type: "task",
+      status: "ready",
+      priority: "P1",
+      workflowId: workflow.id,
+      currentLaneId: "lane-review",
+      assigneeType: "unassigned",
+      assigneeId: null,
+    });
+
+    const dispatched = await dispatchTaskLane(task.id);
+    const todo = await addTaskTodo(task.id, {
+      laneId: dispatched.currentLaneId!,
+      description: "Confirm review checklist is complete",
+    });
+    await sendMailboxMessage({
+      taskId: task.id,
+      recipientType: "active_assignment",
+      body: "Please read this before finishing.",
+    });
+
+    const error = await completeLaneAsSuccess(
+      task.id,
+      "Tried to finish too early.",
+      "completion guard test",
+    ).catch((entry) => entry as Error);
+    expect(String(error)).toContain("unread mail message");
+    expect(String(error)).toContain("unfinished todo item");
+    expect(String(error)).toContain("get_unread_mail");
+    expect(String(error)).toContain("list_unfinished_task_todos");
+
+    await markTaskTodoFinished(todo.id);
+    const mailbox = JSON.parse(
+      window.localStorage.getItem("orchestra.mock.mailbox") ?? "[]",
+    ) as Array<Record<string, string | null>>;
+    const readAt = new Date().toISOString();
+    window.localStorage.setItem(
+      "orchestra.mock.mailbox",
+      JSON.stringify(
+        mailbox.map((message) =>
+          message.taskId === task.id && !message.readAt
+            ? {
+                ...message,
+                readAt,
+                readSessionId: "mock-session",
+                updatedAt: readAt,
+              }
+            : message,
+        ),
+      ),
+    );
+
+    const completed = await completeLaneAsSuccess(
+      task.id,
+      "Cleared mail and todos.",
+      "completion guard test complete",
+    );
+    expect(completed.status).toBe("completed");
+  });
+
+  test("mock mode allows user intervention even when success-only blockers remain", async () => {
+    const { createProject } = await import("../src/lib/projects");
+    const { createRole } = await import("../src/lib/roles");
+    const {
+      addTaskTodo,
+      createTask,
+      createWorkflow,
+      dispatchTaskLane,
+      requestUserIntervention,
+      sendMailboxMessage,
+    } = await import("../src/lib/tauri");
+
+    await createProject({
+      name: "Mock Intervention Guard Project",
+      description: "mock project",
+      taskPrefix: "MIG",
+    });
+    const role = await createRole({
+      name: "Mock Intervention Guard Role",
+      description: "Role for mock intervention guard coverage.",
+      systemPrompt: "Work the task.",
+      capacity: 1,
+    });
+    const workflow = await createWorkflow({
+      name: "Mock Intervention Guard Flow",
+      description: "Single role lane flow.",
+      lanes: [
+        {
+          id: "lane-review",
+          key: "review",
+          name: "Review",
+          order: 0,
+          assignedEntityType: "role",
+          assignedEntityId: role.slug,
+          entryPromptTemplate: "Review the work.",
+          useSeparateWorktree: false,
+          requireUserApprovalOnSuccess: false,
+          needsWorkTargetLaneId: null,
+          successTransitionType: "end",
+          successTargetLaneId: null,
+          failureTransitionType: "end",
+          failureTargetLaneId: null,
+        },
+      ],
+    });
+    const task = await createTask({
+      title: "Mock intervention guard task",
+      description: "Intervention should ignore success-only blockers.",
+      type: "task",
+      status: "ready",
+      priority: "P1",
+      workflowId: workflow.id,
+      currentLaneId: "lane-review",
+      assigneeType: "unassigned",
+      assigneeId: null,
+    });
+
+    const dispatched = await dispatchTaskLane(task.id);
+    await addTaskTodo(task.id, {
+      laneId: dispatched.currentLaneId!,
+      description: "Confirm review checklist is complete",
+    });
+    await sendMailboxMessage({
+      taskId: task.id,
+      recipientType: "active_assignment",
+      body: "Please read this before finishing.",
+    });
+
+    const paused = await requestUserIntervention(
+      task.id,
+      "Need help from the user.",
+      "intervention guard test",
+    );
+    expect(paused.status).toBe("in_review");
+    expect(paused.assigneeType).toBe("user");
+    expect(paused.activeLaneAssignment?.status).toBe(
+      "awaiting_user_intervention",
+    );
+  });
+
   test("mock mode rejects dispatch for initially blocked tasks", async () => {
     const { createProject } = await import("../src/lib/projects");
     const { createRole } = await import("../src/lib/roles");

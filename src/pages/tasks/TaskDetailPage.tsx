@@ -1763,7 +1763,7 @@ export function TaskDetailPage({
               <>
                 {unfinishedCurrentLaneTodos.length ? (
                   <p className="error-copy" data-role="task-current-lane-todo-warning">
-                    {unfinishedCurrentLaneTodos.length} unfinished todo{unfinishedCurrentLaneTodos.length === 1 ? "" : "s"} remain for the current lane. Orchestra will block lane transitions until they are completed.
+                    {unfinishedCurrentLaneTodos.length} unfinished todo{unfinishedCurrentLaneTodos.length === 1 ? "" : "s"} remain for the current lane. Orchestra will block successful lane completion until they are completed.
                   </p>
                 ) : null}
 
@@ -2293,7 +2293,7 @@ export function TaskDetailPage({
                   </div>
                   <span className="status-badge status-badge--warning">{unfinishedCurrentLaneTodos.length} open</span>
                 </div>
-                <p className="error-copy">This lane still has unfinished todo items. Orchestra will block transitions until they are marked finished.</p>
+                <p className="error-copy">This lane still has unfinished todo items. Orchestra will block successful lane completion until they are marked finished.</p>
                 <ul className="task-detail-summary__history-list">
                   {unfinishedCurrentLaneTodos.map((todo) => (
                     <li key={todo.id}>{todo.description}</li>
