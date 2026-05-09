@@ -6,9 +6,9 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        AgentDefinition, AgentTaskContext, AuthorizationContext, RepositoryRecord,
-        RoleDefinition, TaskComment, TaskDetail, TaskLaneAssignment, TaskRepository,
-        WorkflowDefinition, WorkflowLane,
+        AgentDefinition, AgentTaskContext, AuthorizationContext, RepositoryRecord, RoleDefinition,
+        TaskComment, TaskDetail, TaskLaneAssignment, TaskRepository, WorkflowDefinition,
+        WorkflowLane,
     },
     services::{
         agent_dispatch, agent_runtime, agents, live_sessions, messages, notifications, pi_sessions,
@@ -971,6 +971,142 @@ pub fn clear_task_runtime_claims_preserving_status(
     })
 }
 
+pub fn pause_task_runtime_claims_for_manual_block(
+    connection: &Connection,
+    task_id: &str,
+    notes: Option<String>,
+) -> Result<TaskRuntimeClaimCleanup, String> {
+    let task = tasks::get_task_context(connection, task_id)?;
+    let assignments = list_open_task_lane_assignments(connection, task_id)?;
+    let Some(current_assignment) = get_current_lane_assignment(connection, task_id)? else {
+        return Ok(TaskRuntimeClaimCleanup {
+            assignments,
+            changed: false,
+        });
+    };
+
+    if task.dependency_blocked {
+        return Ok(TaskRuntimeClaimCleanup {
+            assignments,
+            changed: false,
+        });
+    }
+
+    let already_paused = assignments
+        .iter()
+        .all(|assignment| assignment.status == ASSIGNMENT_STATUS_PAUSED_BY_USER)
+        && task.status == "blocked"
+        && task.assignee_type == current_assignment.worker_type
+        && task.assignee_id == current_assignment.worker_id
+        && task.current_lane_id.as_deref() == Some(current_assignment.lane_id.as_str());
+    if already_paused {
+        return Ok(TaskRuntimeClaimCleanup {
+            assignments,
+            changed: false,
+        });
+    }
+
+    let now = now_iso();
+    let normalized_notes = normalize_optional(notes);
+    let mut changed = false;
+
+    let paused_assignments = connection
+        .execute(
+            "UPDATE task_lane_assignments SET status = ?2, pending_outcome = 'paused', completion_summary = NULL, completion_notes = ?4, completed_at = NULL, updated_at = ?3 WHERE task_id = ?1 AND status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')",
+            params![task_id, ASSIGNMENT_STATUS_PAUSED_BY_USER, now, normalized_notes.as_deref()],
+        )
+        .map_err(|error| format!("Unable to pause open task lane assignments for blocked task {task_id}: {error}"))?;
+    changed |= paused_assignments > 0;
+
+    let paused_agent_queue = connection
+        .execute(
+            "UPDATE agent_queue_entries SET status = 'paused_by_user', completed_at = NULL, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'dispatched', 'paused_by_user')",
+            params![task_id, now],
+        )
+        .map_err(|error| format!("Unable to pause agent queue entries for blocked task {task_id}: {error}"))?;
+    changed |= paused_agent_queue > 0;
+
+    let paused_role_queue = connection
+        .execute(
+            "UPDATE role_queue_entries SET status = 'paused_by_user', completed_at = NULL, updated_at = ?2 WHERE source_task_id = ?1 AND status IN ('queued', 'assigned', 'paused_by_user')",
+            params![task_id, now],
+        )
+        .map_err(|error| format!("Unable to pause role queue entries for blocked task {task_id}: {error}"))?;
+    changed |= paused_role_queue > 0;
+
+    for assignment in &assignments {
+        if assignment.worker_type == "agent" {
+            if let Some(worker_id) = assignment.worker_id.as_deref() {
+                let agent = agents::get_agent(connection, worker_id).map_err(|error| {
+                    format!("Unable to load agent {worker_id} for blocked task {task_id}: {error}")
+                })?;
+                let effective_project_id = if agent.scope == "global" {
+                    "orchestra".to_string()
+                } else {
+                    task.project_id.clone()
+                };
+                let updated = connection
+                    .execute(
+                        "UPDATE agent_runtime_states SET status = 'waiting', last_error = ?4, updated_at = ?3 WHERE project_id = ?1 AND agent_id = ?2",
+                        params![effective_project_id, worker_id, now, normalized_notes.as_deref()],
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "Unable to pause agent runtime state for blocked task {task_id}: {error}"
+                        )
+                    })?;
+                changed |= updated > 0;
+            }
+            continue;
+        }
+
+        if let Some(role_instance_id) = assignment.role_instance_id.as_deref() {
+            let updated = connection
+                .execute(
+                    "UPDATE role_instances SET status = 'waiting', updated_at = ?2 WHERE id = ?1",
+                    params![role_instance_id, now],
+                )
+                .map_err(|error| {
+                    format!(
+                        "Unable to pause role instance {role_instance_id} for blocked task {task_id}: {error}"
+                    )
+                })?;
+            changed |= updated > 0;
+        }
+    }
+
+    let updated_task = connection
+        .execute(
+            r#"
+            UPDATE tasks
+            SET current_lane_id = ?2,
+                assignee_type = ?3,
+                assignee_id = ?4,
+                status = 'blocked',
+                updated_at = ?5
+            WHERE id = ?1
+            "#,
+            params![
+                task_id,
+                current_assignment.lane_id,
+                current_assignment.worker_type,
+                current_assignment.worker_id,
+                now,
+            ],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to preserve blocked task {task_id} in its current lane assignment: {error}"
+            )
+        })?;
+    changed |= updated_task > 0;
+
+    Ok(TaskRuntimeClaimCleanup {
+        assignments,
+        changed,
+    })
+}
+
 pub fn cancel_dispatch_for_dependency_block(
     connection: &mut Connection,
     task_id: &str,
@@ -1314,7 +1450,10 @@ fn stale_assignment_reason_with_options(
     let task = tasks::get_task_context(connection, &assignment.task_id)?;
     let blocked_active_assignment =
         task.status == "blocked" && assignment.status == ASSIGNMENT_STATUS_ACTIVE;
-    if task.status == "blocked" && !blocked_active_assignment {
+    let blocked_paused_assignment = task.status == "blocked"
+        && !task.dependency_blocked
+        && assignment.status == ASSIGNMENT_STATUS_PAUSED_BY_USER;
+    if task.status == "blocked" && !blocked_active_assignment && !blocked_paused_assignment {
         return Ok(Some(
             "task is blocked and should not retain worker runtime".into(),
         ));
@@ -4492,6 +4631,13 @@ pub fn resume_task_lane(
     connection: &Connection,
     task_id: &str,
 ) -> Result<TaskLaneAssignment, String> {
+    let task = tasks::get_task_context(connection, task_id)?;
+    if task.dependency_blocked {
+        return Err(format!(
+            "Task {task_id} is blocked by unresolved dependencies or unfinished subtasks and cannot resume until those blockers are resolved"
+        ));
+    }
+
     reactivate_task_lane_assignment(
         connection,
         task_id,
@@ -5926,7 +6072,11 @@ fn build_lane_prompt(
             } else {
                 "- Context note: file references are included as a bounded agent-context section; use list_task_file_references for a fresh full listing.".to_string()
             };
-            block = if block.is_empty() { note } else { format!("{block}\n{note}") };
+            block = if block.is_empty() {
+                note
+            } else {
+                format!("{block}\n{note}")
+            };
         }
         block
     };
@@ -5959,7 +6109,11 @@ fn build_lane_prompt(
             } else {
                 "- Context note: attachments are surfaced here as manifest metadata only; use list_task_attachments for a fresh full manifest list and normal file tools against stored paths when needed.".to_string()
             };
-            block = if block.is_empty() { note } else { format!("{block}\n{note}") };
+            block = if block.is_empty() {
+                note
+            } else {
+                format!("{block}\n{note}")
+            };
         }
         block
     };
@@ -5976,7 +6130,11 @@ fn build_lane_prompt(
             } else {
                 "- Context note: comment text may still be truncated for agent context; use list_task_comments or search_task_comments when exact older wording matters.".to_string()
             };
-            block = if block.is_empty() { note } else { format!("{block}\n{note}") };
+            block = if block.is_empty() {
+                note
+            } else {
+                format!("{block}\n{note}")
+            };
         }
         block
     };
@@ -6060,7 +6218,10 @@ fn build_lane_prompt(
         ),
         (
             "{TASK.ATTACHMENTS}",
-            optional_section("Task attachments (manifest metadata only)", Some(attachments_block)),
+            optional_section(
+                "Task attachments (manifest metadata only)",
+                Some(attachments_block),
+            ),
         ),
         (
             "{TASK.TODOS}",
@@ -6731,7 +6892,9 @@ mod tests {
         assert!(prompt
             .contains("These names are real Orchestra tools/functions exposed in this session."));
         assert!(prompt.contains("- get_task_context(taskId): Call this tool when you need the freshest bounded agent task state."));
-        assert!(prompt.contains("Task context availability:\nTask context is intentionally bounded for agent use."));
+        assert!(prompt.contains(
+            "Task context availability:\nTask context is intentionally bounded for agent use."
+        ));
         assert!(prompt.contains("- list_task_attachments(taskId): Call this tool when you need the full task attachment manifest list without inline attachment content."));
         assert!(prompt.contains("- search_task_comments(taskId, query, limit?): Call this tool to search older or targeted task comments without pulling the full thread history."));
         assert!(prompt.contains("- search_task_comment_file_mentions(taskId, query, limit?): Call this tool to search repository file-path mentions referenced in task comments."));
@@ -8004,6 +8167,174 @@ mod tests {
         );
         let resumed_task =
             tasks::get_task_context(&connection, &task.id).expect("task should reload");
+        assert_eq!(resumed_task.status, "in_progress");
+        assert_eq!(resumed_task.assignee_type, "role");
+        let running_ops = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role operations should load after resume");
+        assert_eq!(
+            running_ops
+                .instances
+                .iter()
+                .find(|instance| instance.id == role_instance_id)
+                .map(|instance| instance.status.as_str()),
+            Some("running")
+        );
+    }
+
+    #[test]
+    fn manual_blocking_pauses_the_current_lane_and_resumes_the_same_session() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Blocked Resume Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Blocked Resume Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let now = now_iso();
+        let project_root = init_test_repo("task-runtime-manual-block-resume");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Manual block resume task".into(),
+                description: Some("Block the current lane and then resume it.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("task should dispatch");
+        let session_id = assignment
+            .session_id
+            .clone()
+            .expect("session id should exist");
+        let role_instance_id = assignment
+            .role_instance_id
+            .clone()
+            .expect("role instance should exist");
+
+        tasks::update_task(
+            &mut connection,
+            &task.id,
+            TaskUpsertInput {
+                title: task.title.clone(),
+                description: task.description.clone(),
+                task_type: task.task_type.clone(),
+                tags: task.tags.clone(),
+                status: "blocked".into(),
+                priority: task.priority.clone(),
+                workflow_id: task.workflow_id.clone(),
+                current_lane_id: task.current_lane_id.clone(),
+                assignee_type: task.assignee_type.clone(),
+                assignee_id: task.assignee_id.clone(),
+                repository_id: task.repository_id.clone(),
+                repository_ids: task.repository_ids.clone(),
+                parent_task_id: task.parent_task_id.clone(),
+                whip_max_attempts: None,
+                archived: Some(false),
+            },
+        )
+        .expect("task should become blocked");
+
+        let paused = pause_task_runtime_claims_for_manual_block(
+            &connection,
+            &task.id,
+            Some("Blocked by operator".into()),
+        )
+        .expect("manual block should pause runtime claims in place");
+        assert!(paused.changed);
+
+        let blocked_task =
+            tasks::get_task_context(&connection, &task.id).expect("blocked task should reload");
+        assert_eq!(blocked_task.status, "blocked");
+        assert_eq!(
+            blocked_task.current_lane_id.as_deref(),
+            Some("lane-implement")
+        );
+        assert_eq!(blocked_task.assignee_type, "role");
+        assert_eq!(
+            blocked_task
+                .active_lane_assignment
+                .as_ref()
+                .map(|entry| entry.status.as_str()),
+            Some(ASSIGNMENT_STATUS_PAUSED_BY_USER)
+        );
+        assert_eq!(
+            blocked_task
+                .active_lane_assignment
+                .as_ref()
+                .and_then(|entry| entry.session_id.as_deref()),
+            Some(session_id.as_str())
+        );
+        let waiting_ops = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role operations should load while blocked");
+        assert_eq!(
+            waiting_ops
+                .instances
+                .iter()
+                .find(|instance| instance.id == role_instance_id)
+                .map(|instance| instance.status.as_str()),
+            Some("waiting")
+        );
+
+        let resumed_assignment =
+            resume_task_lane(&connection, &task.id).expect("blocked task should resume");
+        assert_eq!(resumed_assignment.status, ASSIGNMENT_STATUS_ACTIVE);
+        assert_eq!(
+            resumed_assignment.session_id.as_deref(),
+            Some(session_id.as_str())
+        );
+        let resumed_task =
+            tasks::get_task_context(&connection, &task.id).expect("resumed task should reload");
         assert_eq!(resumed_task.status, "in_progress");
         assert_eq!(resumed_task.assignee_type, "role");
         let running_ops = role_runtime::get_role_operations(&connection, &role.id)

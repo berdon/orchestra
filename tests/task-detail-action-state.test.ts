@@ -95,7 +95,7 @@ describe("task detail action state", () => {
     ).toBe("awaiting_user_approval");
     expect(
       getEffectiveTaskDetailAssignmentStatus(
-        buildTask({ activeLaneAssignment: { status: "paused_by_user", pendingOutcome: "paused" } }),
+        buildTask({ status: "blocked", activeLaneAssignment: { status: "paused_by_user", pendingOutcome: "paused" } }),
       ),
     ).toBe("paused_by_user");
     expect(

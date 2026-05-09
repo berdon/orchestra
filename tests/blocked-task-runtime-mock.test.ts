@@ -28,7 +28,7 @@ describe("blocked task runtime mock parity", () => {
     });
   });
 
-  test("mock mode preserves an active lane assignment when a task becomes blocked", async () => {
+  test("mock mode pauses a manually blocked lane in place and resumes the same session", async () => {
     const { createProject } = await import("../src/lib/projects");
     const { createRole } = await import("../src/lib/roles");
     const {
@@ -37,6 +37,7 @@ describe("blocked task runtime mock parity", () => {
       dispatchTaskLane,
       getTask,
       updateTask,
+      resumeTaskLane,
     } = await import("../src/lib/tauri");
 
     await createProject({
@@ -85,7 +86,8 @@ describe("blocked task runtime mock parity", () => {
     });
 
     const dispatched = await dispatchTaskLane(task.id);
-    expect(dispatched.activeLaneAssignment?.sessionId).toBeTruthy();
+    const sessionId = dispatched.activeLaneAssignment?.sessionId;
+    expect(sessionId).toBeTruthy();
 
     await updateTask(task.id, {
       title: dispatched.title,
@@ -105,9 +107,15 @@ describe("blocked task runtime mock parity", () => {
 
     const blocked = await getTask(task.id);
     expect(blocked.status).toBe("blocked");
-    expect(blocked.activeLaneAssignment?.status).toBe("active");
-    expect(blocked.activeLaneAssignment?.sessionId).toBeTruthy();
+    expect(blocked.currentLaneId).toBe("lane-implement");
+    expect(blocked.activeLaneAssignment?.status).toBe("paused_by_user");
+    expect(blocked.activeLaneAssignment?.sessionId).toBe(sessionId);
     expect(blocked.readyForDispatch).toBe(false);
+
+    const resumed = await resumeTaskLane(task.id);
+    expect(resumed.status).toBe("in_progress");
+    expect(resumed.activeLaneAssignment?.status).toBe("active");
+    expect(resumed.activeLaneAssignment?.sessionId).toBe(sessionId);
   });
 
   test("mock mode stops a blocked active task when it tries to transition and leaves it blocked", async () => {

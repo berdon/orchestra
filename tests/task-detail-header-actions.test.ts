@@ -132,6 +132,30 @@ describe("buildTaskDetailHeaderActions", () => {
     expect(onComplete).not.toHaveBeenCalled();
   });
 
+  it("shows Resume for blocked paused work and explains that it returns to in_progress", () => {
+    const onSendBackForWork = vi.fn();
+    const actions = buildTaskDetailHeaderActions({
+      task: buildTask({ status: "blocked" }),
+      canPublish: false,
+      effectiveActiveLaneAssignmentStatus: "paused_by_user",
+      onPublish: vi.fn(),
+      onDispatch: vi.fn(),
+      onApproveCompletion: vi.fn(),
+      onSendBackForWork,
+      onResetTask: vi.fn(),
+      onComplete: vi.fn(),
+      onPauseRuntime: vi.fn(),
+      onWhipTask: vi.fn(),
+    });
+
+    const action = actions.find((entry) => entry.dataRole === "resume-task-lane");
+    expect(action?.tooltip).toContain("return the task to in_progress");
+
+    action?.onClick();
+
+    expect(onSendBackForWork).toHaveBeenCalledTimes(1);
+  });
+
   it("still routes user-owned review-lane needs-work actions through the summary-required completion flow", () => {
     const onComplete = vi.fn();
     const actions = buildTaskDetailHeaderActions({

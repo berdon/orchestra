@@ -85,7 +85,9 @@ export function buildTaskDetailHeaderActions({
       onClick: onSendBackForWork,
       variant: "primary",
       dataRole: "resume-task-lane",
-      tooltip: "Resume the paused lane and keep work moving in the same assignment without asking for a new lane summary.",
+      tooltip: task.status === "blocked"
+        ? "Resume the blocked lane, return the task to in_progress, and keep work moving in the same assignment without asking for a new lane summary."
+        : "Resume the paused lane and keep work moving in the same assignment without asking for a new lane summary.",
     });
     actions.push({
       id: "stop-paused-lane",

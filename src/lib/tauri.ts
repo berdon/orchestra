@@ -2335,6 +2335,130 @@ function reconcileStoredMockTasks(
   return { tasks: nextTasks, changedTaskIds: [...changedTaskIds] };
 }
 
+function pauseBlockedMockTaskRuntimeClaims(
+  tasks: StoredMockTask[],
+  taskIds: string[],
+  updatedAt = nowIso(),
+) {
+  const nextTasks = tasks.map((task) => ensureStoredMockTask(task));
+  let nextAgentQueue = getStoredMockAgentQueue();
+  let nextAgentRuntimes = getStoredMockAgentRuntimes();
+  let nextRoleQueue = getStoredMockRoleQueue();
+  let nextRoleInstances = getStoredMockRoleInstances();
+  const pausedTaskIds: string[] = [];
+  const pausedSessionIds = new Set<string>();
+
+  for (const taskId of dedupeMockTaskIds(taskIds)) {
+    const index = nextTasks.findIndex((task) => task.id === taskId);
+    if (index < 0) {
+      continue;
+    }
+
+    const task = nextTasks[index]!;
+    if (
+      task.status !== "blocked" ||
+      task.dependencyBlocked ||
+      !task.activeLaneAssignment
+    ) {
+      continue;
+    }
+
+    let changed = false;
+    const assignment = task.activeLaneAssignment;
+
+    if (assignment.status !== "paused_by_user") {
+      if (assignment.sessionId) {
+        pausedSessionIds.add(assignment.sessionId);
+      }
+      changed = true;
+    }
+
+    nextTasks[index] = {
+      ...task,
+      currentLaneId: assignment.laneId ?? task.currentLaneId,
+      assigneeType: assignment.workerType,
+      assigneeId: assignment.workerId,
+      status: "blocked",
+      activeLaneAssignment: {
+        ...assignment,
+        status: "paused_by_user",
+        pendingOutcome: "paused",
+        completionSummary: null,
+        completionNotes:
+          assignment.completionNotes ??
+          "Task is blocked and the current lane is preserved in a paused state.",
+        updatedAt,
+      },
+      updatedAt,
+    };
+
+    nextAgentQueue = nextAgentQueue.map((entry) =>
+      entry.sourceTaskId === taskId &&
+      ["queued", "dispatched", "paused_by_user"].includes(
+        String(entry.status ?? ""),
+      )
+        ? {
+            ...entry,
+            status: "paused_by_user",
+            completedAt: null,
+            updatedAt,
+          }
+        : entry,
+    );
+
+    nextRoleQueue = nextRoleQueue.map((entry) =>
+      entry.sourceTaskId === taskId &&
+      ["queued", "assigned", "paused_by_user"].includes(
+        String(entry.status ?? ""),
+      )
+        ? {
+            ...entry,
+            status: "paused_by_user",
+            completedAt: null,
+            updatedAt,
+          }
+        : entry,
+    );
+
+    if (assignment.workerType === "agent" && assignment.workerId) {
+      nextAgentRuntimes = nextAgentRuntimes.map((runtime) =>
+        runtime.agentId === assignment.workerId && runtime.projectId === task.projectId
+          ? {
+              ...runtime,
+              status: "waiting",
+              updatedAt,
+            }
+          : runtime,
+      );
+    }
+
+    if (assignment.workerType === "role" && assignment.roleInstanceId) {
+      nextRoleInstances = nextRoleInstances.map((instance) =>
+        instance.id === assignment.roleInstanceId
+          ? {
+              ...instance,
+              status: "waiting",
+              updatedAt,
+            }
+          : instance,
+      );
+    }
+
+    if (changed) {
+      pausedTaskIds.push(taskId);
+    }
+  }
+
+  if (pausedTaskIds.length > 0) {
+    saveStoredMockAgentQueue(nextAgentQueue);
+    saveStoredMockAgentRuntimes(nextAgentRuntimes);
+    saveStoredMockRoleQueue(nextRoleQueue);
+    saveStoredMockRoleInstances(nextRoleInstances);
+  }
+
+  return { tasks: nextTasks, pausedTaskIds, pausedSessionIds: [...pausedSessionIds] };
+}
+
 function clearBlockedMockTaskRuntimeClaims(
   tasks: StoredMockTask[],
   taskIds: string[],
@@ -2355,10 +2479,7 @@ function clearBlockedMockTaskRuntimeClaims(
     }
 
     const task = nextTasks[index]!;
-    if (task.status !== "blocked") {
-      continue;
-    }
-    if (task.activeLaneAssignment?.status === "active") {
+    if (task.status !== "blocked" || !task.dependencyBlocked) {
       continue;
     }
 
@@ -5526,12 +5647,23 @@ export async function updateTask(
       refreshTaskIds,
       updated.updatedAt,
     );
-    const cleaned = clearBlockedMockTaskRuntimeClaims(
+    const paused = pauseBlockedMockTaskRuntimeClaims(
       reconciled.tasks,
+      updated.status === "blocked" ? [taskId] : [],
+      updated.updatedAt,
+    );
+    const cleaned = clearBlockedMockTaskRuntimeClaims(
+      paused.tasks,
       refreshTaskIds,
       updated.updatedAt,
     );
     saveMockTasks(cleaned.tasks);
+    for (const sessionId of paused.pausedSessionIds) {
+      await stopSessionRuntime(
+        sessionId,
+        "Task is blocked and the current lane was paused.",
+      );
+    }
     appendMockLog("info", "task.updated", `Updated task ${taskId}`);
     const updatedTask = await getTask(taskId);
     appendMockDomainEvent(

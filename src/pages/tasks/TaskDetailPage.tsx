@@ -1314,7 +1314,9 @@ export function TaskDetailPage({
                 ) : null}
                 {effectiveActiveLaneAssignmentStatus === "paused_by_user" ? (
                   <p className="muted-copy" data-role="task-paused-by-user-note">
-                    This lane was paused by a user or operator. Resume keeps the current lane active, while Stop ends the current assignment and returns the task to a same-lane ready state.
+                    {task.status === "blocked"
+                      ? "This task is blocked, but its current lane is preserved in a paused state. Resume returns it to in_progress and continues the same assignment, while Stop ends the current assignment and returns the task to a same-lane ready state."
+                      : "This lane was paused by a user or operator. Resume keeps the current lane active, while Stop ends the current assignment and returns the task to a same-lane ready state."}
                     {task.activeLaneAssignment.completionNotes ? ` Notes: ${task.activeLaneAssignment.completionNotes}` : ""}
                   </p>
                 ) : null}

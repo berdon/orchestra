@@ -119,6 +119,52 @@ fn cleanup_blocked_task_runtime_claims(
         if task.status != "blocked" {
             continue;
         }
+
+        let manual_block_assignment = task.active_lane_assignment.as_ref().filter(|assignment| {
+            !task.dependency_blocked
+                && (assignment.status != "paused_by_user"
+                    || task.assignee_type != assignment.worker_type
+                    || task.assignee_id != assignment.worker_id
+                    || task.current_lane_id.as_deref() != Some(assignment.lane_id.as_str()))
+        });
+
+        if manual_block_assignment.is_some() {
+            let cleanup = task_runtime::pause_task_runtime_claims_for_manual_block(
+                connection,
+                &task_id,
+                Some("Task is blocked and the current lane is preserved in a paused state.".into()),
+            )?;
+            if !cleanup.changed {
+                continue;
+            }
+
+            let mut emitted_session_ids = HashSet::new();
+            for assignment in &cleanup.assignments {
+                if let Some(session_id) = assignment.session_id.as_deref() {
+                    stop_live_session_runtime_for_task_control(state, session_id)?;
+                    if emitted_session_ids.insert(session_id.to_string()) {
+                        emit_session_change(
+                            app,
+                            "task.blocked.runtime_paused",
+                            [session_id.to_string()],
+                        );
+                    }
+                }
+            }
+
+            state.log(
+                "info",
+                "task.blocked.runtime_paused",
+                &format!(
+                    "Paused blocked task {} in place for resume ({} open assignment(s))",
+                    task_id,
+                    cleanup.assignments.len()
+                ),
+            );
+            cleaned_task_ids.push(task_id);
+            continue;
+        }
+
         let cleanup = task_runtime::clear_task_runtime_claims_preserving_status(
             connection,
             &task_id,
