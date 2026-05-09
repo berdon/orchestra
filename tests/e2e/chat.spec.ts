@@ -1183,3 +1183,195 @@ test("chat page recovers the active agent session after a prolonged background r
   await expect(page.locator('[data-role="session-chat-panel"]')).toBeVisible();
   await expect(page.locator('[data-role="agent-chat-status-error"]')).toHaveCount(0);
 });
+
+test("chat page recreates a missing agent main session without losing the draft", async ({ page }) => {
+  const timestamp = new Date().toISOString();
+
+  await page.addInitScript(({ nextTimestamp }) => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.agents",
+      JSON.stringify([
+        {
+          id: "agent-supervisor-fixed",
+          slug: "supervisor",
+          name: "Supervisor",
+          description: "Built-in protected Orchestra supervisor agent.",
+          systemPrompt: "Supervisor prompt",
+          provider: "anthropic",
+          model: "claude-sonnet-4-20250514",
+          roleId: null,
+          scope: "global",
+          projectId: null,
+          thinkingLevel: "medium",
+          policyIds: ["policy-supervisor"],
+          directPermissions: [],
+          system: true,
+          immutable: true,
+          archived: false,
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+        },
+        {
+          id: "agent-data-fixed",
+          slug: "data",
+          name: "Data",
+          description: "Persistent collaborator for implementation and documentation work.",
+          systemPrompt: "Keep context, preserve continuity, and move the project forward.",
+          provider: "anthropic",
+          model: "claude-sonnet-4-20250514",
+          roleId: null,
+          scope: "global",
+          projectId: null,
+          thinkingLevel: "medium",
+          policyIds: [],
+          directPermissions: [],
+          system: false,
+          immutable: false,
+          archived: false,
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.agent-runtimes",
+      JSON.stringify([
+        {
+          projectId: "orchestra",
+          agentId: "agent-supervisor-fixed",
+          status: "idle",
+          mainSessionId: null,
+          runtimeCwd: "/tmp/orchestra",
+          currentQueueEntryId: null,
+          lastDispatchAt: null,
+          lastError: null,
+          terminalAttached: false,
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+        },
+        {
+          projectId: "orchestra",
+          agentId: "agent-data-fixed",
+          status: "idle",
+          mainSessionId: "session-data-main",
+          runtimeCwd: "/tmp/orchestra",
+          currentQueueEntryId: null,
+          lastDispatchAt: null,
+          lastError: null,
+          terminalAttached: false,
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-data-main",
+          title: "Cached data session",
+          status: "active",
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+          subscribed: false,
+          events: [
+            {
+              id: "cached-event-1",
+              kind: "assistant",
+              message: "Cached response from the existing main session.",
+              timestamp: nextTimestamp,
+            },
+          ],
+        },
+      ]),
+    );
+  }, { nextTimestamp: timestamp });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Chat" }).click();
+  await page.locator('[data-role="chat-agent-nav-data"]').click();
+
+  const initialSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
+  expect(initialSessionId).toBe("session-data-main");
+
+  await page.locator('[data-role="composer-input"]').fill("Preserve this draft during recovery");
+
+  await page.evaluate(() => {
+    const runtimes = JSON.parse(window.localStorage.getItem("orchestra.mock.agent-runtimes") ?? "[]") as Array<Record<string, unknown>>;
+    const updated = runtimes.map((runtime) =>
+      runtime.agentId === "agent-data-fixed"
+        ? {
+            ...runtime,
+            mainSessionId: "session-data-missing",
+            updatedAt: new Date().toISOString(),
+          }
+        : runtime,
+    );
+    window.localStorage.setItem("orchestra.mock.agent-runtimes", JSON.stringify(updated));
+    window.localStorage.setItem("orchestra.mock.sessions.orchestra", JSON.stringify([]));
+  });
+
+  await page.getByRole("button", { name: "Sessions" }).click();
+  await expect(page.locator('[data-role="session-filter-active"]')).toBeVisible();
+  await page.getByRole("button", { name: "Chat" }).click();
+
+  await expect(page.locator('[data-role="session-chat-panel"]')).toBeVisible();
+  const recoveredSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
+  expect(recoveredSessionId).toBeTruthy();
+  expect(recoveredSessionId).not.toBe(initialSessionId);
+  await expect(page.locator('[data-role="composer-input"]')).toHaveValue("Preserve this draft during recovery");
+  await expect(page.locator('[data-role="agent-chat-status-error"]')).toHaveCount(0);
+
+  const runtimeMainSessionId = await page.evaluate(() => {
+    const runtimes = JSON.parse(window.localStorage.getItem("orchestra.mock.agent-runtimes") ?? "[]") as Array<Record<string, unknown>>;
+    return runtimes.find((runtime) => runtime.agentId === "agent-data-fixed")?.mainSessionId ?? null;
+  });
+  expect(runtimeMainSessionId).toBe(recoveredSessionId);
+});
+
+
+test("chat page cold-opens a replacement agent session when the stored main session is missing", async ({ page }) => {
+  const timestamp = new Date().toISOString();
+
+  await page.addInitScript(({ nextTimestamp }) => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.agent-runtimes",
+      JSON.stringify([
+        {
+          projectId: "orchestra",
+          agentId: "agent-supervisor",
+          status: "idle",
+          mainSessionId: "missing-session-cold-open",
+          runtimeCwd: "/tmp/orchestra",
+          currentQueueEntryId: null,
+          lastDispatchAt: null,
+          lastError: null,
+          terminalAttached: false,
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem("orchestra.mock.sessions.orchestra", JSON.stringify([]));
+  }, { nextTimestamp: timestamp });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Chat" }).click();
+  await page.locator('[data-role="chat-agent-nav-supervisor"]').click();
+
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Supervisor chat");
+  await expect(page.locator('[data-role="session-chat-panel"]')).toBeVisible();
+  await expect(page.locator('[data-role="agent-chat-status-error"]')).toHaveCount(0);
+
+  const recoveredSessionId = await page.locator('[data-role="session-chat-panel"]').getAttribute("data-session-id");
+  expect(recoveredSessionId).toBeTruthy();
+  expect(recoveredSessionId).not.toBe("missing-session-cold-open");
+
+  const runtimeMainSessionId = await page.evaluate(() => {
+    const runtimes = JSON.parse(window.localStorage.getItem("orchestra.mock.agent-runtimes") ?? "[]") as Array<Record<string, unknown>>;
+    return runtimes.find((runtime) => runtime.agentId === "agent-supervisor")?.mainSessionId ?? null;
+  });
+  expect(runtimeMainSessionId).toBe(recoveredSessionId);
+});

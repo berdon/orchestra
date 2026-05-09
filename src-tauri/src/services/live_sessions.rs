@@ -21,8 +21,7 @@ use crate::{
         SessionStats, SessionStreamEnvelope,
     },
     services::{
-        app_events, database, harness_settings,
-        pi_auth_failures,
+        app_events, database, harness_settings, pi_auth_failures,
         pi_sessions::get_session_path,
         runtime_skills,
         session_compaction::{
@@ -1659,18 +1658,17 @@ pub fn get_session_control_snapshot(
             terminal_attached,
             pi_available,
         );
-        let control_operation = runtime.control_operation().or_else(|| last_operation.clone());
+        let control_operation = runtime
+            .control_operation()
+            .or_else(|| last_operation.clone());
         if matches!(control_capabilities.reload.status.as_str(), "unknown")
-            && control_operation
-                .as_ref()
-                .is_some_and(|operation| operation.kind == "reload" && operation.status == "succeeded")
+            && control_operation.as_ref().is_some_and(|operation| {
+                operation.kind == "reload" && operation.status == "succeeded"
+            })
         {
             control_capabilities.reload = supported_control_capability();
         }
-        return Ok((
-            control_capabilities,
-            control_operation,
-        ));
+        return Ok((control_capabilities, control_operation));
     }
 
     let unavailable_reason = if terminal_attached {

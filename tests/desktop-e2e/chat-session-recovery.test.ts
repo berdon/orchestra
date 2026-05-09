@@ -34,11 +34,11 @@ async function getSelectedSessionId(webdriverSessionId: string): Promise<string>
   return result || "";
 }
 
-async function getAgentMainSessionId(
+async function getAgentOperation(
   webdriverSessionId: string,
   agentSlug = "supervisor",
   projectId?: string,
-): Promise<string | null> {
+) {
   const operations = await invokeCommand<Array<{
     agent: { id: string; name: string; slug: string };
     runtimeState: {
@@ -55,10 +55,15 @@ async function getAgentMainSessionId(
   }>>(webdriverSessionId, "list_agent_operations", {
     ...(projectId ? { projectId } : {}),
   });
-  const agentOperation = operations.find(
-    (op) => op.agent.slug === agentSlug,
-  );
-  return agentOperation?.runtimeState.mainSessionId ?? null;
+  return operations.find((op) => op.agent.slug === agentSlug) ?? null;
+}
+
+async function getAgentMainSessionId(
+  webdriverSessionId: string,
+  agentSlug = "supervisor",
+  projectId?: string,
+): Promise<string | null> {
+  return (await getAgentOperation(webdriverSessionId, agentSlug, projectId))?.runtimeState.mainSessionId ?? null;
 }
 
 async function getAgentOperationsDetail(
@@ -232,6 +237,78 @@ describe("desktop chat session recovery", () => {
         expect(supersededRecord.id).toBe(initialSessionId);
         expect(supersededRecord.status).toBe("closed");
         expect(supersededRecord.listVisibility).toBe("hidden");
+      } finally {
+        await deleteWebdriverSession(webdriverSessionId);
+      }
+    },
+    300_000,
+  );
+
+  it.skipIf(!isDesktopE2E)(
+    "recreates a missing agent main session without showing the unavailable banner",
+    async () => {
+      const webdriverSessionId = await createReadyWebdriverSession();
+
+      try {
+        await ensureReactReady(webdriverSessionId);
+
+        await clickByText(webdriverSessionId, "button", "Chat");
+        await waitForSelector(webdriverSessionId, '[data-role="chat-agent-nav-supervisor"]');
+        await clickSelector(webdriverSessionId, '[data-role="chat-agent-nav-supervisor"]');
+        await waitForText(webdriverSessionId, "Supervisor chat");
+        await startAgentChatUnavailableErrorCapture(webdriverSessionId);
+
+        const initialSessionId = await waitForCondition(
+          () => getSelectedSessionId(webdriverSessionId),
+          (value) => Boolean(value && value.length > 0),
+          45_000,
+          500,
+          "initial supervisor chat session to become selected",
+        );
+        await setInputValue(
+          webdriverSessionId,
+          '[data-role="composer-input"]',
+          'Keep this draft during recovery',
+        );
+
+        const agentOperation = await getAgentOperation(webdriverSessionId, "supervisor");
+        expect(agentOperation?.agent.id).toBeTruthy();
+        await invokeCommand(webdriverSessionId, "update_agent_main_session", {
+          agentId: agentOperation!.agent.id,
+          mainSessionId: `missing-session-${Date.now()}`,
+        });
+
+        await clickByText(webdriverSessionId, "button", "Sessions");
+        await waitForSelector(webdriverSessionId, '[data-role="session-filter-active"]');
+        await clickByText(webdriverSessionId, "button", "Chat");
+        await waitForText(webdriverSessionId, "Supervisor chat");
+
+        const recoveredSessionId = await waitForCondition(
+          () => getSelectedSessionId(webdriverSessionId),
+          (value) => Boolean(value && value !== initialSessionId),
+          45_000,
+          500,
+          "replacement supervisor chat session to become selected",
+        );
+        const recoveredMainSessionId = await waitForCondition(
+          () => getAgentMainSessionId(webdriverSessionId),
+          (value) => value === recoveredSessionId,
+          30_000,
+          500,
+          "supervisor main session id to update to the replacement session",
+        );
+
+        expect(recoveredMainSessionId).toBe(recoveredSessionId);
+        await waitForSelector(webdriverSessionId, '[data-role="composer-input"]');
+        const composerValue = await executeScript<string>(
+          webdriverSessionId,
+          `
+            const element = document.querySelector('[data-role="composer-input"]');
+            return element instanceof HTMLTextAreaElement ? element.value : '';
+          `,
+        );
+        expect(composerValue).toBe('Keep this draft during recovery');
+        await expectNoAgentChatUnavailableError(webdriverSessionId);
       } finally {
         await deleteWebdriverSession(webdriverSessionId);
       }

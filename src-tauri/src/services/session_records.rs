@@ -36,9 +36,7 @@ where
     loop {
         match operation() {
             Ok(value) => return Ok(value),
-            Err(error)
-                if is_locked_database_error(&error) && attempt < RETRY_DELAYS_MS.len() =>
-            {
+            Err(error) if is_locked_database_error(&error) && attempt < RETRY_DELAYS_MS.len() => {
                 let delay_ms = RETRY_DELAYS_MS[attempt];
                 attempt += 1;
                 std::thread::sleep(Duration::from_millis(delay_ms));

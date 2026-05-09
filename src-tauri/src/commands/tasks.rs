@@ -1111,8 +1111,7 @@ pub(crate) async fn dispatch_task_lane_via_app(
         &task_id,
         &state,
     )?;
-    let requeued_due_to_busy = assignment.worker_type == "agent"
-        && assignment.status == "queued";
+    let requeued_due_to_busy = assignment.worker_type == "agent" && assignment.status == "queued";
     if requeued_due_to_busy {
         let _ = dispatcher::request_dispatcher_check(&app, "task.dispatch.agent_busy_queued");
     } else if let Err(error) = task_runtime::start_assignment_run(

@@ -27,12 +27,10 @@ export function shouldSuppressChatSessionRecoveryError(input: {
   activePage: string;
   selectedAgentId: string | null;
   fallbackAgentId: string | null;
-  fallbackSessionId: string | null;
   errorCode?: string | null;
 }) {
   return input.activePage === "chat"
-    && Boolean(input.fallbackSessionId)
     && Boolean(input.selectedAgentId)
-    && input.selectedAgentId === input.fallbackAgentId
-    && input.errorCode === "not_found";
+    && input.errorCode === "not_found"
+    && (!input.fallbackAgentId || input.selectedAgentId === input.fallbackAgentId);
 }

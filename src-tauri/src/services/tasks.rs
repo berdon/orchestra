@@ -1578,11 +1578,14 @@ fn resolve_comment_anchor(
     column_end: Option<i64>,
     selected_text: Option<String>,
     diff_anchor: Option<TaskDiffCommentAnchor>,
-) -> Result<(
-    Option<CommentAnchorInput>,
-    CommentAnchorMetadata,
-    Option<TaskDiffCommentAnchor>,
-), String> {
+) -> Result<
+    (
+        Option<CommentAnchorInput>,
+        CommentAnchorMetadata,
+        Option<TaskDiffCommentAnchor>,
+    ),
+    String,
+> {
     if anchor.is_some() && diff_anchor.is_some() {
         return Err("anchor/diffAnchor: Comments must target either a standard anchor or a PR diff anchor, not both.".into());
     }
@@ -1648,11 +1651,14 @@ fn resolve_dom_comment_anchor(
     connection: &Connection,
     task_id: &str,
     anchor: TaskCommentDomAnchor,
-) -> Result<(
-    Option<CommentAnchorInput>,
-    CommentAnchorMetadata,
-    Option<TaskDiffCommentAnchor>,
-), String> {
+) -> Result<
+    (
+        Option<CommentAnchorInput>,
+        CommentAnchorMetadata,
+        Option<TaskDiffCommentAnchor>,
+    ),
+    String,
+> {
     if anchor.browser_session_id.trim().is_empty() {
         return Err(
             "anchor.browserSessionId: DOM-anchored comments require a browser session id.".into(),
@@ -1691,11 +1697,14 @@ fn resolve_file_comment_anchor(
     column_start: Option<i64>,
     column_end: Option<i64>,
     selected_text: Option<String>,
-) -> Result<(
-    Option<CommentAnchorInput>,
-    CommentAnchorMetadata,
-    Option<TaskDiffCommentAnchor>,
-), String> {
+) -> Result<
+    (
+        Option<CommentAnchorInput>,
+        CommentAnchorMetadata,
+        Option<TaskDiffCommentAnchor>,
+    ),
+    String,
+> {
     let repository_id = repository_id.ok_or_else(|| {
         "repositoryId: File-anchored comments require a repository id.".to_string()
     })?;
@@ -1805,11 +1814,14 @@ fn resolve_pr_comment_anchor(
     column_end: Option<i64>,
     selected_text: Option<String>,
     diff_anchor: TaskDiffCommentAnchor,
-) -> Result<(
-    Option<CommentAnchorInput>,
-    CommentAnchorMetadata,
-    Option<TaskDiffCommentAnchor>,
-), String> {
+) -> Result<
+    (
+        Option<CommentAnchorInput>,
+        CommentAnchorMetadata,
+        Option<TaskDiffCommentAnchor>,
+    ),
+    String,
+> {
     if diff_anchor.kind.trim() != "task_pr" {
         return Err("diffAnchor.kind: PR comments currently support only `task_pr`.".into());
     }
@@ -2601,7 +2613,10 @@ fn load_task_lane_summaries(
                 outcome: Some(lane_run.result.clone()),
                 pending: false,
                 session_id: Some(lane_run.session_id.clone()),
-                updated_at: lane_run.completed_at.clone().unwrap_or_else(|| lane_run.started_at.clone()),
+                updated_at: lane_run
+                    .completed_at
+                    .clone()
+                    .unwrap_or_else(|| lane_run.started_at.clone()),
             });
     }
 
@@ -2629,8 +2644,9 @@ fn load_task_lane_summaries(
                 ))
             })
             .map_err(|error| format!("Unable to read workflow lanes for {workflow_id}: {error}"))?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("Unable to collect workflow lanes for {workflow_id}: {error}"))?
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
+            format!("Unable to collect workflow lanes for {workflow_id}: {error}")
+        })?
     } else {
         Vec::new()
     };
@@ -2639,20 +2655,25 @@ fn load_task_lane_summaries(
         .iter()
         .enumerate()
         .map(|(fallback_index, (lane_id, lane_name, lane_order))| {
-            (lane_id.clone(), (*lane_order, fallback_index, Some(lane_name.clone())))
+            (
+                lane_id.clone(),
+                (*lane_order, fallback_index, Some(lane_name.clone())),
+            )
         })
         .collect::<BTreeMap<_, _>>();
 
     let mut summaries = summaries_by_lane.into_values().collect::<Vec<_>>();
     summaries.sort_by(|left, right| {
-        let left_meta = lane_order_lookup
-            .get(&left.lane_id)
-            .cloned()
-            .unwrap_or((i64::MAX, usize::MAX, None));
-        let right_meta = lane_order_lookup
-            .get(&right.lane_id)
-            .cloned()
-            .unwrap_or((i64::MAX, usize::MAX, None));
+        let left_meta =
+            lane_order_lookup
+                .get(&left.lane_id)
+                .cloned()
+                .unwrap_or((i64::MAX, usize::MAX, None));
+        let right_meta =
+            lane_order_lookup
+                .get(&right.lane_id)
+                .cloned()
+                .unwrap_or((i64::MAX, usize::MAX, None));
         left_meta
             .0
             .cmp(&right_meta.0)
@@ -3900,10 +3921,16 @@ mod tests {
         assert_eq!(loaded.lane_summaries.len(), 2);
         assert_eq!(loaded.lane_summaries[0].lane_id, "lane-plan");
         assert_eq!(loaded.lane_summaries[0].lane_name.as_deref(), Some("Plan"));
-        assert_eq!(loaded.lane_summaries[0].summary, "Defined the implementation plan.");
+        assert_eq!(
+            loaded.lane_summaries[0].summary,
+            "Defined the implementation plan."
+        );
         assert!(!loaded.lane_summaries[0].pending);
         assert_eq!(loaded.lane_summaries[1].lane_id, "lane-review");
-        assert_eq!(loaded.lane_summaries[1].lane_name.as_deref(), Some("Review"));
+        assert_eq!(
+            loaded.lane_summaries[1].lane_name.as_deref(),
+            Some("Review")
+        );
         assert_eq!(
             loaded.lane_summaries[1].summary,
             "Implementation is complete and ready for approval."

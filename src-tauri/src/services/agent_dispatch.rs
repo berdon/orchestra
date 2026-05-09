@@ -4,7 +4,7 @@ use tauri::AppHandle;
 use uuid::Uuid;
 
 use crate::{
-    models::{AgentDefinition, AgentQueueEntry, AgentRuntimeState},
+    models::{AgentDefinition, AgentQueueEntry, AgentRuntimeState, SessionRecord},
     services::{
         agent_runtime, agents, live_sessions, messages, pi_sessions, projects, roles,
         session_ownership, session_records,
@@ -357,8 +357,10 @@ fn agent_session_has_active_prompt(
         return Ok(true);
     }
 
-    Ok(live_sessions::maybe_runtime(&state.session_runtimes, session_id)
-        .is_some_and(|runtime| runtime.has_active_prompt()))
+    Ok(
+        live_sessions::maybe_runtime(&state.session_runtimes, session_id)
+            .is_some_and(|runtime| runtime.has_active_prompt()),
+    )
 }
 
 fn deliver_nonblocking_entry(
@@ -425,6 +427,106 @@ fn skip_cleared_mail_entry(
     Ok(true)
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedAgentMainSession {
+    pub record: SessionRecord,
+    pub project_root: PathBuf,
+    pub session_dir: PathBuf,
+}
+
+fn candidate_agent_main_session_dirs(
+    fallback_project_root: &Path,
+    fallback_session_dir: &Path,
+    session_id: &str,
+) -> Vec<(PathBuf, PathBuf)> {
+    let mut candidates = Vec::new();
+    if let Ok(context) = pi_sessions::find_session_context_for_session(session_id) {
+        candidates.push((context.project_root, context.session_dir));
+    }
+    if !candidates
+        .iter()
+        .any(|(_, candidate_session_dir)| candidate_session_dir == fallback_session_dir)
+    {
+        candidates.push((
+            fallback_project_root.to_path_buf(),
+            fallback_session_dir.to_path_buf(),
+        ));
+    }
+    candidates
+}
+
+pub(crate) fn resolve_bound_agent_main_session(
+    connection: &rusqlite::Connection,
+    fallback_project_root: &Path,
+    fallback_session_dir: &Path,
+    effective_project_id: &str,
+    agent_id: &str,
+    session_id: &str,
+) -> Option<ResolvedAgentMainSession> {
+    for (candidate_project_root, candidate_session_dir) in
+        candidate_agent_main_session_dirs(fallback_project_root, fallback_session_dir, session_id)
+    {
+        let record = match pi_sessions::get_session(&candidate_session_dir, session_id, false) {
+            Ok(record) => record,
+            Err(_) => continue,
+        };
+
+        let bind_session = || {
+            session_records::bind_session_context(
+                connection,
+                session_id,
+                session_records::SessionContextBinding {
+                    project_id: Some(effective_project_id),
+                    session_kind: Some(session_records::SESSION_KIND_AGENT_MAIN),
+                    worker_type: Some("agent"),
+                    worker_id: Some(agent_id),
+                    agent_id: Some(agent_id),
+                    role_instance_id: None,
+                    task_id: None,
+                    workflow_id: None,
+                    lane_id: None,
+                    assignment_id: None,
+                    runtime_cwd: Some(fallback_project_root),
+                },
+            )
+        };
+
+        if bind_session().is_err() {
+            let Ok(session_path) =
+                pi_sessions::get_session_path(&candidate_session_dir, session_id)
+            else {
+                continue;
+            };
+            if session_records::repair_session_row_from_transcript_path(
+                connection,
+                session_id,
+                Some(effective_project_id),
+                Some(session_records::SESSION_KIND_AGENT_MAIN),
+                &session_path,
+            )
+            .is_err()
+            {
+                continue;
+            }
+            if bind_session().is_err() {
+                continue;
+            }
+        }
+
+        if pi_sessions::get_session(&candidate_session_dir, session_id, false).is_err() {
+            continue;
+        }
+
+        return Some(ResolvedAgentMainSession {
+            record,
+            project_root: candidate_project_root,
+            session_dir: candidate_session_dir,
+        });
+    }
+
+    None
+}
+
 pub fn ensure_main_session(
     project_root: &Path,
     session_dir: &Path,
@@ -440,24 +542,16 @@ pub fn ensure_main_session(
     let runtime_cwd = project_root.display().to_string();
 
     if let Some(session_id) = runtime_state.main_session_id.as_deref() {
-        if crate::services::pi_sessions::find_session_context_for_session(session_id).is_ok() {
-            session_records::bind_session_context(
-                &connection,
-                session_id,
-                session_records::SessionContextBinding {
-                    project_id: Some(effective_project_id.as_str()),
-                    session_kind: Some(session_records::SESSION_KIND_AGENT_MAIN),
-                    worker_type: Some("agent"),
-                    worker_id: Some(agent_id),
-                    agent_id: Some(agent_id),
-                    role_instance_id: None,
-                    task_id: None,
-                    workflow_id: None,
-                    lane_id: None,
-                    assignment_id: None,
-                    runtime_cwd: Some(project_root),
-                },
-            )?;
+        if resolve_bound_agent_main_session(
+            &connection,
+            project_root,
+            session_dir,
+            effective_project_id,
+            agent_id,
+            session_id,
+        )
+        .is_some()
+        {
             return Ok(runtime_state);
         }
     }
@@ -465,26 +559,16 @@ pub fn ensure_main_session(
     if let Some(global_session_id) =
         agent_runtime::find_global_main_session_id(&connection, agent_id)?
     {
-        if crate::services::pi_sessions::find_session_context_for_session(&global_session_id)
-            .is_ok()
+        if resolve_bound_agent_main_session(
+            &connection,
+            project_root,
+            session_dir,
+            effective_project_id,
+            agent_id,
+            &global_session_id,
+        )
+        .is_some()
         {
-            session_records::bind_session_context(
-                &connection,
-                &global_session_id,
-                session_records::SessionContextBinding {
-                    project_id: Some(effective_project_id.as_str()),
-                    session_kind: Some(session_records::SESSION_KIND_AGENT_MAIN),
-                    worker_type: Some("agent"),
-                    worker_id: Some(agent_id),
-                    agent_id: Some(agent_id),
-                    role_instance_id: None,
-                    task_id: None,
-                    workflow_id: None,
-                    lane_id: None,
-                    assignment_id: None,
-                    runtime_cwd: Some(project_root),
-                },
-            )?;
             let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
                 &connection,
                 effective_project_id,
@@ -571,5 +655,141 @@ fn agent_for_session(
     match context.agent_id {
         Some(agent_id) => Ok(Some((context.project_id, agent_id))),
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let suffix = format!(
+            "{}-{}-{}",
+            label,
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_millis()
+        );
+        std::env::temp_dir().join(suffix)
+    }
+
+    fn write_test_session_file(session_dir: &Path, session_id: &str, title: &str) -> PathBuf {
+        fs::create_dir_all(session_dir).expect("session dir should exist");
+        let session_path = session_dir.join(format!(
+            "{}_{}.jsonl",
+            Utc::now().to_rfc3339().replace(':', "-"),
+            session_id
+        ));
+        let content = format!(
+            "{}\n{}\n",
+            serde_json::json!({
+                "type": "session",
+                "version": 3,
+                "id": session_id,
+                "timestamp": "2026-03-21T00:00:00Z",
+                "cwd": session_dir.display().to_string(),
+                "title": title,
+            }),
+            serde_json::json!({
+                "type": "message",
+                "id": "msg-assistant",
+                "timestamp": "2026-03-21T00:00:01Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": "Recovered session" }],
+                    "timestamp": 1773835261000i64,
+                }
+            })
+        );
+        fs::write(&session_path, content).expect("session file should be writable");
+        session_path
+    }
+
+    #[test]
+    fn resolve_bound_agent_main_session_repairs_and_binds_missing_row() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        crate::services::database::apply_migrations(&connection)
+            .expect("migrations should succeed");
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'ORC', NULL, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("project insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO agents (id, slug, name, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES ('agent-1', 'agent-1', 'Agent 1', 'off', '[]', 0, 0, 0, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("agent insert should succeed");
+
+        let project_root = unique_temp_dir("agent-dispatch-recover-root");
+        let session_dir = project_root.join("sessions");
+        let session_id = "session-agent-recover";
+        let _session_path =
+            write_test_session_file(&session_dir, session_id, "Agent 1 main session");
+
+        let resolved = resolve_bound_agent_main_session(
+            &connection,
+            &project_root,
+            &session_dir,
+            "project-1",
+            "agent-1",
+            session_id,
+        )
+        .expect("session should recover");
+
+        assert_eq!(resolved.record.id, session_id);
+        let row = session_records::load_session_row(&connection, session_id)
+            .expect("canonical row lookup should succeed")
+            .expect("canonical row should be repaired");
+        assert_eq!(row.project_id.as_deref(), Some("project-1"));
+        assert_eq!(row.agent_id.as_deref(), Some("agent-1"));
+        assert_eq!(row.session_kind, session_records::SESSION_KIND_AGENT_MAIN);
+
+        let _ = fs::remove_dir_all(&project_root);
+    }
+
+    #[test]
+    fn resolve_bound_agent_main_session_returns_none_when_transcript_is_gone() {
+        let connection = rusqlite::Connection::open_in_memory().expect("in-memory db should open");
+        crate::services::database::apply_migrations(&connection)
+            .expect("migrations should succeed");
+        connection
+            .execute(
+                "INSERT INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('project-1', 'project-1', 'Project 1', NULL, 'ORC', NULL, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("project insert should succeed");
+        connection
+            .execute(
+                "INSERT INTO agents (id, slug, name, thinking_level, direct_permissions, system, immutable, archived, created_at, updated_at) VALUES ('agent-1', 'agent-1', 'Agent 1', 'off', '[]', 0, 0, 0, '2026-03-21T00:00:00Z', '2026-03-21T00:00:00Z')",
+                [],
+            )
+            .expect("agent insert should succeed");
+
+        let project_root = unique_temp_dir("agent-dispatch-missing-root");
+        let session_dir = project_root.join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should exist");
+
+        let resolved = resolve_bound_agent_main_session(
+            &connection,
+            &project_root,
+            &session_dir,
+            "project-1",
+            "agent-1",
+            "missing-session",
+        );
+
+        assert!(resolved.is_none());
+        let _ = fs::remove_dir_all(&project_root);
     }
 }

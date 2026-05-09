@@ -1,8 +1,11 @@
 use std::path::Path;
-#[cfg(target_os = "linux")]
-use std::{io::Write, process::{Command, Stdio}};
 #[cfg(test)]
 use std::{collections::HashMap, sync::Arc, sync::LazyLock, sync::Mutex, sync::MutexGuard};
+#[cfg(target_os = "linux")]
+use std::{
+    io::Write,
+    process::{Command, Stdio},
+};
 
 use chrono::Utc;
 use keyring::Entry;
@@ -210,7 +213,10 @@ impl ProjectSecretStore for SecretToolProjectSecretStore {
         if Self::available() {
             availability("available", None)
         } else {
-            availability("unsupported", Some("secret-tool is not available on PATH".into()))
+            availability(
+                "unsupported",
+                Some("secret-tool is not available on PATH".into()),
+            )
         }
     }
 
@@ -219,7 +225,9 @@ impl ProjectSecretStore for SecretToolProjectSecretStore {
             .arg("lookup")
             .args(Self::secret_tool_attributes(service, account))
             .output()
-            .map_err(|error| classify_store_error(format!("Unable to run secret-tool lookup: {error}")))?;
+            .map_err(|error| {
+                classify_store_error(format!("Unable to run secret-tool lookup: {error}"))
+            })?;
         if output.status.success() {
             return Ok(Some(
                 String::from_utf8_lossy(&output.stdout)
@@ -247,15 +255,17 @@ impl ProjectSecretStore for SecretToolProjectSecretStore {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| classify_store_error(format!("Unable to run secret-tool store: {error}")))?;
+            .map_err(|error| {
+                classify_store_error(format!("Unable to run secret-tool store: {error}"))
+            })?;
         if let Some(stdin) = child.stdin.as_mut() {
-            stdin
-                .write_all(value.as_bytes())
-                .map_err(|error| classify_store_error(format!("Unable to write secret-tool input: {error}")))?;
+            stdin.write_all(value.as_bytes()).map_err(|error| {
+                classify_store_error(format!("Unable to write secret-tool input: {error}"))
+            })?;
         }
-        let output = child
-            .wait_with_output()
-            .map_err(|error| classify_store_error(format!("Unable to finish secret-tool store: {error}")))?;
+        let output = child.wait_with_output().map_err(|error| {
+            classify_store_error(format!("Unable to finish secret-tool store: {error}"))
+        })?;
         if output.status.success() {
             Ok(())
         } else {
@@ -273,7 +283,9 @@ impl ProjectSecretStore for SecretToolProjectSecretStore {
             .arg("clear")
             .args(Self::secret_tool_attributes(service, account))
             .output()
-            .map_err(|error| classify_store_error(format!("Unable to run secret-tool clear: {error}")))?;
+            .map_err(|error| {
+                classify_store_error(format!("Unable to run secret-tool clear: {error}"))
+            })?;
         if output.status.success() || (output.stdout.is_empty() && output.stderr.is_empty()) {
             Ok(())
         } else {
@@ -1378,14 +1390,18 @@ mod tests {
         let root = unique_temp_dir("account-id");
         let account = secure_store_account(Some(&root), "project-123", "OPENAI_API_KEY");
         assert!(account.starts_with("project-secret-v2:"));
-        assert!(account.len() < 100, "account should stay short for provider compatibility");
+        assert!(
+            account.len() < 100,
+            "account should stay short for provider compatibility"
+        );
     }
 
     #[test]
     fn legacy_secure_store_account_values_still_load() {
         let (connection, root) = connection_with_project();
         let store = TestProjectSecretStore::new("available");
-        let legacy_account = legacy_secure_store_account(Some(&root), "project-1", "OPENAI_API_KEY");
+        let legacy_account =
+            legacy_secure_store_account(Some(&root), "project-1", "OPENAI_API_KEY");
         store.values.lock().expect("values lock").insert(
             TestProjectSecretStore::key(PROJECT_SECRET_SERVICE, &legacy_account),
             "sk-legacy".into(),
@@ -1397,8 +1413,9 @@ mod tests {
             )
             .expect("metadata should insert");
 
-        let state = get_project_secrets_with_store(&connection, Some(&root), "test-project", &store)
-            .expect("state should load legacy value");
+        let state =
+            get_project_secrets_with_store(&connection, Some(&root), "test-project", &store)
+                .expect("state should load legacy value");
         assert_eq!(state.secrets[0].value_state, "ready");
         let loaded = get_project_secret_value_with_store(
             &connection,
