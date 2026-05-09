@@ -9,6 +9,7 @@ import { useTaskAutoRefresh } from "../lib/orchestraData/tasks";
 import { formatTaskCommentAnchorLabel } from "../lib/taskComments";
 import { applyTaskListQuery } from "../lib/taskListQuery";
 import { getTaskOpenSessionTarget } from "../lib/taskOpenSession";
+import { hasTaskDetailOverviewHistoryEntry } from "../lib/taskHistory";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type {
   AgentSummary,
@@ -46,6 +47,17 @@ type TasksRoute =
   | { kind: "detail"; taskId: string }
   | { kind: "schedule"; scheduleId: string };
 
+type OverviewScrollTarget =
+  | { kind: "element"; element: HTMLElement }
+  | { kind: "window" };
+
+type OverviewScrollElementSignature = {
+  tagName: string;
+  className: string;
+  dataRole: string | null;
+  index: number;
+};
+
 function toTaskDetailRouteState(route: TasksRoute): TaskDetailRouteState {
   switch (route.kind) {
     case "detail":
@@ -57,6 +69,105 @@ function toTaskDetailRouteState(route: TasksRoute): TaskDetailRouteState {
     default:
       return { kind: "overview" };
   }
+}
+
+function isVerticallyScrollable(element: HTMLElement): boolean {
+  const overflowY = window.getComputedStyle(element).overflowY;
+  return (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") && element.scrollHeight > element.clientHeight;
+}
+
+function findNearestScrollableAncestor(element: HTMLElement | null): HTMLElement | null {
+  let current = element?.parentElement ?? null;
+  while (current) {
+    if (isVerticallyScrollable(current)) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function buildElementPath(root: HTMLElement | null, target: HTMLElement): number[] | null {
+  if (!root || !root.contains(target)) {
+    return null;
+  }
+  const path: number[] = [];
+  let current: HTMLElement | null = target;
+  while (current && current !== root) {
+    const parent: HTMLElement | null = current.parentElement;
+    if (!parent) {
+      return null;
+    }
+    const childIndex = Array.prototype.indexOf.call(parent.children, current) as number;
+    if (childIndex < 0) {
+      return null;
+    }
+    path.unshift(childIndex);
+    current = parent;
+  }
+  return current === root ? path : null;
+}
+
+function resolveElementPath(root: HTMLElement | null, path: number[] | null): HTMLElement | null {
+  if (!root || !path) {
+    return null;
+  }
+  let current: Element = root;
+  for (const childIndex of path) {
+    const next = current.children.item(childIndex);
+    if (!(next instanceof HTMLElement)) {
+      return null;
+    }
+    current = next;
+  }
+  return current instanceof HTMLElement ? current : null;
+}
+
+function buildOverviewScrollElementSignature(
+  root: HTMLElement | null,
+  target: HTMLElement,
+): OverviewScrollElementSignature | null {
+  if (!root || !root.contains(target)) {
+    return null;
+  }
+  const tagName = target.tagName;
+  const className = target.className;
+  const dataRole = target.getAttribute("data-role");
+  const matches = Array.from(root.querySelectorAll<HTMLElement>(tagName)).filter(
+    (element) =>
+      element.className === className &&
+      element.getAttribute("data-role") === dataRole,
+  );
+  const index = matches.indexOf(target);
+  if (index < 0) {
+    return null;
+  }
+  return { tagName, className, dataRole, index };
+}
+
+function resolveOverviewScrollElementSignature(
+  root: HTMLElement | null,
+  signature: OverviewScrollElementSignature | null,
+): HTMLElement | null {
+  if (!root || !signature) {
+    return null;
+  }
+  const matches = Array.from(root.querySelectorAll<HTMLElement>(signature.tagName)).filter(
+    (element) =>
+      element.className === signature.className &&
+      element.getAttribute("data-role") === signature.dataRole,
+  );
+  return matches[signature.index] ?? null;
+}
+
+function findOverviewTaskElement(
+  root: HTMLElement | null,
+  taskId: string | null,
+): HTMLElement | null {
+  if (!root || !taskId) {
+    return null;
+  }
+  return root.querySelector<HTMLElement>(`[data-task-id="${taskId}"]`);
 }
 
 function createBlankTaskDraft(): TaskUpsertInput {
@@ -254,6 +365,16 @@ export function TasksPage({
   const openTaskTokenRef = useRef(0);
   const tasksOverviewTokenRef = useRef(0);
   const lastProjectIdRef = useRef<string | null>(projectId);
+  const pageRootRef = useRef<HTMLElement | null>(null);
+  const lastOverviewScrollRootRef = useRef<HTMLElement | null>(null);
+  const savedOverviewScrollTopRef = useRef(0);
+  const savedOverviewTaskIdRef = useRef<string | null>(null);
+  const savedOverviewTaskViewportTopRef = useRef<number | null>(null);
+  const savedOverviewScrollElementPathRef = useRef<number[] | null>(null);
+  const savedOverviewScrollElementSignatureRef = useRef<OverviewScrollElementSignature | null>(null);
+  const savedOverviewScrollTargetKindRef = useRef<OverviewScrollTarget["kind"]>("element");
+  const shouldRestoreOverviewScrollRef = useRef(false);
+  const previousRouteKindRef = useRef<TasksRoute["kind"]>("overview");
   const routeRef = useRef<TaskDetailRouteState>({ kind: "overview" });
   const taskDetailLoadRequestRef = useRef(0);
   const taskDependencyTreeLoadRequestRef = useRef(0);
@@ -270,6 +391,89 @@ export function TasksPage({
   const openTaskSessionHandler = onOpenTaskSession ?? onOpenSession ?? noopOpenSession;
   const openAgentHandler = onOpenAgent ?? noopOpenAgent;
   const openRoleHandler = onOpenRole ?? noopOpenRole;
+
+  const getOverviewScrollTarget = useCallback((): OverviewScrollTarget | null => {
+    if (typeof document === "undefined" || typeof window === "undefined") {
+      return null;
+    }
+
+    const scrollRoot =
+      findNearestScrollableAncestor(pageRootRef.current) ??
+      document.querySelector<HTMLElement>(".content") ??
+      lastOverviewScrollRootRef.current;
+    const windowScrollTop = Math.max(
+      window.scrollY,
+      document.documentElement.scrollTop,
+      document.body.scrollTop,
+    );
+    if (scrollRoot && scrollRoot.scrollHeight > scrollRoot.clientHeight) {
+      if (scrollRoot.scrollTop > 0 || windowScrollTop === 0) {
+        lastOverviewScrollRootRef.current = scrollRoot;
+        return { kind: "element", element: scrollRoot };
+      }
+    }
+
+    if (
+      windowScrollTop > 0 ||
+      document.documentElement.scrollHeight > window.innerHeight ||
+      document.body.scrollHeight > window.innerHeight
+    ) {
+      return { kind: "window" };
+    }
+
+    if (scrollRoot) {
+      lastOverviewScrollRootRef.current = scrollRoot;
+      return { kind: "element", element: scrollRoot };
+    }
+
+    return null;
+  }, []);
+
+  const captureOverviewScrollPosition = useCallback((taskId?: string | null) => {
+    const scrollTarget = getOverviewScrollTarget();
+    if (!scrollTarget) {
+      return;
+    }
+
+    savedOverviewScrollTopRef.current =
+      scrollTarget.kind === "window"
+        ? Math.max(
+            window.scrollY,
+            document.documentElement.scrollTop,
+            document.body.scrollTop,
+          )
+        : scrollTarget.element.scrollTop;
+    savedOverviewScrollElementPathRef.current =
+      scrollTarget.kind === "element"
+        ? buildElementPath(pageRootRef.current, scrollTarget.element)
+        : null;
+    savedOverviewScrollElementSignatureRef.current =
+      scrollTarget.kind === "element"
+        ? buildOverviewScrollElementSignature(
+            pageRootRef.current,
+            scrollTarget.element,
+          )
+        : null;
+    savedOverviewTaskIdRef.current = taskId ?? null;
+    savedOverviewTaskViewportTopRef.current =
+      taskId && pageRootRef.current
+        ? findOverviewTaskElement(pageRootRef.current, taskId)?.getBoundingClientRect()
+            .top ?? null
+        : null;
+    savedOverviewScrollTargetKindRef.current = scrollTarget.kind;
+    shouldRestoreOverviewScrollRef.current = true;
+  }, [getOverviewScrollTarget]);
+
+  const returnToOverviewFromTaskDetail = useCallback(() => {
+    if (
+      typeof window !== "undefined" &&
+      hasTaskDetailOverviewHistoryEntry(window.history.state)
+    ) {
+      window.history.back();
+      return;
+    }
+    setRoute({ kind: "overview" });
+  }, []);
 
   const tagScopedTasks = useMemo(
     () => applyTaskListQuery(tasks, { tags: taskOverviewState.tags, tagMatch: taskOverviewState.tagMatch, sort: taskOverviewState.sort }),
@@ -576,6 +780,67 @@ export function TasksPage({
   }, [route]);
 
   useEffect(() => {
+    const previousRouteKind = previousRouteKindRef.current;
+    if (previousRouteKind === "detail" && route.kind === "overview" && shouldRestoreOverviewScrollRef.current) {
+      const savedScrollTop = savedOverviewScrollTopRef.current;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          let restoreAttempts = 0;
+          const restoreScroll = () => {
+            if (savedOverviewScrollTargetKindRef.current === "window") {
+              window.scrollTo({ top: savedScrollTop, behavior: "auto" });
+              window.dispatchEvent(new Event("scroll"));
+              shouldRestoreOverviewScrollRef.current = false;
+              return;
+            }
+
+            const scrollTarget = getOverviewScrollTarget();
+            const scrollRoot =
+              resolveElementPath(
+                pageRootRef.current,
+                savedOverviewScrollElementPathRef.current,
+              ) ??
+              resolveOverviewScrollElementSignature(
+                pageRootRef.current,
+                savedOverviewScrollElementSignatureRef.current,
+              ) ??
+              (scrollTarget?.kind === "element"
+                ? scrollTarget.element
+                : lastOverviewScrollRootRef.current);
+            if (!scrollRoot) {
+              return;
+            }
+            scrollRoot.scrollTop = savedScrollTop;
+            const savedTaskTop = savedOverviewTaskViewportTopRef.current;
+            const savedTaskElement = findOverviewTaskElement(
+              pageRootRef.current,
+              savedOverviewTaskIdRef.current,
+            );
+            if (savedTaskElement) {
+              savedTaskElement.scrollIntoView({ block: "nearest", inline: "nearest" });
+              if (savedTaskTop !== null) {
+                const taskScrollRoot =
+                  findNearestScrollableAncestor(savedTaskElement) ?? scrollRoot;
+                taskScrollRoot.scrollTop +=
+                  savedTaskElement.getBoundingClientRect().top - savedTaskTop;
+              }
+            }
+            scrollRoot.dispatchEvent(new Event("scroll"));
+            restoreAttempts += 1;
+            if (Math.abs(scrollRoot.scrollTop - savedScrollTop) > 1 && restoreAttempts < 5) {
+              requestAnimationFrame(restoreScroll);
+              return;
+            }
+            shouldRestoreOverviewScrollRef.current = false;
+          };
+          restoreScroll();
+        });
+      });
+    }
+    previousRouteKindRef.current = route.kind;
+  }, [getOverviewScrollTarget, route.kind]);
+
+  useEffect(() => {
     taskDependencyTreeLoadRequestRef.current += 1;
     setDependencyViewMode("list");
     setDependencyTreeTasksById({});
@@ -723,10 +988,13 @@ export function TasksPage({
   }
 
   const openTaskDetail = useCallback((taskId: string) => {
+    if (routeRef.current.kind === "overview") {
+      captureOverviewScrollPosition(taskId);
+    }
     taskDetailLoadRequestRef.current += 1;
     setTaskScheduleDetail(null);
     setRoute({ kind: "detail", taskId });
-  }, []);
+  }, [captureOverviewScrollPosition]);
 
   function openTaskScheduleDetail(scheduleId: string) {
     taskScheduleLoadRequestRef.current += 1;
@@ -1495,20 +1763,20 @@ export function TasksPage({
           return {
             title: "Task detail",
             backLabel: "Back to tasks",
-            onBack: () => setRoute({ kind: "overview" as const }),
+            onBack: returnToOverviewFromTaskDetail,
           };
         }
         if (taskDetailEditing || taskDetailMobileHeaderActions.length === 0) {
           return {
             title: taskDetailEditing ? "Edit task" : (taskDraft.title.trim() || taskDetail.title),
             backLabel: "Back to tasks",
-            onBack: () => setRoute({ kind: "overview" as const }),
+            onBack: returnToOverviewFromTaskDetail,
           };
         }
         return {
           title: taskDraft.title.trim() || taskDetail.title,
           backLabel: "Back to tasks",
-          onBack: () => setRoute({ kind: "overview" as const }),
+          onBack: returnToOverviewFromTaskDetail,
           actionMenuLabel: "Task actions",
           actions: stripMobileHeaderActionData(taskDetailMobileHeaderActions),
           onAction: (actionId: string) => {
@@ -1551,12 +1819,26 @@ export function TasksPage({
   if (typeof window !== "undefined") {
     const testWindow = window as typeof window & {
       __orchestraTestOpenTaskDetail?: (taskId: string) => void;
+      __orchestraTasksScrollDebug?: {
+        routeKind: TasksRoute["kind"];
+        previousRouteKind: TasksRoute["kind"];
+        shouldRestore: boolean;
+        savedTop: number;
+        savedKind: OverviewScrollTarget["kind"];
+      };
     };
     testWindow.__orchestraTestOpenTaskDetail = openTaskDetail;
+    testWindow.__orchestraTasksScrollDebug = {
+      routeKind: route.kind,
+      previousRouteKind: previousRouteKindRef.current,
+      shouldRestore: shouldRestoreOverviewScrollRef.current,
+      savedTop: savedOverviewScrollTopRef.current,
+      savedKind: savedOverviewScrollTargetKindRef.current,
+    };
   }
 
   return (
-    <section className="panel-stack task-page-stack task-page-stack--with-fab">
+    <section className="panel-stack task-page-stack task-page-stack--with-fab" ref={pageRootRef}>
       <ResourceStatusBanner
         connection={connection}
         error={taskActionError}

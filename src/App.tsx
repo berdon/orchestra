@@ -113,6 +113,10 @@ import {
   type TaskOverviewState,
 } from "./pages/tasks/taskOverviewState";
 import {
+  hasTaskDetailOverviewHistoryEntry,
+  withTaskDetailOverviewHistoryFlag,
+} from "./lib/taskHistory";
+import {
   loadStoredLocalNotificationsEnabled,
   storeLocalNotificationsEnabled,
 } from "./lib/localNotifications";
@@ -487,7 +491,7 @@ type AppSelectionRouteState = {
   settingsTab: SettingsTab | null;
 };
 
-function getInitialAppSelectionRouteState(): AppSelectionRouteState {
+function readAppSelectionRouteState(location: Pick<Location, "search">): AppSelectionRouteState {
   const defaultRoute: AppSelectionRouteState = {
     page: "sessions",
     projectId: getActiveProjectId(),
@@ -496,11 +500,7 @@ function getInitialAppSelectionRouteState(): AppSelectionRouteState {
     settingsTab: null,
   };
 
-  if (typeof window === "undefined") {
-    return defaultRoute;
-  }
-
-  const params = new URLSearchParams(window.location.search);
+  const params = new URLSearchParams(location.search);
   const view = params.get("view");
   if (view === "logs" || view === "agent-terminal") {
     return defaultRoute;
@@ -530,6 +530,20 @@ function getInitialAppSelectionRouteState(): AppSelectionRouteState {
         ? (settingsTabParam as SettingsTab)
         : null,
   };
+}
+
+function getInitialAppSelectionRouteState(): AppSelectionRouteState {
+  if (typeof window === "undefined") {
+    return {
+      page: "sessions",
+      projectId: getActiveProjectId(),
+      selectedTaskId: null,
+      selectedSessionId: null,
+      settingsTab: null,
+    };
+  }
+
+  return readAppSelectionRouteState(window.location);
 }
 
 function setSearchParam(
@@ -1413,6 +1427,7 @@ export function App() {
   const lastKnownChatSessionDraftRef = useRef("");
   const activePageRef = useRef(activePage);
   const activeProjectIdRef = useRef(activeProjectId);
+  const selectedTaskIdRef = useRef(selectedTaskId);
   const selectedSessionIdRef = useRef(selectedSessionId);
   const chatSessionIdStateRef = useRef(chatSessionId);
   const supervisorSessionIdRef = useRef(supervisorSessionId);
@@ -1438,6 +1453,13 @@ export function App() {
     typeof performance !== "undefined" ? performance.now() : 0,
   );
   const startupSessionWarmProjectKeyRef = useRef<string | null>(null);
+  const previousAppSelectionRouteRef = useRef<AppSelectionRouteState>({
+    page: initialRouteState.page,
+    projectId: initialRouteState.projectId,
+    selectedTaskId: initialRouteState.selectedTaskId,
+    selectedSessionId: initialRouteState.selectedSessionId,
+    settingsTab: initialRouteState.settingsTab,
+  });
 
   useEffect(() => {
     activePageRef.current = activePage;
@@ -1452,6 +1474,10 @@ export function App() {
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
   }, [activeProjectId]);
+
+  useEffect(() => {
+    selectedTaskIdRef.current = selectedTaskId;
+  }, [selectedTaskId]);
 
   useEffect(() => {
     selectedSessionIdRef.current = selectedSessionId;
@@ -1758,6 +1784,40 @@ export function App() {
     }
   }, [activeSettingsTab, settingsTab]);
 
+  const applyAppSelectionRouteState = useCallback(
+    (nextRouteState: AppSelectionRouteState) => {
+      setActivePage(nextRouteState.page);
+      setActiveProjectIdState(nextRouteState.projectId);
+      setSettingsTab(nextRouteState.settingsTab ?? "projects");
+      setSelectedTaskId(nextRouteState.selectedTaskId);
+      setSelectedSessionId(nextRouteState.selectedSessionId);
+      setPendingSessionOpenRequest((current) =>
+        nextRouteState.selectedSessionId
+          ? {
+              sessionId: nextRouteState.selectedSessionId,
+              token: (current?.token ?? 0) + 1,
+              projectId: nextRouteState.projectId,
+            }
+          : null,
+      );
+      if (nextRouteState.page === "tasks") {
+        if (nextRouteState.selectedTaskId) {
+          setTasksOpenRequest((current) => ({
+            taskId: nextRouteState.selectedTaskId as string,
+            token: (current?.token ?? 0) + 1,
+            projectId: nextRouteState.projectId,
+          }));
+          return;
+        }
+        setTasksOpenRequest(null);
+        setTasksOverviewToken((current) => current + 1);
+        return;
+      }
+      setTasksOpenRequest(null);
+    },
+    [],
+  );
+
   const activeProjectUnreadCount = useMemo(
     () => (activeProjectId ? (projectUnreadCounts[activeProjectId] ?? 0) : 0),
     [activeProjectId, projectUnreadCounts],
@@ -1991,6 +2051,31 @@ export function App() {
       return;
     }
 
+    const handlePopState = () => {
+      applyAppSelectionRouteState(readAppSelectionRouteState(window.location));
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [applyAppSelectionRouteState, isDetachedWindow]);
+
+  useEffect(() => {
+    const previousRoute = previousAppSelectionRouteRef.current;
+    const nextRoute: AppSelectionRouteState = {
+      page: activePage,
+      projectId: activeProjectId,
+      selectedTaskId,
+      selectedSessionId: pendingSelectedSessionId ?? selectedSessionId,
+      settingsTab: activePage === "settings" ? activeSettingsTab : null,
+    };
+    previousAppSelectionRouteRef.current = nextRoute;
+
+    if (isDetachedWindow) {
+      return;
+    }
+
     const url = new URL(window.location.href);
     setSearchParam(url.searchParams, "page", activePage);
     setSearchParam(url.searchParams, "projectId", activeProjectId);
@@ -2015,8 +2100,30 @@ export function App() {
     const nextSearch = url.searchParams.toString();
     const nextUrl = `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`;
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (nextUrl !== currentUrl) {
-      window.history.replaceState(window.history.state, "", nextUrl);
+    const shouldPushTaskDetailHistoryEntry =
+      previousRoute.page === "tasks" &&
+      previousRoute.projectId === activeProjectId &&
+      previousRoute.selectedTaskId === null &&
+      activePage === "tasks" &&
+      selectedTaskId !== null;
+    const shouldMarkTaskDetailHistoryEntry =
+      activePage === "tasks" &&
+      selectedTaskId !== null &&
+      (shouldPushTaskDetailHistoryEntry ||
+        hasTaskDetailOverviewHistoryEntry(window.history.state));
+    const nextHistoryState = withTaskDetailOverviewHistoryFlag(
+      window.history.state,
+      shouldMarkTaskDetailHistoryEntry,
+    );
+    const historyStateChanged =
+      JSON.stringify(nextHistoryState) !== JSON.stringify(window.history.state);
+
+    if (shouldPushTaskDetailHistoryEntry && nextUrl !== currentUrl) {
+      window.history.pushState(nextHistoryState, "", nextUrl);
+      return;
+    }
+    if (nextUrl !== currentUrl || historyStateChanged) {
+      window.history.replaceState(nextHistoryState, "", nextUrl);
     }
   }, [
     activePage,
@@ -4688,8 +4795,19 @@ export function App() {
   }
 
   function navigateToTasksOverview(tag?: string) {
+    if (
+      !tag &&
+      activePageRef.current === "tasks" &&
+      selectedTaskIdRef.current !== null &&
+      hasTaskDetailOverviewHistoryEntry(window.history.state)
+    ) {
+      window.history.back();
+      return;
+    }
+
     setActivePage("tasks");
     setSelectedTaskId(null);
+    setTasksOpenRequest(null);
     if (tag) {
       setTaskOverviewState((current) =>
         buildTaskOverviewStateForTagNavigation(current, tag),

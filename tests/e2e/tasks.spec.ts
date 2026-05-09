@@ -18,6 +18,81 @@ async function getElementHeight(locator: Locator) {
   return locator.evaluate((element) => Math.round(element.getBoundingClientRect().height));
 }
 
+async function getContentScrollTop(page: Page) {
+  return page.evaluate(() => {
+    const root = document.querySelector(".task-page-stack") as HTMLElement | null;
+    const isVerticallyScrollable = (element: HTMLElement) => {
+      const overflowY = window.getComputedStyle(element).overflowY;
+      return (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") && element.scrollHeight > element.clientHeight;
+    };
+    const descendantCandidates = root
+      ? Array.from(root.querySelectorAll<HTMLElement>("*")).filter((element) => isVerticallyScrollable(element))
+      : [];
+    descendantCandidates.sort((left, right) => {
+      if (right.scrollTop !== left.scrollTop) {
+        return right.scrollTop - left.scrollTop;
+      }
+      return (right.scrollHeight - right.clientHeight) - (left.scrollHeight - left.clientHeight);
+    });
+    const descendant = descendantCandidates[0] ?? null;
+    if (descendant) {
+      return Math.round(descendant.scrollTop);
+    }
+
+    let current = root?.parentElement ?? null;
+    while (current) {
+      if (isVerticallyScrollable(current)) {
+        return Math.round(current.scrollTop);
+      }
+      current = current.parentElement;
+    }
+
+    const content = document.querySelector(".content") as HTMLElement | null;
+    return Math.round(Math.max(content?.scrollTop ?? 0, window.scrollY ?? 0));
+  });
+}
+
+async function setContentScrollTop(page: Page, top: number) {
+  return page.evaluate((nextTop) => {
+    const root = document.querySelector(".task-page-stack") as HTMLElement | null;
+    const isVerticallyScrollable = (element: HTMLElement) => {
+      const overflowY = window.getComputedStyle(element).overflowY;
+      return (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") && element.scrollHeight > element.clientHeight;
+    };
+    const descendantCandidates = root
+      ? Array.from(root.querySelectorAll<HTMLElement>("*")).filter((element) => isVerticallyScrollable(element))
+      : [];
+    descendantCandidates.sort((left, right) => (right.scrollHeight - right.clientHeight) - (left.scrollHeight - left.clientHeight));
+    const descendant = descendantCandidates[0] ?? null;
+    if (descendant) {
+      descendant.scrollTop = nextTop;
+      descendant.dispatchEvent(new Event("scroll"));
+      return Math.round(descendant.scrollTop);
+    }
+
+    let current = root?.parentElement ?? null;
+    while (current) {
+      if (isVerticallyScrollable(current)) {
+        current.scrollTop = nextTop;
+        current.dispatchEvent(new Event("scroll"));
+        return Math.round(current.scrollTop);
+      }
+      current = current.parentElement;
+    }
+
+    const content = document.querySelector(".content") as HTMLElement | null;
+    if (content && content.scrollHeight > content.clientHeight) {
+      content.scrollTop = nextTop;
+      content.dispatchEvent(new Event("scroll"));
+      return Math.round(content.scrollTop);
+    }
+
+    window.scrollTo({ top: nextTop, behavior: "auto" });
+    window.dispatchEvent(new Event("scroll"));
+    return Math.round(window.scrollY);
+  }, top);
+}
+
 async function seedMobileTaskOverviewControlsData(page: Page) {
   await page.addInitScript(() => {
     if (window.localStorage.getItem("orchestra.mock.mobile-overview-controls-seeded") === "true") {
@@ -311,6 +386,97 @@ async function readMobileTaskDetailOverflowMetrics(page: Page) {
       documentScrollWidth: document.documentElement.scrollWidth,
       viewportWidth: window.innerWidth,
     };
+  });
+}
+
+async function seedTaskOverviewScrollRestorationData(page: Page) {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    const baseUpdatedAt = Date.parse("2026-04-22T12:00:00.000Z");
+    const workflows = Array.from({ length: 20 }, (_, workflowIndex) => ({
+      id: `workflow-scroll-restoration-${workflowIndex + 1}`,
+      slug: `scroll-restoration-${workflowIndex + 1}`,
+      name: `Scroll Restoration Flow ${workflowIndex + 1}`,
+      description: "Flow used to verify task overview scroll restoration.",
+      archived: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      lanes: [
+        {
+          id: `lane-implement-${workflowIndex + 1}`,
+          key: "implement",
+          name: "Implement",
+          description: null,
+          order: 0,
+          assignedEntityType: "role",
+          assignedEntityId: "developer",
+          entryPromptTemplate: "Build it.",
+          successTransitionType: "end",
+          successTargetLaneId: null,
+          failureTransitionType: "end",
+          failureTargetLaneId: null,
+        },
+      ],
+    }));
+    const tasks = workflows.flatMap((workflow, workflowIndex) =>
+      Array.from({ length: 2 }, (_, taskIndex) => {
+        const sequence = workflowIndex * 2 + taskIndex + 1;
+        const isTarget = workflowIndex === workflows.length - 1 && taskIndex === 1;
+        return {
+          id: isTarget ? "task-scroll-target" : `task-scroll-${String(sequence).padStart(2, "0")}`,
+          projectId: "orchestra",
+          number: `ORC-${400 + sequence}`,
+          title: isTarget ? "Scroll restoration target task" : `Scroll fixture task ${String(sequence).padStart(2, "0")}`,
+          description: isTarget
+            ? "Used to verify overview scroll restoration when task detail closes."
+            : `Fixture task ${sequence} for overview scroll restoration coverage.`,
+          type: "task",
+          status: sequence % 3 === 0 ? "in_progress" : "ready",
+          priority: "P2",
+          workflowId: workflow.id,
+          currentLaneId: workflow.lanes[0].id,
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          tags: isTarget ? ["scroll"] : [],
+          commentCount: 0,
+          unreadCommentCount: 0,
+          laneRunCount: 0,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: sequence % 3 !== 0,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [],
+          laneSummaries: [],
+          activeLaneAssignment: null,
+          createdAt: timestamp,
+          updatedAt: new Date(baseUpdatedAt - sequence * 60_000).toISOString(),
+        };
+      }),
+    );
+
+    window.localStorage.setItem("orchestra.mock.workflows", JSON.stringify(workflows));
+    window.localStorage.setItem("orchestra.mock.tasks", JSON.stringify(tasks));
+    window.localStorage.setItem("orchestra.mock.task-schedules", JSON.stringify([]));
   });
 }
 
@@ -960,6 +1126,58 @@ test("clicking a task table tag chip filters the tasks overview instead of openi
   await expect(page.locator('[data-role="task-table-row"][data-task-id="task-tag-source"]')).toBeVisible();
   await expect(page.locator('[data-role="task-table-row"][data-task-id="task-tag-backend-match"]')).toBeVisible();
   await expect(page.locator('[data-role="task-table-row"][data-task-id="task-tag-frontend-other"]')).toHaveCount(0);
+});
+
+test("tasks overview preserves scroll position when returning from task detail via in-app back", async ({ page }) => {
+  await seedTaskOverviewScrollRestorationData(page);
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  expect(await setContentScrollTop(page, 2_400)).toBeGreaterThan(0);
+
+  const targetCard = page.locator('[data-role="task-card"][data-task-id="task-scroll-target"]');
+  await targetCard.scrollIntoViewIfNeeded();
+  const savedScrollTop = await getContentScrollTop(page);
+  const savedTargetTop = await targetCard.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  expect(savedScrollTop).toBeGreaterThan(0);
+
+  await targetCard.click();
+  await expect(page.locator('[data-role="task-detail-panel"]')).toHaveAttribute("data-task-id", "task-scroll-target");
+  await expect.poll(async () => page.evaluate(() => window.location.search.includes("selectedTaskId=task-scroll-target"))).toBe(true);
+
+  await page.locator('[data-role="nav-item-tasks"]').click();
+
+  await expect(page.locator('[data-role="task-detail-panel"]')).toHaveCount(0);
+  await expect.poll(async () => page.evaluate(() => window.location.search.includes("selectedTaskId="))).toBe(false);
+  await expect(targetCard).toBeVisible();
+  await expect.poll(async () => Math.abs((await targetCard.evaluate((node) => Math.round(node.getBoundingClientRect().top))) - savedTargetTop)).toBeLessThan(4);
+});
+
+test("browser back from task detail restores the tasks overview scroll position", async ({ page }) => {
+  await seedTaskOverviewScrollRestorationData(page);
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  expect(await setContentScrollTop(page, 2_400)).toBeGreaterThan(0);
+
+  const targetCard = page.locator('[data-role="task-card"][data-task-id="task-scroll-target"]');
+  await targetCard.scrollIntoViewIfNeeded();
+  const savedScrollTop = await getContentScrollTop(page);
+  const savedTargetTop = await targetCard.evaluate((node) => Math.round(node.getBoundingClientRect().top));
+  expect(savedScrollTop).toBeGreaterThan(0);
+
+  await targetCard.click();
+  await expect(page.locator('[data-role="task-detail-panel"]')).toHaveAttribute("data-task-id", "task-scroll-target");
+  await expect.poll(async () => page.evaluate(() => window.location.search.includes("selectedTaskId=task-scroll-target"))).toBe(true);
+
+  await page.goBack();
+
+  await expect(page.locator('[data-role="task-detail-panel"]')).toHaveCount(0);
+  await expect.poll(async () => page.evaluate(() => window.location.search.includes("selectedTaskId="))).toBe(false);
+  await expect(targetCard).toBeVisible();
+  await expect.poll(async () => Math.abs((await targetCard.evaluate((node) => Math.round(node.getBoundingClientRect().top))) - savedTargetTop)).toBeLessThan(4);
 });
 
 test("tasks overview shows populated draft and scheduled sections", async ({ page }) => {
