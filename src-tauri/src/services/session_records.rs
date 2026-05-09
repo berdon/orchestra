@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -20,6 +21,32 @@ pub const LIFECYCLE_ACTIVE: &str = "active";
 pub const LIFECYCLE_CLOSED: &str = "closed";
 pub const LIFECYCLE_ARCHIVED: &str = "archived";
 pub const LIFECYCLE_SUPERSEDED: &str = "superseded";
+
+fn is_locked_database_error(message: &str) -> bool {
+    message.contains("database is locked") || message.contains("database table is locked")
+}
+
+fn retry_locked_session_write<T, F>(mut operation: F) -> Result<T, String>
+where
+    F: FnMut() -> Result<T, String>,
+{
+    const RETRY_DELAYS_MS: [u64; 8] = [100, 250, 500, 1_000, 1_500, 2_000, 3_000, 5_000];
+
+    let mut attempt = 0;
+    loop {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if is_locked_database_error(&error) && attempt < RETRY_DELAYS_MS.len() =>
+            {
+                let delay_ms = RETRY_DELAYS_MS[attempt];
+                attempt += 1;
+                std::thread::sleep(Duration::from_millis(delay_ms));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct AgentRuntimeBinding<'a> {
@@ -233,7 +260,7 @@ pub fn create_session_record(
         input.title,
         input.subscribed,
     )?;
-    let write_result = (|| {
+    let write_result = retry_locked_session_write(|| {
         upsert_session_row(
             connection,
             SessionRowWrite {
@@ -272,7 +299,7 @@ pub fn create_session_record(
         )?;
         apply_legacy_bindings(connection, &stored.record.id, &input)?;
         Ok::<_, String>(())
-    })();
+    });
 
     if let Err(error) = write_result {
         let _ = connection.execute("DELETE FROM sessions WHERE id = ?1", [&stored.record.id]);

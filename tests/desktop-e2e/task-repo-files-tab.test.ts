@@ -23,9 +23,7 @@ import {
 import {
   addRepositoryViaSettings,
   createProjectViaSettings,
-  createRoleViaSettings,
   createTaskViaTasks,
-  createWorkflowViaSettings,
   dispatchRoleQueueViaUi,
   openRoleOperations,
   openTaskCard,
@@ -34,6 +32,32 @@ import {
 
 const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
+
+async function dispatchTaskLaneWithRetries(sessionId: string, taskId: string, timeoutMs = 120_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "";
+  while (Date.now() < deadline) {
+    try {
+      await invokeCommand(sessionId, 'dispatch_task_lane', { taskId });
+      return;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (!lastError.includes('already processing a message')) {
+        throw error;
+      }
+    }
+    await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
+    await invokeCommand<Array<{ title?: string; status?: string }>>(sessionId, 'list_sessions', {})
+      .then((sessions) => {
+        if (!sessions.every((entry) => !String(entry.title ?? '').includes('Supervisor main session') || ['idle', 'paused', 'closed'].includes(String(entry.status ?? '')))) {
+          throw new Error('supervisor still busy');
+        }
+      })
+      .catch(() => undefined);
+    await sleep(1_000);
+  }
+  throw new Error(`Timed out dispatching task lane ${taskId}: ${lastError}`);
+}
 
 describe("desktop task repo files tab", () => {
   it.skipIf(!isDesktopE2E)("shows tracked repo files in the dedicated task detail tab", async () => {
@@ -123,46 +147,59 @@ describe("desktop task repo files tab", () => {
     try {
       await ensureReactReady(sessionId);
 
-      await createProjectViaSettings(sessionId, "Repo Files Worktree Project", "Desktop task repo file worktree resolution test.");
-      await addRepositoryViaSettings(sessionId, {
-        name: "Repo Files Worktree Repo",
-        path: repoPath,
-        defaultBranch: "main",
-        makeDefault: true,
+      const project = await invokeCommand<{ id: string; name: string }>(sessionId, 'create_project', {
+        input: {
+          name: 'Repo Files Worktree Project',
+          description: 'Desktop task repo file worktree resolution test.',
+          taskPrefix: 'RFW',
+        },
       });
-      await switchProject(sessionId, "Repo Files Worktree Project");
-      await createRoleViaSettings(sessionId, {
-        name: "Repo Files Developer",
-        capacity: "1",
-        description: "Role for task worktree repo file testing.",
+      const repository = await invokeCommand<{ id: string }>(sessionId, 'create_repository', {
+        projectId: project.id,
+        input: {
+          name: 'Repo Files Worktree Repo',
+          repositoryPath: repoPath,
+          defaultBranch: 'main',
+        },
       });
-      await createWorkflowViaSettings(sessionId, {
-        name: "Repo Files Worktree Flow",
-        description: "Single role lane for worktree file tests.",
-        lanes: [
-          {
-            name: "Implement",
-            key: "implement",
-            ownerType: "role",
-            ownerReference: "repo-files-developer",
-            entryPromptTemplate: "Create the requested repository file.",
-          },
-        ],
+      await invokeCommand(sessionId, 'set_project_default_repository', {
+        projectId: project.id,
+        repositoryId: repository.id,
       });
-      const project = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_projects')
-        .then((projects) => projects.find((entry) => entry.name === 'Repo Files Worktree Project'));
-      expect(project).toBeTruthy();
-      const repository = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_repositories', { projectId: project!.id })
-        .then((repositories) => repositories.find((entry) => entry.name === 'Repo Files Worktree Repo'));
-      expect(repository).toBeTruthy();
-      const workflow = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_workflows', { includeArchived: false })
-        .then((workflows) => workflows.find((entry) => entry.name === 'Repo Files Worktree Flow'))
-        .then((summary) => {
-          expect(summary).toBeTruthy();
-          return invokeCommand<any>(sessionId, 'get_workflow', { workflowId: summary!.id });
-        });
-      await invokeCommand(sessionId, 'create_task', {
-        projectId: project!.id,
+      const developerRole = await invokeCommand<{ id: string; slug: string }>(sessionId, 'create_role', {
+        input: {
+          name: 'Repo Files Developer',
+          description: 'Role for task worktree repo file testing.',
+          systemPrompt: 'Create the requested repository file.',
+          capacity: 1,
+        },
+      });
+      const workflow = await invokeCommand<any>(sessionId, 'create_workflow', {
+        input: {
+          name: 'Repo Files Worktree Flow',
+          description: 'Single role lane for worktree file tests.',
+          lanes: [
+            {
+              id: 'lane-implement',
+              key: 'implement',
+              name: 'Implement',
+              order: 0,
+              assignedEntityType: 'role',
+              assignedEntityId: developerRole.slug,
+              entryPromptTemplate: 'Create the requested repository file.',
+              useSeparateWorktree: false,
+              requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
+              successTransitionType: 'end',
+              successTargetLaneId: null,
+              failureTransitionType: 'end',
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      });
+      const createdTask = await invokeCommand<{ id: string }>(sessionId, 'create_task', {
+        projectId: project.id,
         input: {
           title: 'Track worktree-only repo file',
           description: 'Verify repo file references resolve against the task worktree.',
@@ -170,29 +207,23 @@ describe("desktop task repo files tab", () => {
           status: 'ready',
           priority: 'P2',
           workflowId: workflow.id,
-          currentLaneId: workflow.lanes[0]?.id ?? null,
-          repositoryId: repository!.id,
-          repositoryIds: [repository!.id],
+          currentLaneId: 'lane-implement',
+          repositoryId: repository.id,
+          repositoryIds: [repository.id],
           assigneeType: 'unassigned',
           assigneeId: null,
         },
       });
-      await executeScript(sessionId, `window.dispatchEvent(new CustomEvent('orchestra:projects-changed')); window.location.reload(); return true;`);
-      await sleep(1_000);
-      await ensureReactReady(sessionId);
       await switchProject(sessionId, 'Repo Files Worktree Project');
       const task = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, 'list_tasks', {
-        projectId: project!.id,
+        projectId: project.id,
         includeArchived: false,
-      }).then((tasks) => tasks.find((entry) => entry.title === 'Track worktree-only repo file'));
+      }).then((tasks) => tasks.find((entry) => entry.id === createdTask.id));
       expect(task).toBeTruthy();
 
-      const developerRole = await invokeCommand<Array<{ id: string; name: string }>>(sessionId, 'list_roles', { includeArchived: false })
-        .then((roles) => roles.find((entry) => entry.name === 'Repo Files Developer'));
-      expect(developerRole).toBeTruthy();
-      await invokeCommand(sessionId, 'dispatch_task_lane', { taskId: task!.id });
+      await dispatchTaskLaneWithRetries(sessionId, task!.id);
       await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
-      await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: developerRole!.id }).catch(() => undefined);
+      await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: developerRole.id }).catch(() => undefined);
 
       await openTaskCard(sessionId, 'Track worktree-only repo file');
       await clickByText(sessionId, '[role="tab"]', 'Runtime');
@@ -201,7 +232,7 @@ describe("desktop task repo files tab", () => {
       let taskWorktreePath = "";
       while (Date.now() < deadline) {
         await invokeCommand(sessionId, 'run_dispatcher_tick').catch(() => undefined);
-        await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: developerRole!.id }).catch(() => undefined);
+        await invokeCommand(sessionId, 'dispatch_role_queue', { roleId: developerRole.id }).catch(() => undefined);
         const taskRepositories = await invokeCommand<Array<{ taskWorktreePath?: string | null }>>(sessionId, 'list_task_repositories', { taskId: task!.id });
         taskWorktreePath = taskRepositories.find((entry) => typeof entry.taskWorktreePath === 'string' && entry.taskWorktreePath.length > 0)?.taskWorktreePath ?? "";
         if (!taskWorktreePath) {

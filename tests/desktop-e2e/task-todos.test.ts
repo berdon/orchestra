@@ -144,11 +144,10 @@ describe("desktop task todos", () => {
       expect(completedTask.todos.every((todo: { description: string; completed: boolean }) => todo.description.includes("Verify lane checklist completion") && todo.completed)).toBe(true);
       expect(completedTask.laneRuns.some((laneRun: { result: string }) => laneRun.result === "success")).toBe(true);
 
-      const sessions = await invokeCommand<Array<{ id: string; title: string }>>(sessionId, "list_sessions");
-      const workerSession = sessions.find((entry) => entry.title === "Task Todo Agent main session");
-      expect(workerSession).toBeTruthy();
+      const workerSessionId = completedTask.laneRuns?.at(-1)?.sessionId;
+      expect(workerSessionId).toBeTruthy();
       const workerSessionRecord = await invokeCommand<{ events?: Array<{ message?: string | null }> }>(sessionId, "get_session_record", {
-        sessionId: workerSession!.id,
+        sessionId: workerSessionId,
       });
       expect(
         workerSessionRecord.events?.some((event) => (event.message ?? "").includes("unfinished todo item(s)")) ?? false,

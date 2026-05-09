@@ -44,7 +44,8 @@ done
 extra_rustflags="${extra_rustflags# }"
 
 export RUSTFLAGS="$extra_rustflags"
-export CARGO_PROFILE_RELEASE_STRIP="symbols"
+export CARGO_PROFILE_RELEASE_STRIP="${CARGO_PROFILE_RELEASE_STRIP:-debuginfo}"
+export CARGO_PROFILE_RELEASE_DEBUG="${CARGO_PROFILE_RELEASE_DEBUG:-0}"
 
 cd "$repo_root"
 

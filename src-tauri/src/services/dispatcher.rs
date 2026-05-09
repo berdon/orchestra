@@ -298,11 +298,12 @@ fn recover_stale_task_assignments(app: AppHandle, state: &AppState) -> Result<us
 
         let candidate_context =
             pi_sessions::session_context_for_project_id(&current_candidate.project_id)?;
-        if let Some(assignment) = task_runtime::maybe_auto_dispatch_task(
+        if let Some(assignment) = task_runtime::maybe_auto_dispatch_task_for_state(
             &mut connection,
             &candidate_context.project_root,
             &candidate_context.session_dir,
             &current_candidate.task_id,
+            Some(state),
         )? {
             task_runtime::start_assignment_run(
                 app.clone(),
@@ -362,11 +363,12 @@ fn auto_dispatch_work_ready_tasks(app: AppHandle, state: &AppState) -> Result<us
                 continue;
             }
 
-            if let Some(assignment) = task_runtime::maybe_auto_dispatch_task(
+            if let Some(assignment) = task_runtime::maybe_auto_dispatch_task_for_state(
                 &mut connection,
                 &context.project_root,
                 &context.session_dir,
                 &task.id,
+                Some(state),
             )? {
                 task_runtime::start_assignment_run(
                     app.clone(),

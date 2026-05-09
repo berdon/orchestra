@@ -165,6 +165,7 @@ fn decide_session_runtime_reuse(
 }
 
 pub struct SessionRuntime {
+    instance_id: String,
     session_id: String,
     project_root: Mutex<PathBuf>,
     session_dir: PathBuf,
@@ -343,6 +344,7 @@ impl SessionRuntime {
         );
 
         let runtime = Arc::new(Self {
+            instance_id: Uuid::new_v4().to_string(),
             session_id,
             project_root: Mutex::new(requested_project_root),
             session_dir,
@@ -586,7 +588,7 @@ impl SessionRuntime {
         }
 
         if event_type == "agent_end" {
-            if let Some(run_id) = self.take_current_run_id() {
+            let completed_run = if let Some(run_id) = self.take_current_run_id() {
                 let _ = self.take_current_prompt_message();
                 self.app.state::<crate::state::AppState>().log(
                     "info",
@@ -601,18 +603,29 @@ impl SessionRuntime {
                     &self.session_id,
                     Some(&run_id),
                 );
+                let _ = crate::services::dispatcher::request_dispatcher_check(
+                    &self.app,
+                    "session.run.agent_end",
+                );
                 let _ = crate::services::role_dispatch::complete_role_run(&self.session_id);
-            }
+                true
+            } else {
+                false
+            };
 
             if let Some(runtime) = maybe_runtime(
                 &self.app.state::<crate::state::AppState>().session_runtimes,
                 &self.session_id,
             ) {
-                runtime.mark_non_prompt_delivery();
-                thread::spawn(move || {
-                    let _ = maybe_auto_compact(Arc::clone(&runtime));
+                if completed_run {
+                    runtime.mark_non_prompt_delivery();
+                    thread::spawn(move || {
+                        let _ = maybe_auto_compact(Arc::clone(&runtime));
+                        runtime.close_if_idle();
+                    });
+                } else {
                     runtime.close_if_idle();
-                });
+                }
             } else {
                 self.close_if_idle();
             }
@@ -645,6 +658,10 @@ impl SessionRuntime {
                 &self.session_id,
                 Some(&run_id),
                 &error_message,
+            );
+            let _ = crate::services::dispatcher::request_dispatcher_check(
+                &self.app,
+                "session.run.process_end",
             );
             let _ = crate::services::role_dispatch::fail_role_run(&self.session_id, &error_message);
             let _ =
@@ -856,15 +873,33 @@ impl SessionRuntime {
     fn start_control_operation(&self, kind: &str, trigger: &str) -> (String, String) {
         let operation_id = format!("session-control-{}", Uuid::new_v4().simple());
         let started_at = crate::state::now_iso();
+        let next_operation = SessionControlOperationState {
+            kind: kind.into(),
+            trigger: trigger.into(),
+            status: "running".into(),
+            started_at: started_at.clone(),
+            finished_at: None,
+            message: None,
+        };
+        let mut stored_operation = false;
         if let Ok(mut operation) = self.control_operation.lock() {
-            *operation = Some(SessionControlOperationState {
-                kind: kind.into(),
-                trigger: trigger.into(),
-                status: "running".into(),
-                started_at: started_at.clone(),
-                finished_at: None,
-                message: None,
-            });
+            let preserve_existing = kind == "compact"
+                && trigger == "auto"
+                && operation.as_ref().is_some_and(|existing| {
+                    existing.kind == "reload"
+                        && existing.trigger == "manual"
+                        && existing.status == "succeeded"
+                });
+            if !preserve_existing {
+                *operation = Some(next_operation.clone());
+                stored_operation = true;
+            }
+        }
+        if stored_operation {
+            let _ = self
+                .app
+                .state::<crate::state::AppState>()
+                .set_last_session_control_operation(&self.session_id, next_operation);
         }
         self.emit_stream_event(json!({
             "type": "session_control_start",
@@ -887,15 +922,33 @@ impl SessionRuntime {
         error: Option<String>,
     ) {
         let finished_at = crate::state::now_iso();
+        let next_operation = SessionControlOperationState {
+            kind: kind.into(),
+            trigger: trigger.into(),
+            status: if success { "succeeded" } else { "failed" }.into(),
+            started_at: started_at.into(),
+            finished_at: Some(finished_at.clone()),
+            message: message.clone().or_else(|| error.clone()),
+        };
+        let mut stored_operation = false;
         if let Ok(mut operation) = self.control_operation.lock() {
-            *operation = Some(SessionControlOperationState {
-                kind: kind.into(),
-                trigger: trigger.into(),
-                status: if success { "succeeded" } else { "failed" }.into(),
-                started_at: started_at.into(),
-                finished_at: Some(finished_at.clone()),
-                message: message.clone().or_else(|| error.clone()),
-            });
+            let preserve_existing = kind == "compact"
+                && trigger == "auto"
+                && operation.as_ref().is_some_and(|existing| {
+                    existing.kind == "reload"
+                        && existing.trigger == "manual"
+                        && existing.status == "succeeded"
+                });
+            if !preserve_existing {
+                *operation = Some(next_operation.clone());
+                stored_operation = true;
+            }
+        }
+        if stored_operation {
+            let _ = self
+                .app
+                .state::<crate::state::AppState>()
+                .set_last_session_control_operation(&self.session_id, next_operation);
         }
         self.emit_stream_event(json!({
             "type": "session_control_end",
@@ -1285,7 +1338,22 @@ impl SessionRuntime {
             .session_runtimes
             .lock()
         {
-            runtimes.remove(&self.session_id);
+            let should_remove = runtimes
+                .get(&self.session_id)
+                .map(|runtime| runtime.instance_id == self.instance_id)
+                .unwrap_or(false);
+            if should_remove {
+                runtimes.remove(&self.session_id);
+            } else {
+                self.app.state::<crate::state::AppState>().log(
+                    "info",
+                    "sessions.runtime.teardown.stale",
+                    &format!(
+                        "Skipping stale runtime teardown removal for session {} instance {}",
+                        self.session_id, self.instance_id
+                    ),
+                );
+            }
         }
     }
 }
@@ -1582,16 +1650,26 @@ pub fn get_session_control_snapshot(
 > {
     let policy = resolve_effective_compaction_policy(session_id)?;
     let pi_available = state.sync_pi_runtime_health().is_ok();
+    let last_operation = state.last_session_control_operation(session_id)?;
 
     if let Some(runtime) = maybe_runtime(&state.session_runtimes, session_id) {
+        let mut control_capabilities = runtime.snapshot_control_capabilities(
+            Some(policy.window_spec.as_str()),
+            Some(policy.source.as_str()),
+            terminal_attached,
+            pi_available,
+        );
+        let control_operation = runtime.control_operation().or_else(|| last_operation.clone());
+        if matches!(control_capabilities.reload.status.as_str(), "unknown")
+            && control_operation
+                .as_ref()
+                .is_some_and(|operation| operation.kind == "reload" && operation.status == "succeeded")
+        {
+            control_capabilities.reload = supported_control_capability();
+        }
         return Ok((
-            runtime.snapshot_control_capabilities(
-                Some(policy.window_spec.as_str()),
-                Some(policy.source.as_str()),
-                terminal_attached,
-                pi_available,
-            ),
-            runtime.control_operation(),
+            control_capabilities,
+            control_operation,
         ));
     }
 
@@ -1608,7 +1686,13 @@ pub fn get_session_control_snapshot(
         .unwrap_or_else(supported_control_capability);
     let reload = unavailable_reason
         .map(unsupported_control_capability)
-        .unwrap_or_else(unknown_control_capability);
+        .unwrap_or_else(|| {
+            last_operation
+                .as_ref()
+                .filter(|operation| operation.kind == "reload" && operation.status == "succeeded")
+                .map(|_| supported_control_capability())
+                .unwrap_or_else(unknown_control_capability)
+        });
     let auto_compact = if let Some(reason) = unavailable_reason {
         unsupported_control_capability(reason)
     } else if policy.window_spec == "off" {
@@ -1625,7 +1709,7 @@ pub fn get_session_control_snapshot(
             effective_compaction_window: Some(policy.window_spec),
             effective_compaction_window_source: Some(policy.source),
         },
-        None,
+        last_operation,
     ))
 }
 
@@ -2274,6 +2358,7 @@ mod tests {
         active_prompt: bool,
     ) -> Arc<SessionRuntime> {
         Arc::new(SessionRuntime {
+            instance_id: format!("test-instance-{session_id}"),
             session_id: session_id.into(),
             project_root: Mutex::new(PathBuf::from("/tmp/project")),
             session_dir: PathBuf::from("/tmp/sessions"),

@@ -157,12 +157,14 @@ describe("desktop autonomous workflow", () => {
       expect(existsSync(targetFile)).toBe(true);
       expect(readFileSync(targetFile, "utf8")).toBe(expectedContents);
 
-      const sessions = await invokeCommand<Array<{ title: string; events?: Array<{ message: string; kind: string }> }>>(sessionId, "list_sessions");
-      const workerSession = sessions.find((entry) => entry.title === "Autonomous Builder Agent main session");
-      expect(workerSession).toBeTruthy();
+      const workerSessionId = completedTask.laneRuns?.at(-1)?.sessionId;
+      expect(workerSessionId).toBeTruthy();
+      const workerSession = await invokeCommand<any>(sessionId, "get_session_record", { sessionId: workerSessionId });
+      expect(workerSession?.id).toBe(workerSessionId);
+      expect(String(workerSession?.title ?? "")).toContain("Autonomous Builder Agent");
 
       const dom = await getDomSnapshot(sessionId);
-      expect(dom.text).toContain("Autonomous Builder Agent main session");
+      expect(dom.text).toContain(String(workerSession?.title ?? "Autonomous Builder Agent"));
     } catch (error) {
       const dom = await getDomSnapshot(sessionId).catch(() => null);
       const logs = await invokeCommand<any[]>(sessionId, "get_logs").catch(() => []);

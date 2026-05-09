@@ -48,23 +48,41 @@ run_scan() {
   fi
 
   echo "[guardrails] running gitleaks ${scan_mode} scan -> ${report_stem}" >&2
-  "${GITLEAKS_BIN}" "${scan_mode}" "${target}" \
-    --config "${config_path}" \
-    --no-banner \
-    --redact \
-    --report-format json \
-    --report-path "${json_report}" \
-    --exit-code 1 \
-    "${extra_args[@]}" || json_status=$?
+  if (( ${#extra_args[@]} > 0 )); then
+    "${GITLEAKS_BIN}" "${scan_mode}" "${target}" \
+      --config "${config_path}" \
+      --no-banner \
+      --redact \
+      --report-format json \
+      --report-path "${json_report}" \
+      --exit-code 1 \
+      "${extra_args[@]}" || json_status=$?
 
-  "${GITLEAKS_BIN}" "${scan_mode}" "${target}" \
-    --config "${config_path}" \
-    --no-banner \
-    --redact \
-    --report-format sarif \
-    --report-path "${sarif_report}" \
-    --exit-code 1 \
-    "${extra_args[@]}" || sarif_status=$?
+    "${GITLEAKS_BIN}" "${scan_mode}" "${target}" \
+      --config "${config_path}" \
+      --no-banner \
+      --redact \
+      --report-format sarif \
+      --report-path "${sarif_report}" \
+      --exit-code 1 \
+      "${extra_args[@]}" || sarif_status=$?
+  else
+    "${GITLEAKS_BIN}" "${scan_mode}" "${target}" \
+      --config "${config_path}" \
+      --no-banner \
+      --redact \
+      --report-format json \
+      --report-path "${json_report}" \
+      --exit-code 1 || json_status=$?
+
+    "${GITLEAKS_BIN}" "${scan_mode}" "${target}" \
+      --config "${config_path}" \
+      --no-banner \
+      --redact \
+      --report-format sarif \
+      --report-path "${sarif_report}" \
+      --exit-code 1 || sarif_status=$?
+  fi
 
   if (( json_status > 1 || sarif_status > 1 )); then
     echo "gitleaks ${scan_mode} scan failed unexpectedly" >&2

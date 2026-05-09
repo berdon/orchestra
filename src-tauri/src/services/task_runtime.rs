@@ -210,12 +210,23 @@ pub fn get_current_lane_assignment(
               AND tla.status IN ('queued', 'active', 'awaiting_user_approval', 'awaiting_user_intervention', 'paused_by_user')
               AND t.status NOT IN ('completed', 'canceled')
               AND (t.current_lane_id IS NULL OR tla.lane_id = t.current_lane_id)
-            ORDER BY CASE tla.status
-                     WHEN 'active' THEN 0
-                     WHEN 'awaiting_user_approval' THEN 1
-                     WHEN 'awaiting_user_intervention' THEN 2
-                     WHEN 'paused_by_user' THEN 3
-                     ELSE 4
+            ORDER BY CASE
+                     WHEN t.status = 'in_review' AND t.assignee_type = 'user' THEN
+                       CASE tla.status
+                       WHEN 'awaiting_user_approval' THEN 0
+                       WHEN 'awaiting_user_intervention' THEN 1
+                       WHEN 'paused_by_user' THEN 2
+                       WHEN 'active' THEN 3
+                       ELSE 4
+                       END
+                     ELSE
+                       CASE tla.status
+                       WHEN 'active' THEN 0
+                       WHEN 'awaiting_user_approval' THEN 1
+                       WHEN 'awaiting_user_intervention' THEN 2
+                       WHEN 'paused_by_user' THEN 3
+                       ELSE 4
+                       END
                      END,
                      tla.created_at ASC,
                      tla.id ASC
@@ -1568,6 +1579,7 @@ pub fn activate_queued_role_assignments(
                     role_instance_id,
                     prompt,
                     pending_outcome,
+                    completion_summary,
                     completion_notes,
                     whip_count,
                     last_whip_at,
@@ -1630,7 +1642,17 @@ pub fn dispatch_task_lane(
     session_dir: &Path,
     task_id: &str,
 ) -> Result<TaskLaneAssignment, String> {
-    dispatch_task_lane_in_transaction(connection, project_root, session_dir, task_id)
+    dispatch_task_lane_in_transaction(connection, project_root, session_dir, task_id, None)
+}
+
+pub fn dispatch_task_lane_for_state(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task_id: &str,
+    state: &AppState,
+) -> Result<TaskLaneAssignment, String> {
+    dispatch_task_lane_in_transaction(connection, project_root, session_dir, task_id, Some(state))
 }
 
 fn dispatch_task_lane_in_transaction(
@@ -1638,6 +1660,7 @@ fn dispatch_task_lane_in_transaction(
     project_root: &Path,
     session_dir: &Path,
     task_id: &str,
+    state: Option<&AppState>,
 ) -> Result<TaskLaneAssignment, String> {
     let task = tasks::get_task_context(connection, task_id)?;
     let workflow = load_task_workflow(connection, &task)?;
@@ -1707,6 +1730,7 @@ fn dispatch_task_lane_in_transaction(
             &lane,
             &assignment_id,
             &now,
+            state,
         )?,
         other => {
             return Err(format!("Unsupported lane worker type: {other}"));
@@ -1723,6 +1747,16 @@ pub fn maybe_auto_dispatch_task(
     session_dir: &Path,
     task_id: &str,
 ) -> Result<Option<TaskLaneAssignment>, String> {
+    maybe_auto_dispatch_task_for_state(connection, project_root, session_dir, task_id, None)
+}
+
+pub fn maybe_auto_dispatch_task_for_state(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task_id: &str,
+    state: Option<&AppState>,
+) -> Result<Option<TaskLaneAssignment>, String> {
     let task = tasks::get_task_context(connection, task_id)?;
     let workflow = match load_task_workflow(connection, &task) {
         Ok(workflow) => workflow,
@@ -1733,7 +1767,8 @@ pub fn maybe_auto_dispatch_task(
         return Ok(None);
     }
 
-    dispatch_task_lane(connection, project_root, session_dir, task_id).map(Some)
+    dispatch_task_lane_in_transaction(connection, project_root, session_dir, task_id, state)
+        .map(Some)
 }
 
 #[derive(Debug, Clone)]
@@ -2389,6 +2424,122 @@ pub fn start_assignment_run(
     start_assignment_prompt(app, state, session_dir, assignment, prompt)
 }
 
+pub fn requeue_busy_agent_assignment(
+    connection: &Connection,
+    assignment: &TaskLaneAssignment,
+) -> Result<bool, String> {
+    if assignment.worker_type != "agent" || assignment.status != ASSIGNMENT_STATUS_ACTIVE {
+        return Ok(false);
+    }
+
+    let Some(worker_id) = assignment.worker_id.as_deref() else {
+        return Ok(false);
+    };
+
+    let task = tasks::get_task_context(connection, &assignment.task_id)?;
+    let now = now_iso();
+    let queue_entry_id = connection
+        .query_row(
+            r#"
+            SELECT id
+            FROM agent_queue_entries
+            WHERE project_id = ?1
+              AND agent_id = ?2
+              AND source_type = 'workflow_lane'
+              AND source_task_id = ?3
+              AND source_workflow_id = ?4
+              AND source_lane_id = ?5
+              AND status = 'dispatched'
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            "#,
+            params![
+                task.project_id,
+                worker_id,
+                assignment.task_id,
+                assignment.workflow_id,
+                assignment.lane_id,
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| {
+            format!(
+                "Unable to inspect busy agent queue entry for task {}: {error}",
+                assignment.task_id
+            )
+        })?;
+
+    let Some(queue_entry_id) = queue_entry_id else {
+        return Ok(false);
+    };
+
+    connection
+        .execute(
+            r#"
+            UPDATE agent_queue_entries
+            SET status = 'queued',
+                session_id = NULL,
+                run_id = NULL,
+                dispatched_at = NULL,
+                completed_at = NULL,
+                updated_at = ?2
+            WHERE id = ?1 AND status = 'dispatched'
+            "#,
+            params![queue_entry_id, now],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to requeue busy agent work {} for task {}: {error}",
+                queue_entry_id, assignment.task_id
+            )
+        })?;
+
+    let updated = connection
+        .execute(
+            r#"
+            UPDATE task_lane_assignments
+            SET status = 'queued',
+                session_id = NULL,
+                runtime_cwd = NULL,
+                updated_at = ?2
+            WHERE id = ?1 AND status = 'active'
+            "#,
+            params![assignment.id, now],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to requeue busy agent assignment {}: {error}",
+                assignment.id
+            )
+        })?;
+
+    if updated == 0 {
+        return Ok(false);
+    }
+
+    connection
+        .execute(
+            r#"
+            UPDATE agent_runtime_states
+            SET status = 'idle',
+                current_queue_entry_id = NULL,
+                last_error = NULL,
+                updated_at = ?4
+            WHERE project_id = ?1 AND agent_id = ?2 AND current_queue_entry_id = ?3
+            "#,
+            params![task.project_id, worker_id, queue_entry_id, now],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to clear busy agent runtime dispatch state for task {}: {error}",
+                assignment.task_id
+            )
+        })?;
+
+    Ok(true)
+}
+
 pub fn start_assignment_follow_up(
     app: AppHandle,
     state: &AppState,
@@ -2470,6 +2621,57 @@ fn ensure_assignment_runtime(
     )?;
 
     Ok(Some((session_id, runtime)))
+}
+
+pub(crate) fn activate_queued_agent_assignment_for_queue_entry(
+    connection: &Connection,
+    entry: &crate::models::AgentQueueEntry,
+    session_id: &str,
+    runtime_cwd: &str,
+) -> Result<(), String> {
+    let (
+        Some(task_id),
+        Some(workflow_id),
+        Some(lane_id),
+    ) = (
+        entry.source_task_id.as_deref(),
+        entry.source_workflow_id.as_deref(),
+        entry.source_lane_id.as_deref(),
+    )
+    else {
+        return Ok(());
+    };
+
+    let now = now_iso();
+    let updated = connection
+        .execute(
+            r#"
+            UPDATE task_lane_assignments
+            SET status = 'active',
+                session_id = ?2,
+                runtime_cwd = ?3,
+                updated_at = ?4
+            WHERE task_id = ?1
+              AND workflow_id = ?5
+              AND lane_id = ?6
+              AND worker_type = 'agent'
+              AND worker_id = ?7
+              AND status = 'queued'
+            "#,
+            params![task_id, session_id, runtime_cwd, now, workflow_id, lane_id, entry.agent_id],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to activate queued agent assignment for task {}: {error}",
+                task_id
+            )
+        })?;
+
+    if updated > 0 {
+        ensure_lane_run(connection, task_id, lane_id, session_id, &now)?;
+    }
+
+    Ok(())
 }
 
 fn recover_missing_assignment_session(
@@ -3233,6 +3435,7 @@ fn dispatch_agent_lane(
     lane: &WorkflowLane,
     assignment_id: &str,
     now: &str,
+    state: Option<&AppState>,
 ) -> Result<TaskLaneAssignment, String> {
     let agent_slug = lane
         .assigned_entity_id
@@ -3344,6 +3547,56 @@ fn dispatch_agent_lane(
     );
 
     apply_agent_session_defaults(project_root, session_dir, &session_id, &agent)?;
+    let session_busy = runtime_state.current_queue_entry_id.is_some()
+        || runtime_state.status == "running"
+        || state.is_some_and(|state| {
+            state.is_session_running(&session_id).unwrap_or(false)
+                || live_sessions::maybe_runtime(&state.session_runtimes, &session_id)
+                    .is_some_and(|runtime| runtime.has_active_prompt())
+        });
+    let queued_queue_entry = agent_runtime::enqueue_agent_work_for_project(
+        connection,
+        &task.project_id,
+        crate::models::AgentQueueEntryInput {
+            agent_id: agent.id.clone(),
+            source_type: "workflow_lane".into(),
+            source_task_id: Some(task.id.clone()),
+            source_workflow_id: Some(workflow.id.clone()),
+            source_lane_id: Some(lane.id.clone()),
+            delivery_mode: "prompt".into(),
+            title: format!("{} · {}", task.number, task.title),
+            message: prompt.to_string(),
+        },
+    )?;
+
+    if session_busy {
+        let assignment = TaskLaneAssignment {
+            id: assignment_id.to_string(),
+            task_id: task.id.clone(),
+            workflow_id: workflow.id.clone(),
+            lane_id: lane.id.clone(),
+            worker_type: "agent".into(),
+            worker_id: Some(agent.id.clone()),
+            status: ASSIGNMENT_STATUS_QUEUED.into(),
+            session_id: None,
+            runtime_cwd: None,
+            role_queue_entry_id: None,
+            role_instance_id: None,
+            prompt: Some(prompt.to_string()),
+            pending_outcome: None,
+            completion_summary: None,
+            completion_notes: None,
+            whip_count: 0,
+            last_whip_at: None,
+            started_at: now.to_string(),
+            completed_at: None,
+            created_at: now.to_string(),
+            updated_at: now.to_string(),
+        };
+        insert_assignment(connection, &assignment)?;
+        return Ok(assignment);
+    }
+
     // Always update the runtime_cwd to the task's project_root for the current dispatch
     let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
         connection,
@@ -3362,31 +3615,17 @@ fn dispatch_agent_lane(
         &session_id,
         now,
     )?;
-    let queue_entry = agent_runtime::enqueue_agent_work_for_project(
-        connection,
-        &task.project_id,
-        crate::models::AgentQueueEntryInput {
-            agent_id: agent.id.clone(),
-            source_type: "workflow_lane".into(),
-            source_task_id: Some(task.id.clone()),
-            source_workflow_id: Some(workflow.id.clone()),
-            source_lane_id: Some(lane.id.clone()),
-            delivery_mode: "prompt".into(),
-            title: format!("{} · {}", task.number, task.title),
-            message: prompt.to_string(),
-        },
-    )?;
     let run_id = generate_id("agent-queue-run");
     let queue_entry = agent_runtime::mark_agent_queue_entry_dispatched(
         connection,
-        &queue_entry.id,
+        &queued_queue_entry.id,
         &session_id,
         &run_id,
     )?
     .ok_or_else(|| {
         format!(
             "Unable to mark agent queue entry {} dispatched",
-            queue_entry.id
+            queued_queue_entry.id
         )
     })?;
     let _ = agent_runtime::update_agent_runtime_dispatch_state_for_project(
@@ -9347,7 +9586,7 @@ mod tests {
             .expect("candidate should exist");
 
         let updated =
-            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
+            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, Some("Completed role lane".into()), None)
                 .expect("lane should complete");
         assert_eq!(updated.status, "completed");
         assert!(updated.active_lane_assignment.is_none());
@@ -9728,7 +9967,7 @@ mod tests {
         assert!(Path::new(runtime_cwd).exists());
 
         let updated =
-            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
+            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, Some("Completed agent lane".into()), None)
                 .expect("agent lane should complete");
         assert_eq!(updated.status, "completed");
         assert!(updated.active_lane_assignment.is_none());
@@ -9857,7 +10096,7 @@ mod tests {
         );
 
         let updated =
-            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
+            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, Some("Completed archived agent lane".into()), None)
                 .expect("role lane should complete");
         assert_eq!(updated.status, "completed");
         assert_eq!(
@@ -9976,7 +10215,7 @@ mod tests {
         );
 
         let updated =
-            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, None, None)
+            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, Some("Completed whip candidate lane".into()), None)
                 .expect("agent lane should complete");
         assert_eq!(updated.status, "completed");
         assert_eq!(

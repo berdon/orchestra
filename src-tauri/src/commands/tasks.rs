@@ -118,14 +118,6 @@ fn cleanup_blocked_task_runtime_claims(
         if task.status != "blocked" {
             continue;
         }
-        if task
-            .active_lane_assignment
-            .as_ref()
-            .is_some_and(|assignment| assignment.status == "active")
-        {
-            continue;
-        }
-
         let cleanup = task_runtime::clear_task_runtime_claims_preserving_status(
             connection,
             &task_id,
@@ -1111,31 +1103,57 @@ pub(crate) async fn dispatch_task_lane_via_app(
     .await
     .map_err(|error| format!("Unable to join task dispatch context task: {error}"))??;
     let mut connection = database::open_connection()?;
-    let assignment = task_runtime::dispatch_task_lane(
+    let state = app.state::<AppState>();
+    let assignment = task_runtime::dispatch_task_lane_for_state(
         &mut connection,
         &context.project_root,
         &context.session_dir,
         &task_id,
+        &state,
     )?;
-    let state = app.state::<AppState>();
-    if let Err(error) = task_runtime::start_assignment_run(
+    let requeued_due_to_busy = assignment.worker_type == "agent"
+        && assignment.status == "queued";
+    if requeued_due_to_busy {
+        let _ = dispatcher::request_dispatcher_check(&app, "task.dispatch.agent_busy_queued");
+    } else if let Err(error) = task_runtime::start_assignment_run(
         app.clone(),
         &state,
         context.session_dir.clone(),
         &assignment,
     ) {
-        if error != "This session is already processing a message" {
+        if !error.contains("already processing a message") {
             return Err(error);
         }
-    }
-    if let Some(session_id) = assignment.session_id.clone() {
-        emit_session_change(&app, "task.dispatch", [session_id]);
+        state.log(
+            "info",
+            "task.dispatch.already_running",
+            &format!(
+                "Task {} worker session {} was already processing a message immediately after dispatch; treating dispatch as successful.",
+                task_id,
+                assignment.session_id.as_deref().unwrap_or("<none>"),
+            ),
+        );
     }
     let task = tasks::get_task_context(&connection, &task_id)?;
+    if let Some(session_id) = task
+        .active_lane_assignment
+        .as_ref()
+        .and_then(|assignment| assignment.session_id.clone())
+    {
+        emit_session_change(&app, "task.dispatch", [session_id]);
+    }
     state.log(
         "info",
         "task.dispatch",
-        &format!("Dispatched task lane for task {}", task_id),
+        &format!(
+            "Dispatched task lane for task {}{}",
+            task_id,
+            if requeued_due_to_busy {
+                " (queued until agent session is free)"
+            } else {
+                ""
+            }
+        ),
     );
     record_task_domain_event(
         &connection,
@@ -1145,7 +1163,8 @@ pub(crate) async fn dispatch_task_lane_via_app(
             "taskId": task.id.clone(),
             "assignmentId": assignment.id.clone(),
             "laneId": assignment.lane_id.clone(),
-            "sessionId": assignment.session_id.clone(),
+            "sessionId": task.active_lane_assignment.as_ref().and_then(|entry| entry.session_id.clone()),
+            "queuedUntilAgentFree": requeued_due_to_busy,
         }),
     );
     emit_task_change(&app, "task.dispatch", [task.id.clone()]);

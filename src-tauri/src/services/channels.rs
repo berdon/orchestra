@@ -2869,7 +2869,7 @@ fn telegram_api_post(
     method: &str,
     payload: &Value,
 ) -> Result<Value, String> {
-    let token = token.trim();
+    let token = token.trim().to_string();
     if token.is_empty() {
         return Err("Telegram bot token is required.".into());
     }
@@ -2877,29 +2877,37 @@ fn telegram_api_post(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("https://api.telegram.org")
-        .trim_end_matches('/');
-    let url = format!("{}/bot{}/{}", base_url, token, method);
-    let client = Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|error| format!("Unable to create Telegram HTTP client: {error}"))?;
-    let response = client
-        .post(url)
-        .json(payload)
-        .send()
-        .map_err(|error| format!("Unable to reach Telegram API: {error}"))?;
-    let status = response.status();
-    let value = response
-        .json::<Value>()
-        .map_err(|error| format!("Unable to parse Telegram API response: {error}"))?;
-    if !status.is_success() || value.get("ok").and_then(Value::as_bool) != Some(true) {
-        return Err(value
-            .get("description")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| format!("Telegram API {} failed with status {}", method, status)));
-    }
-    Ok(value)
+        .trim_end_matches('/')
+        .to_string();
+    let method = method.to_string();
+    let payload = payload.clone();
+
+    std::thread::spawn(move || {
+        let url = format!("{}/bot{}/{}", base_url, token, method);
+        let client = Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|error| format!("Unable to create Telegram HTTP client: {error}"))?;
+        let response = client
+            .post(url)
+            .json(&payload)
+            .send()
+            .map_err(|error| format!("Unable to reach Telegram API: {error}"))?;
+        let status = response.status();
+        let value = response
+            .json::<Value>()
+            .map_err(|error| format!("Unable to parse Telegram API response: {error}"))?;
+        if !status.is_success() || value.get("ok").and_then(Value::as_bool) != Some(true) {
+            return Err(value
+                .get("description")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| format!("Telegram API {} failed with status {}", method, status)));
+        }
+        Ok(value)
+    })
+    .join()
+    .map_err(|_| "Telegram API worker thread panicked".to_string())?
 }
 
 fn json_string(value: &Value, key: &str) -> Result<String, String> {

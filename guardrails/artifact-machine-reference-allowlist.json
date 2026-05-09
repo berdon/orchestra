@@ -21,6 +21,22 @@
         "windows-orchestra-machine-path"
       ],
       "reason": "Bundled upstream Bun payload files can still embed upstream build-path strings. Treat matches under the vendored Bun subtree as documented third-party findings unless they escape this path scope."
+    },
+    {
+      "pathGlob": "src-tauri/target/**/bundle/macos/Orchestra.app/Contents/MacOS/*.strings.txt",
+      "ruleIds": [
+        "unix-home-path"
+      ],
+      "matchContains": "/target/release/build/openssl-sys-",
+      "reason": "Signed app executables can still retain vendored OpenSSL installation-prefix strings from the local openssl-sys build directory. Treat these generated OpenSSL build paths as documented toolchain artifacts unless other first-party paths appear outside this pattern."
+    },
+    {
+      "pathGlob": "src-tauri/target/**/bundle/macos/Orchestra.app/Contents/MacOS/*.strings.txt",
+      "ruleIds": [
+        "unix-home-path"
+      ],
+      "matchRegex": "/src-tauri$",
+      "reason": "Signed app executables can still retain the crate-root suffix from release builds even after path remapping/stripping. Treat this exact trailing src-tauri path match in bundled executable strings as a documented build artifact unless broader first-party paths appear."
     }
   ]
 }

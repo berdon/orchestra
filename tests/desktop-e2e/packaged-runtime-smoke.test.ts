@@ -13,7 +13,7 @@ const runtimeValidationMode = process.env.ORCHESTRA_DESKTOP_E2E_RUNTIME_VALIDATI
 const isBundledRuntimeValidation = runtimeValidationMode === "packaged" || runtimeValidationMode === "podman";
 const expectPackagedMode = runtimeValidationMode === "packaged";
 const expectedRuntimeMode = expectPackagedMode ? "packaged" : "development";
-const expectedRuntimeSource = runtimeValidationMode === "podman" ? "system" : "bundled";
+const expectedRuntimeSource = "bundled";
 const expectedRuntimePathFragment = process.env.ORCHESTRA_DESKTOP_E2E_EXPECT_RUNTIME_PATH_FRAGMENT ?? "pi-runtime";
 const expectPromptSuccess = process.env.ORCHESTRA_PACKAGED_RUNTIME_EXPECT_PROMPT_SUCCESS === "1";
 const testHome = process.env.ORCHESTRA_TEST_HOME ?? "";
@@ -50,11 +50,7 @@ describe("bundled-runtime validation", () => {
       const appInfo = await invokeCommand<any>(webdriverSessionId, "get_app_info");
       expect(appInfo?.piRuntimeDiagnostics?.runtime?.packagedMode).toBe(expectPackagedMode);
       expect(appInfo?.piRuntimeDiagnostics?.runtime?.source).toBe(expectedRuntimeSource);
-      if (runtimeValidationMode === "podman") {
-        expect(String(appInfo?.piRuntimeDiagnostics?.runtime?.error ?? "")).toContain("Unable to locate the pi executable");
-      } else {
-        expect(appInfo?.piRuntimeDiagnostics?.runtime?.error ?? null).toBeNull();
-      }
+      expect(appInfo?.piRuntimeDiagnostics?.runtime?.error ?? null).toBeNull();
       if (runtimeValidationMode !== "podman") {
         expect(String(appInfo?.piRuntimeDiagnostics?.runtime?.resolvedPath ?? "")).toContain(expectedRuntimePathFragment);
       }

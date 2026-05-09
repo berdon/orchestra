@@ -227,6 +227,7 @@ describe("desktop system notifications", () => {
 
       await invokeCommand(sessionId, "complete_lane_as_success", {
         taskId: handoffTask.id,
+        summary: "Implementation complete and handed off to the user review lane.",
         notes: null,
       });
 

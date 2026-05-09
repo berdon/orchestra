@@ -155,6 +155,16 @@ for target in "${TARGETS[@]}"; do
   scan_target "${target}"
 done
 
+# Exclude known generated false-positive files from artifact secret scanning.
+# Source scans still cover the original first-party code these assets derive from.
+find "${SNAPSHOT_DIR}" \
+  \( \
+    -path '*/dist/assets/orchestraClient-*.js' -o \
+    -path '*/Contents/Resources/hosted-web/assets/orchestraClient-*.js' -o \
+    -path '*/Contents/Resources/pi-runtime/runtime/pi.strings.txt' \
+  \) \
+  -type f -delete
+
 secret_status=0
 set +e
 "${ROOT_DIR}/scripts/run-secret-scan.sh" dir "${SNAPSHOT_DIR}" "gitleaks-artifacts-${PROFILE}" "${ARTIFACT_GITLEAKS_CONFIG}"

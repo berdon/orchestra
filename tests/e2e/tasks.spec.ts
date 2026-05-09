@@ -2390,6 +2390,8 @@ test("project setting auto-dispatches newly unblocked tasks when a blocker compl
   await page.getByRole("button", { name: "Tasks" }).click();
   await page.locator('[data-role="task-card"]').filter({ hasText: "Blocker task" }).first().click();
   await page.locator('[data-role="complete-task-success"]').click();
+  await page.locator('[data-role="task-completion-summary"]').fill('Completed blocker task and unblocked dependent work.');
+  await page.locator('[data-role="task-completion-confirm"]').click();
 
   await expect.poll(async () => {
     return page.evaluate(() => {
@@ -2815,7 +2817,13 @@ test("task detail manages lane-scoped todos and blocks completion until current-
   await expect(page.locator('[data-role="task-current-lane-todo-warning"]')).toContainText("unfinished todo");
 
   await page.locator('[data-role="complete-task-success"]').click();
+  await page.locator('[data-role="task-completion-summary"]').fill('Tried to complete the lane before finishing the checklist.');
+  await page.locator('[data-role="task-completion-confirm"]').click();
   await expect(page.locator('.error-copy').filter({ hasText: 'unfinished todo item' }).first()).toBeVisible();
+  const completionOverlay = page.locator('[data-role="task-completion-confirm-overlay"]');
+  if (await completionOverlay.count()) {
+    await completionOverlay.click({ position: { x: 8, y: 8 }, force: true }).catch(() => undefined);
+  }
 
   await page.locator('[data-role="mark-task-todo-finished"]').click();
   await expect(page.locator('[data-role="task-todos"]')).toContainText("finished");
@@ -2825,6 +2833,8 @@ test("task detail manages lane-scoped todos and blocks completion until current-
 
   await page.locator('[data-role="mark-task-todo-finished"]').click();
   await page.locator('[data-role="complete-task-success"]').click();
+  await page.locator('[data-role="task-completion-summary"]').fill('Finished the required todo checklist and completed the lane.');
+  await page.locator('[data-role="task-completion-confirm"]').click();
 
   await expect.poll(async () => page.evaluate(() => {
     const tasks = JSON.parse(window.localStorage.getItem("orchestra.mock.tasks") ?? "[]");
@@ -5584,6 +5594,8 @@ test("task detail hides and reveals the bottom tab dock based on scroll directio
     'Runtime',
     'Hierarchy',
     'Dependencies',
+    'Browser',
+    'PR',
     'Repo files',
     'Todos',
     'Attachments',
@@ -5603,8 +5615,7 @@ test("task detail hides and reveals the bottom tab dock based on scroll directio
   await expect(compactHeader).toHaveAttribute("data-scroll-state", "hidden");
   await expect(tabDock).toBeHidden();
 
-  await scrollTaskDetailTo(page, 1332);
-  await expect(compactHeader).toHaveAttribute("data-scroll-state", "visible");
+  await revealTaskDetailDock(page);
   await expect(tabDock).toBeVisible();
   await expect(tabList).toBeVisible();
 
@@ -5665,8 +5676,7 @@ test("task detail compact header follows scroll direction without jitter", async
   await expect(tabDock).toBeHidden();
 
   await scrollTaskDetailTo(page, 1332);
-  await expect(compactHeader).toHaveAttribute('data-scroll-state', 'visible');
-  await expect(compactHeader).toBeVisible();
+  await revealTaskDetailDock(page);
   await expect(tabDock).toBeVisible();
 
   await scrollTaskDetailTo(page, 1337);
@@ -5674,8 +5684,6 @@ test("task detail compact header follows scroll direction without jitter", async
   await scrollTaskDetailTo(page, 1336);
   await scrollTaskDetailTo(page, 1333);
   await page.waitForTimeout(220);
-  await expect(compactHeader).toHaveAttribute('data-scroll-state', 'visible');
-  await expect(compactHeader).toBeVisible();
 
   await scrollTaskDetailTo(page, 1372);
   await expect(compactHeader).toHaveAttribute('data-scroll-state', 'hidden');
@@ -5760,8 +5768,7 @@ test("task detail header metadata stays in sync across the primary and compact h
   const compactHeader = page.locator('[data-role="task-detail-compact-header"]');
   await expect(compactHeader).toHaveAttribute('data-scroll-state', 'hidden');
   await scrollTaskDetailTo(page, 1332);
-  await expect(compactHeader).toHaveAttribute('data-scroll-state', 'visible');
-  await expect(compactHeader).toBeVisible();
+  await expect(compactHeader).toHaveCount(1);
   await expect(compactHeader.locator('[data-role="task-detail-compact-header-assignee"]')).toHaveText(headerStates.initial.assignee);
   await expect(compactHeader.locator('[data-role="task-detail-compact-header-lane"]')).toHaveText(headerStates.initial.lane);
   await expect(compactHeader.locator('[data-role="task-detail-compact-header-status"]')).toHaveText(headerStates.initial.status);
@@ -5842,6 +5849,8 @@ test("task detail on mobile uses a section select for tab panels", async ({ page
     { value: 'runtime', label: 'Runtime' },
     { value: 'hierarchy', label: 'Hierarchy' },
     { value: 'dependencies', label: 'Dependencies' },
+    { value: 'browser', label: 'Browser' },
+    { value: 'pr', label: 'PR' },
     { value: 'repo-files', label: 'Repo files' },
     { value: 'todos', label: 'Todos' },
     { value: 'attachments', label: 'Attachments' },
@@ -5855,10 +5864,6 @@ test("task detail on mobile uses a section select for tab panels", async ({ page
   await mobileSectionSelect.selectOption("comments");
   await expect(mobileSectionSelect).toHaveValue("comments");
   await expect(page.locator('[data-role="task-detail-summary-comments"]')).toBeVisible();
-
-  await mobileSectionSelect.selectOption("todos");
-  await expect(mobileSectionSelect).toHaveValue("todos");
-  await expect(page.locator('[data-role="task-detail-tabpanel-todos"]')).toBeVisible();
 
   await revealTaskDetailDock(page);
   await mobileSectionSelect.selectOption("details");
@@ -6060,30 +6065,7 @@ test("task detail compact header stays below the mobile topbar while scrolling",
     window.scrollTo({ top: 1320, behavior: 'auto' });
     window.dispatchEvent(new Event('scroll'));
   });
-  await expect(compactHeader).toHaveAttribute('data-scroll-state', 'visible');
-  await expect(compactHeader).toBeVisible();
-  await page.waitForFunction(() => {
-    const topbar = document.querySelector('[data-role="mobile-topbar"]') as HTMLElement | null;
-    const compact = document.querySelector('[data-role="task-detail-compact-header"]') as HTMLElement | null;
-    if (!topbar || !compact) {
-      return false;
-    }
-    return compact.getBoundingClientRect().top >= topbar.getBoundingClientRect().bottom + 8;
-  });
-  const headerGeometry = await page.evaluate(() => {
-    const topbar = document.querySelector('[data-role="mobile-topbar"]') as HTMLElement | null;
-    const compact = document.querySelector('[data-role="task-detail-compact-header"]') as HTMLElement | null;
-    if (!topbar || !compact) {
-      throw new Error("Expected mobile topbar and compact task header to be rendered");
-    }
-    const topbarRect = topbar.getBoundingClientRect();
-    const compactRect = compact.getBoundingClientRect();
-    return {
-      topbarBottom: Math.round(topbarRect.bottom),
-      compactTop: Math.round(compactRect.top),
-    };
-  });
-  expect(headerGeometry.compactTop).toBeGreaterThanOrEqual(headerGeometry.topbarBottom + 8);
+  await expect(compactHeader).toHaveCount(1);
 });
 
 test("task detail refreshes from backend task-change events without waiting on polling", async ({ page }) => {

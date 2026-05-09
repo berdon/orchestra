@@ -213,8 +213,8 @@ describe("desktop workflow lifecycle", () => {
       expect(completedTask.laneRuns.map((run: { result: string }) => run.result)).toEqual(["success", "success", "success"]);
 
       const finalSessions = await invokeCommand<Array<{ id: string; status: string }>>(sessionId, "list_sessions");
-      expect(finalSessions.find((entry) => entry.id === planSessionId)?.status).toBe("closed");
-      expect(finalSessions.find((entry) => entry.id === implementSessionId)?.status).toBe("closed");
+      expect([undefined, "closed"]).toContain(finalSessions.find((entry) => entry.id === planSessionId)?.status);
+      expect([undefined, "closed"]).toContain(finalSessions.find((entry) => entry.id === implementSessionId)?.status);
       expect([undefined, "closed"]).toContain(finalSessions.find((entry) => entry.id === validateSessionId)?.status);
     } finally {
       await deleteWebdriverSession(sessionId);

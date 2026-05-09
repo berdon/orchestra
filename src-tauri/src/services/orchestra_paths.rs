@@ -10,9 +10,9 @@ struct OrchestraExtensionCandidates {
     explicit_override: Option<PathBuf>,
     project_root: Option<PathBuf>,
     dev_checkout_root: Option<PathBuf>,
+    runtime_checkout_root: Option<PathBuf>,
     packaged_resource: Option<PathBuf>,
     packaged_resource_error: Option<String>,
-    manifest_fallback_path: PathBuf,
 }
 
 fn non_empty_candidate_path(path: Option<PathBuf>) -> Option<PathBuf> {
@@ -23,14 +23,6 @@ fn source_checkout_orchestra_extension_path(root: &Path) -> PathBuf {
     root.join(ORCHESTRA_EXTENSION_RELATIVE_PATH)
 }
 
-fn manifest_checkout_orchestra_extension_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
-        .join(ORCHESTRA_EXTENSION_RELATIVE_PATH)
-}
-
 fn resolve_orchestra_extension_path_from(
     candidates: OrchestraExtensionCandidates,
 ) -> Result<PathBuf, String> {
@@ -38,9 +30,9 @@ fn resolve_orchestra_extension_path_from(
         explicit_override,
         project_root,
         dev_checkout_root,
+        runtime_checkout_root,
         packaged_resource,
         packaged_resource_error,
-        manifest_fallback_path,
     } = candidates;
 
     let mut checked_paths = Vec::new();
@@ -81,12 +73,15 @@ fn resolve_orchestra_extension_path_from(
         }
     }
 
-    checked_paths.push(format!(
-        "CARGO_MANIFEST_DIR/../extensions/orchestra-tools.ts={}",
-        manifest_fallback_path.display()
-    ));
-    if manifest_fallback_path.exists() {
-        return Ok(manifest_fallback_path);
+    if let Some(runtime_checkout_root) = runtime_checkout_root {
+        let path = source_checkout_orchestra_extension_path(&runtime_checkout_root);
+        checked_paths.push(format!(
+            "runtime_checkout/extensions/orchestra-tools.ts={}",
+            path.display()
+        ));
+        if path.exists() {
+            return Ok(path);
+        }
     }
 
     let mut message = format!(
@@ -120,9 +115,9 @@ pub fn resolve_orchestra_extension_path(app: Option<&AppHandle>) -> Result<PathB
         ),
         project_root: configured_project_root(),
         dev_checkout_root: discover_dev_checkout_root(),
+        runtime_checkout_root: current_orchestra_checkout_root(),
         packaged_resource,
         packaged_resource_error,
-        manifest_fallback_path: manifest_checkout_orchestra_extension_path(),
     })
 }
 
@@ -585,21 +580,19 @@ mod tests {
         let project_root = root.join("project");
         let dev_root = root.join("dev");
         let packaged_root = root.join("packaged");
-        let manifest_root = root.join("manifest");
 
         let override_path = write_extension(&override_root);
         write_extension(&project_root);
         write_extension(&dev_root);
         let packaged_path = write_extension(&packaged_root);
-        write_extension(&manifest_root);
 
         let resolved = resolve_orchestra_extension_path_from(OrchestraExtensionCandidates {
             explicit_override: Some(override_path.clone()),
             project_root: Some(project_root),
             dev_checkout_root: Some(dev_root),
+            runtime_checkout_root: None,
             packaged_resource: Some(packaged_path),
             packaged_resource_error: None,
-            manifest_fallback_path: manifest_root.join(ORCHESTRA_EXTENSION_RELATIVE_PATH),
         })
         .expect("override path should resolve");
 
@@ -611,7 +604,6 @@ mod tests {
     fn prefers_dev_checkout_when_packaged_resource_is_missing() {
         let root = unique_temp_dir("orchestra-extension-dev-fallback");
         let dev_root = root.join("dev");
-        let manifest_root = root.join("manifest");
         let expected = write_extension(&dev_root);
         let packaged_path = root.join("target/debug/extensions/orchestra-tools.ts");
 
@@ -619,9 +611,9 @@ mod tests {
             explicit_override: None,
             project_root: None,
             dev_checkout_root: Some(dev_root),
+            runtime_checkout_root: None,
             packaged_resource: Some(packaged_path),
             packaged_resource_error: None,
-            manifest_fallback_path: manifest_root.join(ORCHESTRA_EXTENSION_RELATIVE_PATH),
         })
         .expect("dev checkout path should resolve");
 
@@ -633,16 +625,15 @@ mod tests {
     fn falls_back_to_packaged_resource_when_it_exists() {
         let root = unique_temp_dir("orchestra-extension-packaged");
         let packaged_root = root.join("packaged");
-        let manifest_root = root.join("manifest");
         let expected = write_extension(&packaged_root);
 
         let resolved = resolve_orchestra_extension_path_from(OrchestraExtensionCandidates {
             explicit_override: None,
             project_root: None,
             dev_checkout_root: None,
+            runtime_checkout_root: None,
             packaged_resource: Some(expected.clone()),
             packaged_resource_error: None,
-            manifest_fallback_path: manifest_root.join(ORCHESTRA_EXTENSION_RELATIVE_PATH),
         })
         .expect("packaged resource should resolve");
 

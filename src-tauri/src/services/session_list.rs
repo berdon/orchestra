@@ -74,7 +74,11 @@ pub fn hide_session_from_normal_list(reason: Option<&str>, dismissed_at: Option<
     dismissed_at.is_some()
         || matches!(
             reason,
-            Some(SESSION_HIDDEN_REASON_USER_DISMISSED | SESSION_HIDDEN_REASON_STALE_ROLE_SESSION)
+            Some(
+                SESSION_HIDDEN_REASON_USER_DISMISSED
+                    | SESSION_HIDDEN_REASON_STALE_ROLE_SESSION
+                    | SESSION_HIDDEN_REASON_SUPERSEDED
+            )
         )
 }
 
@@ -668,7 +672,10 @@ fn load_persistent_agent_name(
     session_id: &str,
 ) -> Result<Option<String>, String> {
     if let Some(row) = session_records::load_session_row(connection, session_id)? {
-        if row.session_kind == session_records::SESSION_KIND_AGENT_MAIN || row.task_id.is_none() {
+        if row.lifecycle_state != session_records::LIFECYCLE_SUPERSEDED
+            && (row.session_kind == session_records::SESSION_KIND_AGENT_MAIN
+                || row.task_id.is_none())
+        {
             if let Some(agent_id) = row.agent_id.as_deref().or(row.effective_worker_id()) {
                 let agent_name = connection
                     .query_row(
@@ -755,6 +762,18 @@ fn load_role_binding_name(
 mod tests {
     use super::*;
     use crate::services::database;
+
+    #[test]
+    fn superseded_sessions_are_hidden_from_normal_lists() {
+        assert!(hide_session_from_normal_list(
+            Some(SESSION_HIDDEN_REASON_SUPERSEDED),
+            None,
+        ));
+        assert!(!hide_session_from_normal_list(
+            Some(SESSION_HIDDEN_REASON_TASK_COMPLETED),
+            None,
+        ));
+    }
 
     #[test]
     fn detached_persistent_agent_session_stays_visible_after_completed_task() {

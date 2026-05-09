@@ -793,6 +793,9 @@ mod tests {
 
     #[test]
     fn rejects_invalid_task_lane_agent_work() {
+        let _guard = crate::test_support::global_test_env_lock()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let mut connection = in_memory_connection();
         ensure_default_project(&connection);
         let agent_id = create_agent(&mut connection);

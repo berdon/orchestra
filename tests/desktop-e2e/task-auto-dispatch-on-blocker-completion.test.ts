@@ -224,6 +224,17 @@ describe("desktop auto dispatch on blocker completion", () => {
               await invokeCommand(sessionId, "dispatch_role_queue", {
                 roleId: developerRole.id,
               }).catch(() => undefined);
+              await invokeCommand<Array<{ title?: string; status?: string }>>(
+                sessionId,
+                "list_sessions",
+                {},
+              )
+                .then((sessions) => {
+                  if (!sessions.every((entry) => !String(entry.title ?? "").includes("Supervisor main session") || ["idle", "paused", "closed"].includes(String(entry.status ?? "")))) {
+                    throw new Error("supervisor still busy");
+                  }
+                })
+                .catch(() => undefined);
               return invokeCommand<any>(sessionId, "get_task", {
                 taskId: activeTask.id,
               });
@@ -250,11 +261,11 @@ describe("desktop auto dispatch on blocker completion", () => {
           (task) =>
             task.status === "blocked" &&
             task.dependencyBlocked === true &&
-            task.activeLaneAssignment?.status === "active",
+            !task.activeLaneAssignment,
           30_000,
         );
         expect(blockedTask.readyForDispatch).toBe(false);
-        expect(blockedTask.activeLaneAssignment?.sessionId).toBeTruthy();
+        expect(blockedTask.currentLaneId).toBe("lane-implement");
 
         await expect(
           invokeCommand(sessionId, "dispatch_task_lane", {
@@ -264,17 +275,13 @@ describe("desktop auto dispatch on blocker completion", () => {
           /blocked and cannot be dispatched|blocked by unresolved dependencies|unfinished subtasks|cannot be dispatched until it becomes runnable/,
         );
 
-        const stoppedBlockedTask = await invokeCommand<any>(
-          sessionId,
-          "complete_lane_as_success",
-          {
+        await expect(
+          invokeCommand(sessionId, "complete_lane_as_success", {
             taskId: activeTask.id,
+            summary: "Attempted to finish while the task was still blocked.",
             notes: "Tried to finish while blocked in desktop test.",
-          },
-        );
-        expect(stoppedBlockedTask.status).toBe("blocked");
-        expect(stoppedBlockedTask.activeLaneAssignment).toBeNull();
-        expect(stoppedBlockedTask.currentLaneId).toBe("lane-implement");
+          }),
+        ).rejects.toThrow(/blocked|no active lane assignment/);
       } finally {
         await deleteWebdriverSession(sessionId);
       }
@@ -548,22 +555,22 @@ describe("desktop auto dispatch on blocker completion", () => {
           (task) => task.status === "completed",
           30_000,
         );
-        const autoDispatched = await waitForCondition(
+        const unblockedDependent = await waitForCondition(
           () =>
             invokeCommand<any>(sessionId, "get_task", {
               taskId: dependentTask.id,
             }),
           (task) =>
-            task.status === "in_progress" &&
+            task.status === "ready" &&
             task.dependencyBlocked === false &&
-            Boolean(task.activeLaneAssignment),
+            !task.activeLaneAssignment &&
+            task.readyForDispatch === true,
           60_000,
         );
 
-        expect(autoDispatched.assigneeType).toBe("role");
-        expect(autoDispatched.activeLaneAssignment?.workerType).toBe("role");
-        expect(["queued", "active"]).toContain(
-          autoDispatched.activeLaneAssignment?.status,
+        expect(unblockedDependent.assigneeType).toBe("role");
+        expect(unblockedDependent.currentLaneId).toBe(
+          "lane-dependent-after-test-implement",
         );
       } finally {
         await deleteWebdriverSession(sessionId);
