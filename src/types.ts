@@ -1080,6 +1080,7 @@ export interface QueuedSessionMessage {
   runId: string;
   message: string;
   timestamp: string;
+  deliveryMode: string;
 }
 
 export interface SessionStreamEnvelope {

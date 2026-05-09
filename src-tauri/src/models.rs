@@ -716,6 +716,7 @@ pub struct QueuedSessionMessage {
     pub run_id: String,
     pub message: String,
     pub timestamp: String,
+    pub delivery_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

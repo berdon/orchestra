@@ -1757,8 +1757,7 @@ mod tests {
         let mut connection = open_test_connection("workflow-needs-work-target");
         seed_worker(&connection, "roles", "role-implementer", "Implementer")
             .expect("implementer role should seed");
-        seed_worker(&connection, "roles", "role-fixer", "Fixer")
-            .expect("fixer role should seed");
+        seed_worker(&connection, "roles", "role-fixer", "Fixer").expect("fixer role should seed");
 
         let created = create_workflow(
             &mut connection,
@@ -1831,8 +1830,7 @@ mod tests {
     #[test]
     fn rejects_invalid_needs_work_targets() {
         let connection = open_test_connection("workflow-validation-needs-work-target");
-        seed_worker(&connection, "roles", "role-reviewer", "Reviewer")
-            .expect("role should seed");
+        seed_worker(&connection, "roles", "role-reviewer", "Reviewer").expect("role should seed");
 
         let validation = validate_workflow(
             &connection,

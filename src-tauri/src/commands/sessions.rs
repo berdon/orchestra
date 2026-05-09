@@ -102,8 +102,7 @@ where
         match operation() {
             Ok(value) => return Ok(value),
             Err(error)
-                if error.contains("database is locked")
-                    && attempt < RETRY_DELAYS_MS.len() =>
+                if error.contains("database is locked") && attempt < RETRY_DELAYS_MS.len() =>
             {
                 let delay_ms = RETRY_DELAYS_MS[attempt];
                 attempt += 1;
@@ -1222,7 +1221,12 @@ pub async fn create_session(
                         },
                     )
                 })?;
-                (context.project_root.clone(), context.session_dir.clone(), created, None)
+                (
+                    context.project_root.clone(),
+                    context.session_dir.clone(),
+                    created,
+                    None,
+                )
             }
         } else {
             let created = retry_on_locked_session_create(|| {
@@ -1249,7 +1253,12 @@ pub async fn create_session(
                     },
                 )
             })?;
-            (context.project_root.clone(), context.session_dir.clone(), created, None)
+            (
+                context.project_root.clone(),
+                context.session_dir.clone(),
+                created,
+                None,
+            )
         };
 
         if let Some(agent) = agent.as_ref() {
@@ -3054,11 +3063,17 @@ fn describe_session_delivery_mode(delivery_mode: &str, session_id: &str) -> (&'s
     match delivery_mode {
         "follow_up" => (
             "sessions.message.follow_up",
-            format!("Queued follow-up message for live pi RPC session {}", session_id),
+            format!(
+                "Queued follow-up message for live pi RPC session {}",
+                session_id
+            ),
         ),
         "steer" => (
             "sessions.message.steer",
-            format!("Queued interrupt steer message for live pi RPC session {}", session_id),
+            format!(
+                "Queued interrupt steer message for live pi RPC session {}",
+                session_id
+            ),
         ),
         _ => (
             "sessions.message.start",
@@ -3149,6 +3164,7 @@ pub async fn send_session_message_with_optional_run_id(
         run_id: run_id.clone(),
         message: trimmed_message.clone(),
         timestamp: crate::state::now_iso(),
+        delivery_mode: delivery_mode.to_string(),
     };
 
     let run_id_for_task = run_id.clone();
@@ -3218,12 +3234,30 @@ mod tests {
 
     #[test]
     fn resolves_session_delivery_mode_matrix() {
-        assert_eq!(resolve_session_delivery_mode(SessionSendMode::Default, false), "prompt");
-        assert_eq!(resolve_session_delivery_mode(SessionSendMode::Queue, false), "prompt");
-        assert_eq!(resolve_session_delivery_mode(SessionSendMode::Interrupt, false), "prompt");
-        assert_eq!(resolve_session_delivery_mode(SessionSendMode::Default, true), "follow_up");
-        assert_eq!(resolve_session_delivery_mode(SessionSendMode::Queue, true), "follow_up");
-        assert_eq!(resolve_session_delivery_mode(SessionSendMode::Interrupt, true), "steer");
+        assert_eq!(
+            resolve_session_delivery_mode(SessionSendMode::Default, false),
+            "prompt"
+        );
+        assert_eq!(
+            resolve_session_delivery_mode(SessionSendMode::Queue, false),
+            "prompt"
+        );
+        assert_eq!(
+            resolve_session_delivery_mode(SessionSendMode::Interrupt, false),
+            "prompt"
+        );
+        assert_eq!(
+            resolve_session_delivery_mode(SessionSendMode::Default, true),
+            "follow_up"
+        );
+        assert_eq!(
+            resolve_session_delivery_mode(SessionSendMode::Queue, true),
+            "follow_up"
+        );
+        assert_eq!(
+            resolve_session_delivery_mode(SessionSendMode::Interrupt, true),
+            "steer"
+        );
     }
 
     fn make_session_record(session_id: &str) -> SessionRecord {

@@ -16,12 +16,16 @@ RUN_ID="$(date +%s)-$RANDOM"
 CONTAINER_NAME="orchestra-desktop-e2e-${RUN_ID}"
 HOST_PI_DIR="${HOME}/.pi"
 HOST_CODEX_DIR="${HOME}/.codex"
+HOST_ORCHESTRA_PI_AGENT_DIR="${HOME}/.orchestra/runtime/pi/agent"
 SEED_MOUNT_ARGS=()
 if [[ -d "${HOST_PI_DIR}" ]]; then
   SEED_MOUNT_ARGS+=( -v "${HOST_PI_DIR}:/seed-home/.pi:ro" )
 fi
 if [[ -d "${HOST_CODEX_DIR}" ]]; then
   SEED_MOUNT_ARGS+=( -v "${HOST_CODEX_DIR}:/seed-home/.codex:ro" )
+fi
+if [[ -d "${HOST_ORCHESTRA_PI_AGENT_DIR}" ]]; then
+  SEED_MOUNT_ARGS+=( -v "${HOST_ORCHESTRA_PI_AGENT_DIR}:/seed-home/.orchestra/runtime/pi/agent:ro" )
 fi
 
 podman run --rm \

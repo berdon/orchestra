@@ -65,12 +65,16 @@ struct RegisteredSessionContext {
 static REGISTERED_SESSION_CONTEXTS: OnceLock<Mutex<HashMap<String, RegisteredSessionContext>>> =
     OnceLock::new();
 
-fn registered_session_contexts(
-) -> &'static Mutex<HashMap<String, RegisteredSessionContext>> {
+fn registered_session_contexts() -> &'static Mutex<HashMap<String, RegisteredSessionContext>> {
     REGISTERED_SESSION_CONTEXTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn register_session_context(session_id: &str, project_root: &Path, session_dir: &Path, session_path: &Path) {
+fn register_session_context(
+    session_id: &str,
+    project_root: &Path,
+    session_dir: &Path,
+    session_path: &Path,
+) {
     if let Ok(mut registry) = registered_session_contexts().lock() {
         registry.insert(
             session_id.to_string(),
@@ -1173,7 +1177,8 @@ pub fn get_session(
 pub fn get_session_path(session_dir: &Path, session_id: &str) -> Result<PathBuf, String> {
     if let Some(context) = session_context_for_session_dir(session_dir) {
         let connection = database::open_connection()?;
-        if let Some(path) = resolve_session_path_with_canonical(&connection, &context, session_id)? {
+        if let Some(path) = resolve_session_path_with_canonical(&connection, &context, session_id)?
+        {
             return Ok(path);
         }
         if let Some(registered) = registered_session_context(session_id)
@@ -1182,12 +1187,8 @@ pub fn get_session_path(session_dir: &Path, session_id: &str) -> Result<PathBuf,
             return Ok(registered.session_path);
         }
         if let Some(path) = discover_session_path_in_dir(&context.session_dir, session_id)? {
-            let _ = repair_canonical_session_row_from_path(
-                &connection,
-                &context,
-                session_id,
-                &path,
-            );
+            let _ =
+                repair_canonical_session_row_from_path(&connection, &context, session_id, &path);
             return Ok(path);
         }
         return Err(format!(
@@ -1598,12 +1599,8 @@ fn resolve_session(
         } else if let Some(registered) = registered.as_ref() {
             registered.session_path.clone()
         } else if let Some(path) = discover_session_path_in_dir(&context.session_dir, session_id)? {
-            let _ = repair_canonical_session_row_from_path(
-                &connection,
-                &context,
-                session_id,
-                &path,
-            );
+            let _ =
+                repair_canonical_session_row_from_path(&connection, &context, session_id, &path);
             path
         } else {
             return Err(format!(

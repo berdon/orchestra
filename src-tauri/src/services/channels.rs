@@ -1506,10 +1506,9 @@ fn telegram_send_task_back_for_work(
             tasks::get_task_context(&connection, &task_id)?
         }
         task_runtime::ReviewReworkAction::Relaned(updated_task) => {
-            for outcome in task_runtime::collect_post_completion_auto_dispatches(
-                &mut connection,
-                &task_id,
-            )? {
+            for outcome in
+                task_runtime::collect_post_completion_auto_dispatches(&mut connection, &task_id)?
+            {
                 task_runtime::start_assignment_run(
                     app.clone(),
                     state,
@@ -2902,7 +2901,9 @@ fn telegram_api_post(
                 .get("description")
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned)
-                .unwrap_or_else(|| format!("Telegram API {} failed with status {}", method, status)));
+                .unwrap_or_else(|| {
+                    format!("Telegram API {} failed with status {}", method, status)
+                }));
         }
         Ok(value)
     })

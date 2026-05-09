@@ -357,8 +357,10 @@ fn agent_session_has_active_prompt(
         return Ok(true);
     }
 
-    Ok(live_sessions::maybe_runtime(&state.session_runtimes, session_id)
-        .is_some_and(|runtime| runtime.has_active_prompt()))
+    Ok(
+        live_sessions::maybe_runtime(&state.session_runtimes, session_id)
+            .is_some_and(|runtime| runtime.has_active_prompt()),
+    )
 }
 
 fn deliver_nonblocking_entry(

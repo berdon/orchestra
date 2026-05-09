@@ -4701,6 +4701,7 @@ export async function sendSessionMessage(
       runId,
       message: trimmedMessage,
       timestamp: nowIso(),
+      deliveryMode,
     };
     const bridgeDiagnostics = ensureMockBridgeDiagnostics();
     setStoredValue(BRIDGE_DIAGNOSTICS_STORAGE_KEY, {

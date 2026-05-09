@@ -420,7 +420,9 @@ mod tests {
                 role_instance_id: None,
                 prompt: None,
                 pending_outcome: Some("success".into()),
-                completion_summary: Some("Ready for approval after implementation and testing.".into()),
+                completion_summary: Some(
+                    "Ready for approval after implementation and testing.".into(),
+                ),
                 completion_notes: Some("Please verify the lane output before approving.".into()),
                 whip_count: 0,
                 last_whip_at: None,

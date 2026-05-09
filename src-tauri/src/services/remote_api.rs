@@ -60,11 +60,11 @@ use crate::{
         QueuedSessionMessage, RemoteAccessSettings, RemoteAccessStatus, RemoteAuthResponse,
         RemoteDeviceRecord, RemoteEventEnvelope, RemotePairingCompleteInput, RemotePushTokenInput,
         RemoteWebPushConfig, RepositoryRemoteInput, RepositoryUpsertInput, RoleQueueEntryInput,
-        RoleUpsertInput,
-        SendMailboxMessageInput, SessionRecord, SkillBindingInput, TaskAttachmentInput,
-        TaskCommentInput, TaskCommentUpdateInput, TaskDetail, TaskFileReferenceInput,
-        TaskScheduleUpsertInput, TaskSummary, TaskTodoInput, TaskUpsertInput, WorkflowLaneInput,
-        WorkflowLanePatchInput, WorkflowLaneReorderInput, WorkflowUpsertInput,
+        RoleUpsertInput, SendMailboxMessageInput, SessionRecord, SkillBindingInput,
+        TaskAttachmentInput, TaskCommentInput, TaskCommentUpdateInput, TaskDetail,
+        TaskFileReferenceInput, TaskScheduleUpsertInput, TaskSummary, TaskTodoInput,
+        TaskUpsertInput, WorkflowLaneInput, WorkflowLanePatchInput, WorkflowLaneReorderInput,
+        WorkflowUpsertInput,
     },
     services::{
         agent_dispatch, app_events, database, harness_settings, messages, notifications,
@@ -922,14 +922,14 @@ mod tests {
         body::{to_bytes, Body},
         http::Request,
     };
+    #[cfg(not(target_os = "macos"))]
+    use std::sync::Arc;
     use std::{
         env, fs,
         path::PathBuf,
         process::Command,
         time::{SystemTime, UNIX_EPOCH},
     };
-    #[cfg(not(target_os = "macos"))]
-    use std::sync::Arc;
     use tower::ServiceExt;
 
     struct RemoteApiParityFixture {
@@ -957,7 +957,6 @@ mod tests {
 
         Ok(RemoteApiParityFixture { app, auth_header })
     }
-
 
     fn perform_authenticated_json_request(
         app: &tauri::App,
@@ -1238,11 +1237,10 @@ mod tests {
 
         #[cfg(not(target_os = "macos"))]
         {
-            let _secret_store = crate::services::project_secrets::ScopedTestProjectSecretStore::install(
-                Arc::new(crate::services::project_secrets::TestProjectSecretStore::new(
-                    "available",
-                )),
-            );
+            let _secret_store =
+                crate::services::project_secrets::ScopedTestProjectSecretStore::install(Arc::new(
+                    crate::services::project_secrets::TestProjectSecretStore::new("available"),
+                ));
             let fixture = build_remote_api_parity_fixture("project-secret-patch")
                 .expect("remote api fixture should build");
             let project_slug = projects::resolve_default_project_slug(
@@ -1277,15 +1275,16 @@ mod tests {
                 "projectSlug": project_slug,
                 "description": "Metadata only"
             });
-            let (metadata_status, metadata_response) = perform_authenticated_json_request_with_options(
-                &fixture.app,
-                &fixture.auth_header,
-                "PATCH",
-                "/api/v1/project-settings/secrets/OPENAI_API_KEY",
-                &[],
-                Some(metadata_only_body),
-            )
-            .expect("metadata-only patch should succeed without secretKey in the body");
+            let (metadata_status, metadata_response) =
+                perform_authenticated_json_request_with_options(
+                    &fixture.app,
+                    &fixture.auth_header,
+                    "PATCH",
+                    "/api/v1/project-settings/secrets/OPENAI_API_KEY",
+                    &[],
+                    Some(metadata_only_body),
+                )
+                .expect("metadata-only patch should succeed without secretKey in the body");
             assert_eq!(metadata_status, StatusCode::OK);
             assert_eq!(
                 metadata_response["secrets"][0]["description"].as_str(),
@@ -1318,12 +1317,9 @@ mod tests {
                 Some("Rotated")
             );
 
-            let list_response = perform_authenticated_json_request(
-                &fixture.app,
-                &fixture.auth_header,
-                &create_uri,
-            )
-            .expect("project secret list should succeed");
+            let list_response =
+                perform_authenticated_json_request(&fixture.app, &fixture.auth_header, &create_uri)
+                    .expect("project secret list should succeed");
             assert_eq!(
                 list_response["secrets"][0]["description"].as_str(),
                 Some("Rotated")
@@ -1631,8 +1627,11 @@ fn register_frontend_bootstrap_and_session_routes<S, R, SessionSender, SessionFu
 where
     S: Clone + Send + Sync + 'static,
     R: Runtime,
-    SessionSender:
-        Fn(String, String, Option<String>, Option<String>) -> SessionFuture + Clone + Send + Sync + 'static,
+    SessionSender: Fn(String, String, Option<String>, Option<String>) -> SessionFuture
+        + Clone
+        + Send
+        + Sync
+        + 'static,
     SessionFuture:
         std::future::Future<Output = Result<QueuedSessionMessage, String>> + Send + 'static,
 {
@@ -2163,7 +2162,10 @@ fn build_remote_api_context(app: AppHandle) -> Router {
             "/api/v1/inbox/:delivery_id/archive",
             post(post_archive_inbox_message),
         )
-        .route("/api/v1/devices/push-config", get(get_remote_web_push_config))
+        .route(
+            "/api/v1/devices/push-config",
+            get(get_remote_web_push_config),
+        )
         .route("/api/v1/devices/push-token", post(post_register_push_token))
         .route(
             "/api/v1/sessions",
@@ -2222,7 +2224,15 @@ fn build_remote_api_context(app: AppHandle) -> Router {
             async move {
                 let state_app = app.clone();
                 let state = state_app.state::<AppState>();
-                send_session_message_internal(app, state.inner(), session_id, message, run_id, send_mode).await
+                send_session_message_internal(
+                    app,
+                    state.inner(),
+                    session_id,
+                    message,
+                    run_id,
+                    send_mode,
+                )
+                .await
             }
         },
     )
@@ -3488,7 +3498,10 @@ pub fn run_hosted_web_e2e_server() -> Result<(), String> {
                         match fs::read_to_string(&service_worker_path) {
                             Ok(contents) => Response::builder()
                                 .status(StatusCode::OK)
-                                .header(header::CONTENT_TYPE, "application/javascript; charset=utf-8")
+                                .header(
+                                    header::CONTENT_TYPE,
+                                    "application/javascript; charset=utf-8",
+                                )
                                 .body(axum::body::Body::from(contents))
                                 .expect("service worker response should build"),
                             Err(_) => Response::builder()
@@ -3603,7 +3616,10 @@ fn build_remote_hosted_web_context(app: AppHandle, root: PathBuf) -> Router {
                         match fs::read_to_string(&service_worker_path) {
                             Ok(contents) => Response::builder()
                                 .status(StatusCode::OK)
-                                .header(header::CONTENT_TYPE, "application/javascript; charset=utf-8")
+                                .header(
+                                    header::CONTENT_TYPE,
+                                    "application/javascript; charset=utf-8",
+                                )
                                 .body(axum::body::Body::from(contents))
                                 .expect("service worker response should build"),
                             Err(_) => Response::builder()
@@ -6474,12 +6490,14 @@ async fn parse_task_attachment_multipart(
         )
     })?;
 
-    Ok(crate::services::task_attachments::TaskAttachmentBytesInput {
-        file_name,
-        media_type: media_type.unwrap_or_else(|| "application/octet-stream".into()),
-        bytes,
-        caption,
-    })
+    Ok(
+        crate::services::task_attachments::TaskAttachmentBytesInput {
+            file_name,
+            media_type: media_type.unwrap_or_else(|| "application/octet-stream".into()),
+            bytes,
+            caption,
+        },
+    )
 }
 
 async fn post_task_attachment_create(

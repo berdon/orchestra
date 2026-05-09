@@ -328,8 +328,9 @@ mod tests {
 
     #[test]
     fn ignores_unrelated_runtime_errors() {
-        assert!(classify_model_auth_failure("Pi RPC process exited unexpectedly", None, None)
-            .is_none());
+        assert!(
+            classify_model_auth_failure("Pi RPC process exited unexpectedly", None, None).is_none()
+        );
     }
 
     #[test]

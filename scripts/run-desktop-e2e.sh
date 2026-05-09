@@ -179,7 +179,8 @@ run_inner() {
     ln -s "${REAL_HOME}/.codex" "${TEST_HOME}/.codex"
   fi
 
-  local managed_pi_dir="${TEST_HOME}/.orchestra/runtime/pi/agent"
+  local managed_pi_dir="${TEST_HOME}/.orchestra-dev/runtime/pi/agent"
+  local seed_managed_pi_dir="${REAL_HOME}/.orchestra/runtime/pi/agent"
   local legacy_pi_dir="${TEST_HOME}/.pi/agent"
   if [[ "${TEST_FILE}" == "tests/desktop-e2e/session-model-auth-error.test.ts" ]]; then
     export ORCHESTRA_PI_EXECUTABLE="${ROOT_DIR}/tests/desktop-e2e/fixtures/fake-pi-model-auth-fixture.mjs"
@@ -193,11 +194,33 @@ run_inner() {
   local import_legacy_auth="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_AUTH:-1}"
   local import_legacy_models="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS:-1}"
   local import_legacy_settings="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_SETTINGS:-0}"
+  local import_managed_auth="${ORCHESTRA_DESKTOP_E2E_IMPORT_MANAGED_AUTH:-1}"
+  local import_managed_models="${ORCHESTRA_DESKTOP_E2E_IMPORT_MANAGED_MODELS:-1}"
+
+  mkdir -p "${managed_pi_dir}"
+  chmod 700 "${TEST_HOME}/.orchestra" "${TEST_HOME}/.orchestra/runtime" "${TEST_HOME}/.orchestra/runtime/pi" "${managed_pi_dir}" 2>/dev/null || true
+
+  if [[ -d "${seed_managed_pi_dir}" ]]; then
+    if [[ "${import_managed_auth}" == "1" ]]; then
+      if [[ -f "${seed_managed_pi_dir}/auth.json" && ! -f "${managed_pi_dir}/auth.json" ]]; then
+        install -m 600 "${seed_managed_pi_dir}/auth.json" "${managed_pi_dir}/auth.json"
+        echo "[desktop-e2e-runner] imported Orchestra-managed auth.json into test runtime"
+      fi
+    elif [[ -f "${seed_managed_pi_dir}/auth.json" ]]; then
+      echo "[desktop-e2e-runner] skipping Orchestra-managed auth.json import because ORCHESTRA_DESKTOP_E2E_IMPORT_MANAGED_AUTH=0"
+    fi
+
+    if [[ "${import_managed_models}" == "1" ]]; then
+      if [[ -f "${seed_managed_pi_dir}/models.json" && ! -f "${managed_pi_dir}/models.json" ]]; then
+        install -m 600 "${seed_managed_pi_dir}/models.json" "${managed_pi_dir}/models.json"
+        echo "[desktop-e2e-runner] imported Orchestra-managed models.json into test runtime"
+      fi
+    elif [[ -f "${seed_managed_pi_dir}/models.json" ]]; then
+      echo "[desktop-e2e-runner] skipping Orchestra-managed models.json import because ORCHESTRA_DESKTOP_E2E_IMPORT_MANAGED_MODELS=0"
+    fi
+  fi
 
   if [[ -d "${legacy_pi_dir}" ]]; then
-    mkdir -p "${managed_pi_dir}"
-    chmod 700 "${TEST_HOME}/.orchestra" "${TEST_HOME}/.orchestra/runtime" "${TEST_HOME}/.orchestra/runtime/pi" "${managed_pi_dir}" 2>/dev/null || true
-
     if [[ "${import_legacy_auth}" == "1" ]]; then
       if [[ -f "${legacy_pi_dir}/auth.json" && ! -f "${managed_pi_dir}/auth.json" ]]; then
         install -m 600 "${legacy_pi_dir}/auth.json" "${managed_pi_dir}/auth.json"
@@ -223,6 +246,12 @@ run_inner() {
     elif [[ -f "${legacy_pi_dir}/models.json" ]]; then
       echo "[desktop-e2e-runner] skipping host Pi models.json import because ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS=0"
     fi
+  fi
+
+  if [[ -f "${managed_pi_dir}/auth.json" && -f "${managed_pi_dir}/models.json" ]]; then
+    export ORCHESTRA_DESKTOP_E2E_MANAGED_PI_READY=1
+  else
+    export ORCHESTRA_DESKTOP_E2E_MANAGED_PI_READY=0
   fi
 
   ensure_binary_matches_preview_url
