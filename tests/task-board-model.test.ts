@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { buildTaskBoardModel, getVisibleTaskBoardTags, isDraftTask } from "../src/pages/tasks/taskBoardModel";
+import { buildTaskBoardModel, getVisibleTaskBoardTags, hasMissingWorkflow, isDraftTask } from "../src/pages/tasks/taskBoardModel";
 import type { TaskSummary, WorkflowDefinition } from "../src/types";
 
 function makeTask(overrides: Partial<TaskSummary>): TaskSummary {
@@ -79,9 +79,11 @@ const workflow: WorkflowDefinition = {
 };
 
 describe("taskBoardModel", () => {
-  test("treats draft or workflow-less tasks as drafts", () => {
+  test("keeps true drafts separate from non-draft tasks missing workflows", () => {
     expect(isDraftTask(makeTask({ status: "draft", workflowId: "workflow-1" }))).toBe(true);
-    expect(isDraftTask(makeTask({ status: "ready", workflowId: null }))).toBe(true);
+    expect(isDraftTask(makeTask({ status: "ready", workflowId: null }))).toBe(false);
+    expect(hasMissingWorkflow(makeTask({ status: "ready", workflowId: null }))).toBe(true);
+    expect(hasMissingWorkflow(makeTask({ status: "draft", workflowId: null }))).toBe(false);
     expect(isDraftTask(makeTask({ status: "ready", workflowId: "workflow-1" }))).toBe(false);
   });
 
@@ -89,6 +91,7 @@ describe("taskBoardModel", () => {
     const board = buildTaskBoardModel(
       [
         makeTask({ id: "draft", status: "draft", workflowId: null }),
+        makeTask({ id: "missing-workflow", status: "ready", workflowId: null }),
         makeTask({ id: "plan", workflowId: "workflow-1", currentLaneId: "lane-plan", status: "ready" }),
         makeTask({ id: "impl", workflowId: "workflow-1", currentLaneId: "lane-implement", status: "in_progress" }),
         makeTask({ id: "done", workflowId: "workflow-1", currentLaneId: null, status: "completed" }),
@@ -96,7 +99,8 @@ describe("taskBoardModel", () => {
       { [workflow.id]: workflow },
     );
 
-    expect(board.draftTasks).toHaveLength(1);
+    expect(board.draftTasks.map((task) => task.id)).toEqual(["draft"]);
+    expect(board.missingWorkflowTasks.map((task) => task.id)).toEqual(["missing-workflow"]);
     expect(board.workflowSections).toHaveLength(1);
     expect(board.workflowSections[0].lanes[0].tasks.map((task) => task.id)).toEqual(["plan"]);
     expect(board.workflowSections[0].lanes[1].tasks.map((task) => task.id)).toEqual(["impl"]);
@@ -107,13 +111,14 @@ describe("taskBoardModel", () => {
     const board = buildTaskBoardModel(
       [
         makeTask({ id: "draft", status: "draft", workflowId: null, tags: ["draft"] }),
+        makeTask({ id: "missing-workflow", status: "ready", workflowId: null, tags: ["triage"] }),
         makeTask({ id: "ready", workflowId: "workflow-1", currentLaneId: "lane-plan", status: "ready", tags: ["backend"] }),
         makeTask({ id: "done", workflowId: "workflow-1", currentLaneId: null, status: "completed", tags: ["archive-only"] }),
       ],
       { [workflow.id]: workflow },
     );
 
-    expect(getVisibleTaskBoardTags(board, false)).toEqual(["backend", "draft"]);
+    expect(getVisibleTaskBoardTags(board, false)).toEqual(["backend", "draft", "triage"]);
   });
 
   test("updates visible tags as the visible task set changes", () => {

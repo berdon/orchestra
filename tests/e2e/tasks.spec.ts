@@ -708,6 +708,106 @@ test("tasks overview creates a draft task and opens dedicated detail/create page
   await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Draft board task");
 });
 
+test("tasks overview highlights non-draft tasks that are missing a workflow", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    const timestamp = new Date().toISOString();
+    const buildTask = (overrides: Record<string, unknown>) => ({
+      projectId: "orchestra",
+      description: null,
+      type: "task",
+      status: "ready",
+      priority: "P2",
+      workflowId: null,
+      currentLaneId: null,
+      assigneeType: "role",
+      assigneeId: "developer",
+      repositoryId: null,
+      repositoryIds: [],
+      parentTaskId: null,
+      archived: false,
+      tags: [],
+      commentCount: 0,
+      unreadCommentCount: 0,
+      laneRunCount: 0,
+      childCount: 0,
+      completedChildCount: 0,
+      inProgressChildCount: 0,
+      blockedChildCount: 0,
+      blockedByCount: 0,
+      blockingCount: 0,
+      attachmentCount: 0,
+      dependencyBlocked: false,
+      activeLaneAssignmentStatus: null,
+      readyForDispatch: false,
+      parent: null,
+      lineage: [],
+      children: [],
+      blockedBy: [],
+      blocking: [],
+      attachments: [],
+      taskRepositories: [],
+      fileReferences: [],
+      comments: [],
+      todos: [],
+      laneRuns: [],
+      laneSummaries: [],
+      activeLaneAssignment: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      ...overrides,
+    });
+
+    window.localStorage.setItem("orchestra.mock.workflows", JSON.stringify([]));
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        buildTask({
+          id: "task-missing-workflow",
+          number: "ORC-MW1",
+          title: "Ready task without workflow",
+          status: "ready",
+        }),
+        buildTask({
+          id: "task-draft-only",
+          number: "ORC-MW2",
+          title: "Actual draft task",
+          status: "draft",
+        }),
+      ]),
+    );
+    window.localStorage.setItem("orchestra.mock.task-schedules", JSON.stringify([]));
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+
+  const missingWorkflowSection = page.locator('[data-role="task-missing-workflow-section"]');
+  await expect(missingWorkflowSection).toContainText("Needs workflow");
+  await expect(missingWorkflowSection).toContainText("Ready task without workflow");
+  await expect(missingWorkflowSection.locator('[data-role="task-card-missing-workflow-badge"]')).toContainText("No workflow");
+  await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Actual draft task");
+  await expect(page.locator('[data-role="draft-task-section"]')).not.toContainText("Ready task without workflow");
+
+  await page.locator('[data-role="task-card"][data-task-id="task-missing-workflow"]').click();
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Ready task without workflow");
+  await expect(page.locator('[data-role="task-detail-missing-workflow-warning"]')).toContainText("No workflow configured");
+  await expect(page.locator('[data-role="task-detail-header-workflow"]')).toHaveText("No workflow");
+  await expect(page.locator('[data-role="task-detail-header-lane"]')).toHaveText("Unavailable");
+
+  await page.locator('[data-role="task-detail-tab-runtime"]').click();
+  await expect(page.locator('[data-role="task-runtime-missing-workflow-warning"]')).toContainText("Runtime unavailable");
+
+  await page.locator('[data-role="task-detail-tab-todos"]').click();
+  await expect(page.locator('[data-role="task-todos-missing-workflow-warning"]')).toContainText("Workflow required for lane todos");
+
+  await page.locator('[data-role="task-detail-tab-history"]').click();
+  await expect(page.locator('[data-role="task-history-missing-workflow-warning"]')).toContainText("Lane history inactive");
+
+  await page.locator('[data-role="edit-task"]').click();
+  await expect(page.locator('[data-role="task-editor-missing-workflow-warning"]')).toContainText("This task will not appear in workflow lanes or be dispatchable until a workflow is assigned.");
+});
+
 test("tasks overview hides empty draft and scheduled sections and starts filters collapsed by default", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();

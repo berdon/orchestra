@@ -3498,6 +3498,16 @@ strong {
   gap: 8px;
 }
 
+.task-overview-card--warning {
+  border-color: color-mix(in srgb, var(--warning) 28%, var(--color-card-border));
+  background: color-mix(in srgb, var(--warning-soft) 52%, var(--color-card-background));
+}
+
+.task-overview-card--warning:hover {
+  border-color: color-mix(in srgb, var(--warning) 44%, var(--color-card-border));
+  background: color-mix(in srgb, var(--warning-soft) 62%, var(--color-card-background-hover));
+}
+
 .task-compact-card {
   gap: 6px;
   text-align: left;
@@ -3542,6 +3552,16 @@ strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.task-compact-card__warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--warning);
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .task-compact-card__tags {
@@ -3864,6 +3884,11 @@ strong {
   grid-template-rows: auto minmax(0, 1fr);
   max-height: min(72vh, 720px);
   min-height: 0;
+}
+
+.task-board-section--warning {
+  border: 1px solid color-mix(in srgb, var(--warning) 18%, transparent);
+  background: color-mix(in srgb, var(--warning-soft) 44%, var(--bg-elevated));
 }
 
 .task-draft-grid {
@@ -4280,6 +4305,15 @@ strong {
 
 .task-detail-header-metadata__item .status-badge {
   flex-shrink: 0;
+}
+
+.task-detail-header-metadata__item--warning {
+  border-color: color-mix(in srgb, var(--warning) 22%, transparent);
+  background: color-mix(in srgb, var(--warning-soft) 56%, transparent);
+}
+
+.task-detail-header-metadata__item--warning .task-detail-header-metadata__value {
+  color: var(--warning);
 }
 
 .task-detail-header-metadata--compact .task-detail-header-metadata__item {
@@ -4923,7 +4957,8 @@ strong {
 
 .task-child-card,
 .task-history-card,
-.task-attachment-card {
+.task-attachment-card,
+.task-workflow-warning {
   display: grid;
   gap: 10px;
   padding: 14px 16px;
@@ -4941,6 +4976,12 @@ strong {
   border: 0;
   border-radius: 8px;
   background: color-mix(in srgb, var(--bg-subtle) 72%, transparent);
+}
+
+.task-workflow-warning {
+  border: 1px solid color-mix(in srgb, var(--warning) 24%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warning-soft) 60%, transparent);
 }
 
 .task-attachment-grid,

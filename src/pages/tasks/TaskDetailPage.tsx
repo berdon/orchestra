@@ -138,10 +138,25 @@ interface TaskDetailPageProps {
   onEditingStateChange?: (editing: boolean) => void;
 }
 
+function getTaskWorkflowLabel(
+  task: Pick<TaskDetail, "workflowId">,
+  workflows: Array<{ id: string; name: string }>,
+) {
+  if (!task.workflowId) {
+    return "No workflow";
+  }
+
+  return workflows.find((workflow) => workflow.id === task.workflowId)?.name ?? task.workflowId;
+}
+
 function getTaskLaneLabel(
-  task: Pick<TaskDetail, "currentLaneId">,
+  task: Pick<TaskDetail, "workflowId" | "currentLaneId">,
   workflowLanes: Array<{ id: string; name: string }>,
 ) {
+  if (!task.workflowId) {
+    return "Unavailable";
+  }
+
   if (!task.currentLaneId) {
     return "No lane";
   }
@@ -149,15 +164,42 @@ function getTaskLaneLabel(
   return workflowLanes.find((lane) => lane.id === task.currentLaneId)?.name ?? task.currentLaneId;
 }
 
+function TaskMissingWorkflowNotice({
+  dataRole,
+  title = "No workflow configured",
+  message,
+}: {
+  dataRole: string;
+  title?: string;
+  message: string;
+}) {
+  return (
+    <section className="task-workflow-warning" data-role={dataRole}>
+      <div className="workflow-section__header">
+        <div>
+          <p className="eyebrow">Workflow</p>
+          <h4>{title}</h4>
+        </div>
+        <span className="status-badge status-badge--warning">Needs setup</span>
+      </div>
+      <p className="supporting-copy">{message}</p>
+    </section>
+  );
+}
+
 function TaskHeaderMetadata({
   assigneeLabel,
+  workflowLabel,
   laneLabel,
   status,
+  workflowMissing = false,
   compact = false,
 }: {
   assigneeLabel: string;
+  workflowLabel: string;
   laneLabel: string;
   status: string;
+  workflowMissing?: boolean;
   compact?: boolean;
 }) {
   const className = [
@@ -165,6 +207,12 @@ function TaskHeaderMetadata({
     compact ? "task-detail-header-metadata--compact" : null,
   ].filter(Boolean).join(" ");
   const dataRolePrefix = compact ? "task-detail-compact-header" : "task-detail-header";
+  const workflowClassName = workflowMissing
+    ? "task-detail-header-metadata__item task-detail-header-metadata__item--warning"
+    : "task-detail-header-metadata__item";
+  const laneClassName = workflowMissing
+    ? "task-detail-header-metadata__item task-detail-header-metadata__item--warning"
+    : "task-detail-header-metadata__item";
 
   return (
     <div className={className}>
@@ -174,7 +222,13 @@ function TaskHeaderMetadata({
           {assigneeLabel}
         </span>
       </div>
-      <div className="task-detail-header-metadata__item">
+      <div className={workflowClassName}>
+        <span className="task-detail-header-metadata__label">Workflow</span>
+        <span className="task-detail-header-metadata__value" data-role={`${dataRolePrefix}-workflow`}>
+          {workflowLabel}
+        </span>
+      </div>
+      <div className={laneClassName}>
         <span className="task-detail-header-metadata__label">Lane</span>
         <span className="task-detail-header-metadata__value" data-role={`${dataRolePrefix}-lane`}>
           {laneLabel}
@@ -635,9 +689,11 @@ export function TaskDetailPage({
   const [tabDockShown, setTabDockShown] = useState(true);
   const getTooltipProps = useExplanatoryTooltipProps();
 
+  const taskWorkflowMissing = !task.workflowId;
   const canPublish = task.status === "draft" && Boolean(draft.workflowId && draft.title.trim()) && !publishing && !saving && !loading;
   const taskHeading = draft.title.trim() || task.title;
   const headerAssigneeLabel = resolveTaskAssigneeLabel(task, agents, roles);
+  const headerWorkflowLabel = getTaskWorkflowLabel(task, workflows);
   const headerLaneLabel = getTaskLaneLabel(task, workflowLanes);
   const taskLaneSummaries = task.laneSummaries ?? [];
   const defaultFile = task.fileReferences.find((reference) => reference.isDefault) ?? task.fileReferences[0] ?? null;
@@ -1195,7 +1251,15 @@ export function TaskDetailPage({
               </div>
               <TaskActionMenu actions={headerActionMenuActions} menuLabel="Lane actions" pendingActionId={pendingActionId} />
             </div>
-            {task.activeLaneAssignment ? (
+            {taskWorkflowMissing ? (
+              <div className="task-section-list">
+                <TaskMissingWorkflowNotice
+                  dataRole="task-runtime-missing-workflow-warning"
+                  title="Runtime unavailable"
+                  message="This task has no workflow configured, so it cannot have an active lane assignment until a workflow is assigned."
+                />
+              </div>
+            ) : task.activeLaneAssignment ? (
               <div className="task-runtime-card" data-role="task-runtime-assignment">
                 <div className="workflow-section__header">
                   <strong>
@@ -1689,45 +1753,55 @@ export function TaskDetailPage({
               </div>
             </div>
 
-            {unfinishedCurrentLaneTodos.length ? (
-              <p className="error-copy" data-role="task-current-lane-todo-warning">
-                {unfinishedCurrentLaneTodos.length} unfinished todo{unfinishedCurrentLaneTodos.length === 1 ? "" : "s"} remain for the current lane. Orchestra will block lane transitions until they are completed.
-              </p>
-            ) : null}
+            {taskWorkflowMissing ? (
+              <TaskMissingWorkflowNotice
+                dataRole="task-todos-missing-workflow-warning"
+                title="Workflow required for lane todos"
+                message="Lane-scoped todos cannot be added until this task is attached to a workflow and has workflow lanes to target."
+              />
+            ) : (
+              <>
+                {unfinishedCurrentLaneTodos.length ? (
+                  <p className="error-copy" data-role="task-current-lane-todo-warning">
+                    {unfinishedCurrentLaneTodos.length} unfinished todo{unfinishedCurrentLaneTodos.length === 1 ? "" : "s"} remain for the current lane. Orchestra will block lane transitions until they are completed.
+                  </p>
+                ) : null}
 
-            <div className="task-history-card" data-role="task-todo-composer">
-              <div className="task-detail-summary__history-header">
-                <div>
-                  <p className="eyebrow">Add todo</p>
-                  <h4>Create a lane-scoped checklist item</h4>
+                <div className="task-history-card" data-role="task-todo-composer">
+                  <div className="task-detail-summary__history-header">
+                    <div>
+                      <p className="eyebrow">Add todo</p>
+                      <h4>Create a lane-scoped checklist item</h4>
+                    </div>
+                  </div>
+                  <div className="field-grid field-grid--two-column">
+                    <label className="field-group" {...getTooltipProps("Choose which workflow lane should own this checklist item.")}>
+                      <span className="field-group__label">Lane</span>
+                      <select className="select-input" data-role="task-todo-lane" value={todoDraftLaneId} onChange={(event) => setTodoDraftLaneId(event.target.value)}>
+                        <option value="">Select a lane</option>
+                        {workflowLanes.map((lane) => (
+                          <option key={lane.id} value={lane.id}>{lane.name} · {lane.id}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field-group field-group--full-width" {...getTooltipProps("Describe the follow-up work that should stay visible on this task.")}>
+                      <span className="field-group__label">Description</span>
+                      <input className="text-input" data-role="task-todo-description" type="text" value={todoDraftDescription} onChange={(event) => setTodoDraftDescription(event.target.value)} placeholder="Describe the follow-up item for this lane" />
+                    </label>
+                  </div>
+                  <div className="action-cluster action-cluster--wrap">
+                    <button
+                      className="secondary-button"
+                      data-role="add-task-todo"
+                      type="button"
+                      disabled={!todoDraftDescription.trim() || !todoDraftLaneId}
+                      {...getTooltipProps("Add a lane-scoped checklist item that must be tracked to completion.")}
+                      onClick={handleAddTodo}
+                    >Add todo</button>
+                  </div>
                 </div>
-              </div>
-              <div className="field-grid field-grid--two-column">
-                <label className="field-group" {...getTooltipProps("Choose which workflow lane should own this checklist item.")}>
-                  <span className="field-group__label">Lane</span>
-                  <select className="select-input" data-role="task-todo-lane" value={todoDraftLaneId} onChange={(event) => setTodoDraftLaneId(event.target.value)}>
-                    <option value="">Select a lane</option>
-                    {workflowLanes.map((lane) => (
-                      <option key={lane.id} value={lane.id}>{lane.name} · {lane.id}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field-group field-group--full-width" {...getTooltipProps("Describe the follow-up work that should stay visible on this task.")}>
-                  <span className="field-group__label">Description</span>
-                  <input className="text-input" data-role="task-todo-description" type="text" value={todoDraftDescription} onChange={(event) => setTodoDraftDescription(event.target.value)} placeholder="Describe the follow-up item for this lane" />
-                </label>
-              </div>
-              <div className="action-cluster action-cluster--wrap">
-                <button
-                  className="secondary-button"
-                  data-role="add-task-todo"
-                  type="button"
-                  disabled={!todoDraftDescription.trim() || !todoDraftLaneId}
-                  {...getTooltipProps("Add a lane-scoped checklist item that must be tracked to completion.")}
-                  onClick={handleAddTodo}
-                >Add todo</button>
-              </div>
-            </div>
+              </>
+            )}
 
             {todoGroups.length ? (
               <div className="task-section-list" data-role="task-todo-groups">
@@ -1769,7 +1843,7 @@ export function TaskDetailPage({
                   </article>
                 ))}
               </div>
-            ) : <p className="supporting-copy">No todos yet.</p>}
+            ) : taskWorkflowMissing ? null : <p className="supporting-copy">No todos yet.</p>}
           </section>
         );
       case "attachments":
@@ -1855,6 +1929,14 @@ export function TaskDetailPage({
               </div>
             </div>
 
+            {taskWorkflowMissing ? (
+              <TaskMissingWorkflowNotice
+                dataRole="task-history-missing-workflow-warning"
+                title="Lane history inactive"
+                message="This task has no workflow configured, so Orchestra cannot record new lane runs until a workflow is assigned."
+              />
+            ) : null}
+
             {task.laneRuns.length ? (
               <div className="task-section-list" data-role="task-lane-history">
                 {task.laneRuns.map((laneRun) => (
@@ -1882,7 +1964,7 @@ export function TaskDetailPage({
                   </article>
                 ))}
               </div>
-            ) : <p className="muted-copy">No lane runs recorded yet.</p>}
+            ) : taskWorkflowMissing ? null : <p className="muted-copy">No lane runs recorded yet.</p>}
           </section>
         );
     }
@@ -2061,7 +2143,13 @@ export function TaskDetailPage({
                 ))}
               </div>
             ) : null}
-            <TaskHeaderMetadata assigneeLabel={headerAssigneeLabel} laneLabel={headerLaneLabel} status={task.status} />
+            <TaskHeaderMetadata
+              assigneeLabel={headerAssigneeLabel}
+              workflowLabel={headerWorkflowLabel}
+              laneLabel={headerLaneLabel}
+              status={task.status}
+              workflowMissing={taskWorkflowMissing}
+            />
             <div className="session-detail__meta">
               {taskHeaderMeta.map((item) => (
                 <span key={item}>{item}</span>
@@ -2072,6 +2160,13 @@ export function TaskDetailPage({
           {renderHeaderActions()}
         </div>
         <div className="task-detail-primary-header-sentinel" ref={compactHeaderSentinelRef} aria-hidden="true" />
+
+        {taskWorkflowMissing ? (
+          <TaskMissingWorkflowNotice
+            dataRole="task-detail-missing-workflow-warning"
+            message="This task is not attached to a workflow. It will not appear in workflow lanes, cannot be dispatched, and workflow-backed views stay inactive until a workflow is assigned."
+          />
+        ) : null}
 
         {isEditing ? (
           <div className="task-detail-edit-shell">
@@ -2348,7 +2443,14 @@ export function TaskDetailPage({
               <span className="status-badge status-badge--neutral">{task.number}</span>
               <h3>{taskHeading}</h3>
             </div>
-            <TaskHeaderMetadata assigneeLabel={headerAssigneeLabel} laneLabel={headerLaneLabel} status={task.status} compact />
+            <TaskHeaderMetadata
+              assigneeLabel={headerAssigneeLabel}
+              workflowLabel={headerWorkflowLabel}
+              laneLabel={headerLaneLabel}
+              status={task.status}
+              workflowMissing={taskWorkflowMissing}
+              compact
+            />
           </div>
           {renderHeaderActions(true)}
         </div>

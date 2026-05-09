@@ -13,6 +13,8 @@ interface TaskCompactCardProps {
 }
 
 export function TaskCompactCard({ task, assigneeLabel, onOpen, onOpenTag }: TaskCompactCardProps) {
+  const workflowMissing = !task.workflowId;
+
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -23,9 +25,10 @@ export function TaskCompactCard({ task, assigneeLabel, onOpen, onOpenTag }: Task
   return (
     <div
       aria-label={`Open task ${task.number}: ${task.title}`}
-      className="task-compact-card task-overview-card"
+      className={workflowMissing ? "task-compact-card task-overview-card task-overview-card--warning" : "task-compact-card task-overview-card"}
       data-role="task-card"
       data-task-id={task.id}
+      data-missing-workflow={workflowMissing ? "true" : "false"}
       role="button"
       tabIndex={0}
       onClick={() => onOpen(task.id)}
@@ -38,6 +41,12 @@ export function TaskCompactCard({ task, assigneeLabel, onOpen, onOpenTag }: Task
       <strong className="task-compact-card__title" title={task.title}>
         {task.title}
       </strong>
+      {workflowMissing ? (
+        <div className="task-compact-card__warning" data-role="task-card-missing-workflow-warning">
+          <span className="status-badge status-badge--warning status-badge--compact" data-role="task-card-missing-workflow-badge">No workflow</span>
+          <span>Assign a workflow to place this task in lanes.</span>
+        </div>
+      ) : null}
       <TaskTagList className="task-compact-card__tags" maxVisible={2} onTagClick={onOpenTag} task={task} />
       <div className="task-compact-card__meta">
         <span title={assigneeLabel}>{assigneeLabel}</span>
