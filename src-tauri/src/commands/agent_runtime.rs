@@ -50,6 +50,16 @@ fn decorate_snapshot(
     Ok(snapshot)
 }
 
+fn should_retry_agent_session_recovery(error: &str) -> bool {
+    let normalized = error.trim().to_lowercase();
+    normalized.contains("canonical session row")
+        || normalized.contains("canonical session rows")
+        || normalized.contains("canonical transcript path")
+        || normalized.contains("unable to find session")
+        || normalized.contains(" is missing canonical project/context metadata")
+        || (normalized.contains("session ") && normalized.contains(" was not found"))
+}
+
 #[tauri::command]
 pub fn list_agent_operations(
     state: State<'_, AppState>,
@@ -142,100 +152,135 @@ pub async fn ensure_agent_session(
             "Create a project first before starting agent sessions.",
         )?
     };
-    let context =
-        crate::services::pi_sessions::session_context_for_project_id(&resolved_project_id)?;
-    let runtime_state = agent_dispatch::ensure_main_session(
-        &context.project_root,
-        &context.session_dir,
-        &resolved_project_id,
-        &agent_id,
-    )?;
-    let session_id = runtime_state
-        .main_session_id
-        .ok_or_else(|| format!("Agent {agent_id} does not have a main session"))?;
 
-    let connection = database::open_connection()?;
-    session_records::bind_session_context(
-        &connection,
-        &session_id,
-        session_records::SessionContextBinding {
-            project_id: Some(resolved_project_id.as_str()),
-            session_kind: Some(session_records::SESSION_KIND_AGENT_MAIN),
-            worker_type: Some("agent"),
-            worker_id: Some(agent_id.as_str()),
-            agent_id: Some(agent_id.as_str()),
-            role_instance_id: None,
-            task_id: None,
-            workflow_id: None,
-            lane_id: None,
-            assignment_id: None,
-            runtime_cwd: runtime_state
-                .runtime_cwd
-                .as_deref()
-                .map(std::path::Path::new),
-        },
-    )?;
+    let mut last_error = None;
+    for attempt in 0..2 {
+        let context =
+            crate::services::pi_sessions::session_context_for_project_id(&resolved_project_id)?;
+        let result = (|| -> Result<SessionRecord, String> {
+            let runtime_state = agent_dispatch::ensure_main_session(
+                &context.project_root,
+                &context.session_dir,
+                &resolved_project_id,
+                &agent_id,
+            )?;
+            let session_id = runtime_state
+                .main_session_id
+                .ok_or_else(|| format!("Agent {agent_id} does not have a main session"))?;
 
-    state.log(
-        "info",
-        "agent.session.ensure",
-        &format!(
-            "ensure_agent_session agent={} requested_project={} runtime_project={} main_session_id={} runtime_cwd={}",
-            agent_id,
-            resolved_project_id,
-            runtime_state.project_id,
-            session_id,
-            runtime_state.runtime_cwd.as_deref().unwrap_or("<none>"),
-        ),
-    );
+            let connection = database::open_connection()?;
+            session_records::bind_session_context(
+                &connection,
+                &session_id,
+                session_records::SessionContextBinding {
+                    project_id: Some(resolved_project_id.as_str()),
+                    session_kind: Some(session_records::SESSION_KIND_AGENT_MAIN),
+                    worker_type: Some("agent"),
+                    worker_id: Some(agent_id.as_str()),
+                    agent_id: Some(agent_id.as_str()),
+                    role_instance_id: None,
+                    task_id: None,
+                    workflow_id: None,
+                    lane_id: None,
+                    assignment_id: None,
+                    runtime_cwd: runtime_state
+                        .runtime_cwd
+                        .as_deref()
+                        .map(std::path::Path::new),
+                },
+            )?;
 
-    let session_context = find_session_context_for_session(&session_id)?;
+            state.log(
+                "info",
+                "agent.session.ensure",
+                &format!(
+                    "ensure_agent_session agent={} requested_project={} runtime_project={} main_session_id={} runtime_cwd={} attempt={}",
+                    agent_id,
+                    resolved_project_id,
+                    runtime_state.project_id,
+                    session_id,
+                    runtime_state.runtime_cwd.as_deref().unwrap_or("<none>"),
+                    attempt + 1,
+                ),
+            );
 
-    if session_has_terminal_attachment(&state, &session_id)? {
-        let record = load_detail_session_record_for_state(
-            state.inner(),
-            &session_context.session_dir,
-            &session_id,
-            false,
-        )?;
-        state.log(
-            "info",
-            "agent.session.loaded",
-            &format!(
-                "Loaded attached agent session {} for agent {} in project {}",
-                record.id, agent_id, resolved_project_id,
-            ),
-        );
-        let _ = app_events::emit_session_change(&app, "sessions.ensure_agent", [record.id.clone()]);
-        return Ok(record);
+            let session_context = find_session_context_for_session(&session_id)?;
+
+            if session_has_terminal_attachment(&state, &session_id)? {
+                let record = load_detail_session_record_for_state(
+                    state.inner(),
+                    &session_context.session_dir,
+                    &session_id,
+                    false,
+                )?;
+                state.log(
+                    "info",
+                    "agent.session.loaded",
+                    &format!(
+                        "Loaded attached agent session {} for agent {} in project {}",
+                        record.id, agent_id, resolved_project_id,
+                    ),
+                );
+                let _ = app_events::emit_session_change(
+                    &app,
+                    "sessions.ensure_agent",
+                    [record.id.clone()],
+                );
+                return Ok(record);
+            }
+
+            state.set_session_subscription(&session_id, true)?;
+            let runtime = ensure_runtime(
+                &state.session_runtimes,
+                app.clone(),
+                context.project_root.clone(),
+                session_context.session_dir.clone(),
+                &session_id,
+            )?;
+            runtime.set_subscribed(true);
+
+            let record = load_detail_session_record_for_state(
+                state.inner(),
+                &session_context.session_dir,
+                &session_id,
+                true,
+            )?;
+            state.log(
+                "info",
+                "agent.session.loaded",
+                &format!(
+                    "Loaded agent session {} for agent {} in project {}",
+                    record.id, agent_id, resolved_project_id,
+                ),
+            );
+            let _ =
+                app_events::emit_session_change(&app, "sessions.ensure_agent", [record.id.clone()]);
+            Ok(record)
+        })();
+
+        match result {
+            Ok(record) => return Ok(record),
+            Err(error) if attempt == 0 && should_retry_agent_session_recovery(&error) => {
+                state.log(
+                    "warn",
+                    "agent.session.ensure.retry",
+                    &format!(
+                        "Retrying agent session recovery for {} in {} after load failure: {}",
+                        agent_id, resolved_project_id, error,
+                    ),
+                );
+                last_error = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
     }
 
-    state.set_session_subscription(&session_id, true)?;
-    let runtime = ensure_runtime(
-        &state.session_runtimes,
-        app.clone(),
-        context.project_root,
-        session_context.session_dir.clone(),
-        &session_id,
-    )?;
-    runtime.set_subscribed(true);
-
-    let record = load_detail_session_record_for_state(
-        state.inner(),
-        &session_context.session_dir,
-        &session_id,
-        true,
-    )?;
-    state.log(
-        "info",
-        "agent.session.loaded",
-        &format!(
-            "Loaded agent session {} for agent {} in project {}",
-            record.id, agent_id, resolved_project_id,
-        ),
-    );
-    let _ = app_events::emit_session_change(&app, "sessions.ensure_agent", [record.id.clone()]);
-    Ok(record)
+    Err(last_error.unwrap_or_else(|| {
+        format!(
+            "Unable to recover agent session for {} in {}",
+            agent_id, resolved_project_id,
+        )
+    }))
 }
 
 #[tauri::command]

@@ -2629,16 +2629,11 @@ pub(crate) fn activate_queued_agent_assignment_for_queue_entry(
     session_id: &str,
     runtime_cwd: &str,
 ) -> Result<(), String> {
-    let (
-        Some(task_id),
-        Some(workflow_id),
-        Some(lane_id),
-    ) = (
+    let (Some(task_id), Some(workflow_id), Some(lane_id)) = (
         entry.source_task_id.as_deref(),
         entry.source_workflow_id.as_deref(),
         entry.source_lane_id.as_deref(),
-    )
-    else {
+    ) else {
         return Ok(());
     };
 
@@ -2658,7 +2653,15 @@ pub(crate) fn activate_queued_agent_assignment_for_queue_entry(
               AND worker_id = ?7
               AND status = 'queued'
             "#,
-            params![task_id, session_id, runtime_cwd, now, workflow_id, lane_id, entry.agent_id],
+            params![
+                task_id,
+                session_id,
+                runtime_cwd,
+                now,
+                workflow_id,
+                lane_id,
+                entry.agent_id
+            ],
         )
         .map_err(|error| {
             format!(
@@ -4384,9 +4387,7 @@ pub fn mark_task_needs_work(
             .find(|candidate| candidate.id == target_lane_id)
             .cloned()
             .ok_or_else(|| {
-                format!(
-                    "Needs Work target lane {target_lane_id} does not exist for task {task_id}"
-                )
+                format!("Needs Work target lane {target_lane_id} does not exist for task {task_id}")
             })?;
         let now = now_iso();
         let normalized_notes = normalize_optional(notes);
@@ -4410,9 +4411,9 @@ pub fn mark_task_needs_work(
             &now,
         )?;
         move_task_to_specific_lane(connection, &task, &target_lane, &now)?;
-        return Ok(ReviewReworkAction::Relaned(
-            tasks::get_task_context(connection, task_id)?,
-        ));
+        return Ok(ReviewReworkAction::Relaned(tasks::get_task_context(
+            connection, task_id,
+        )?));
     }
 
     let reactivated_assignment = reactivate_task_lane_assignment(
@@ -4575,9 +4576,9 @@ pub fn send_lane_back_for_work(
         ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL => {
             mark_task_needs_work(connection, project_root, session_dir, task_id, None)
         }
-        ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION => {
-            Ok(ReviewReworkAction::Reactivated(resume_task_lane(connection, task_id)?))
-        }
+        ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION => Ok(ReviewReworkAction::Reactivated(
+            resume_task_lane(connection, task_id)?,
+        )),
         _ => Err(format!("Task {task_id} is not paused for user review")),
     }
 }
@@ -5315,14 +5316,7 @@ fn update_open_lane_run(
     now: &str,
 ) -> Result<(), String> {
     update_open_lane_run_with_summary(
-        connection,
-        task_id,
-        lane_id,
-        session_id,
-        result,
-        None,
-        notes,
-        now,
+        connection, task_id, lane_id, session_id, result, None, notes, now,
     )
 }
 
@@ -6010,8 +6004,9 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
 }
 
 fn normalize_lane_summary(value: Option<String>) -> Result<String, String> {
-    let summary = normalize_optional(value)
-        .ok_or_else(|| "summary: A lane summary is required when closing a lane transition.".to_string())?;
+    let summary = normalize_optional(value).ok_or_else(|| {
+        "summary: A lane summary is required when closing a lane transition.".to_string()
+    })?;
     if summary.chars().count() > MAX_LANE_SUMMARY_LENGTH {
         return Err(format!(
             "summary: Lane summaries must be {} characters or fewer.",
@@ -6636,9 +6631,14 @@ mod tests {
         assert!(prompt.contains(
             "- mark_mail_read(taskId?, deliveryIds?): After you read and handle unread mail"
         ));
-        assert!(prompt.contains("- complete_lane_as_success(task_id, summary, notes?): Call this tool"));
-        assert!(prompt.contains("- complete_lane_as_failure(task_id, summary, notes?): Call this tool"));
-        assert!(prompt.contains("- request_user_intervention(task_id, summary, notes?): Call this tool"));
+        assert!(
+            prompt.contains("- complete_lane_as_success(task_id, summary, notes?): Call this tool")
+        );
+        assert!(
+            prompt.contains("- complete_lane_as_failure(task_id, summary, notes?): Call this tool")
+        );
+        assert!(prompt
+            .contains("- request_user_intervention(task_id, summary, notes?): Call this tool"));
         assert!(prompt
             .contains("You must end this lane by invoking exactly one Orchestra completion tool"));
         assert!(prompt.contains("Every completion tool requires a concise lane summary"));
@@ -7295,7 +7295,8 @@ mod tests {
             Some("assigned_to_user")
         );
 
-        let mut awaiting_approval = build_test_task_detail("in_review", "user", Some("lane-review"));
+        let mut awaiting_approval =
+            build_test_task_detail("in_review", "user", Some("lane-review"));
         awaiting_approval.active_lane_assignment = Some(build_test_task_lane_assignment(
             ASSIGNMENT_STATUS_PAUSED_BY_USER,
             Some("success"),
@@ -7305,7 +7306,8 @@ mod tests {
             None
         );
 
-        let mut awaiting_intervention = build_test_task_detail("in_review", "user", Some("lane-review"));
+        let mut awaiting_intervention =
+            build_test_task_detail("in_review", "user", Some("lane-review"));
         awaiting_intervention.active_lane_assignment = Some(build_test_task_lane_assignment(
             ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL,
             Some("needs_user"),
@@ -7439,7 +7441,10 @@ mod tests {
             Some(session_id.as_str())
         );
         assert_eq!(awaiting_review.lane_runs.len(), 1);
-        assert_eq!(awaiting_review.lane_runs[0].summary.as_deref(), Some("Ready for review"));
+        assert_eq!(
+            awaiting_review.lane_runs[0].summary.as_deref(),
+            Some("Ready for review")
+        );
         assert!(awaiting_review.lane_runs[0].completed_at.is_some());
         assert_eq!(
             awaiting_review
@@ -7468,13 +7473,9 @@ mod tests {
             )
             .expect("assignment status should simulate stale paused approval state");
 
-        let ReviewReworkAction::Reactivated(reactivated_assignment) = send_lane_back_for_work(
-            &mut connection,
-            &project_root,
-            &session_dir,
-            &task.id,
-        )
-        .expect("lane should reactivate for rework")
+        let ReviewReworkAction::Reactivated(reactivated_assignment) =
+            send_lane_back_for_work(&mut connection, &project_root, &session_dir, &task.id)
+                .expect("lane should reactivate for rework")
         else {
             panic!("needs-work fallback should reactivate the same assignment");
         };
@@ -7539,9 +7540,15 @@ mod tests {
         assert_eq!(approved.status, "completed");
         assert!(approved.active_lane_assignment.is_none());
         assert_eq!(approved.lane_runs.len(), 2);
-        assert_eq!(approved.lane_runs[0].summary.as_deref(), Some("Ready for review"));
+        assert_eq!(
+            approved.lane_runs[0].summary.as_deref(),
+            Some("Ready for review")
+        );
         assert_eq!(approved.lane_runs[1].result, "success");
-        assert_eq!(approved.lane_runs[1].summary.as_deref(), Some("Ready again"));
+        assert_eq!(
+            approved.lane_runs[1].summary.as_deref(),
+            Some("Ready again")
+        );
         assert!(approved.lane_runs[1].completed_at.is_some());
         let completed_ops = role_runtime::get_role_operations(&connection, &role.id)
             .expect("role operations should load after approval");
@@ -7693,13 +7700,9 @@ mod tests {
             Some("waiting")
         );
 
-        let ReviewReworkAction::Reactivated(resumed_assignment) = send_lane_back_for_work(
-            &mut connection,
-            &project_root,
-            &session_dir,
-            &task.id,
-        )
-        .expect("lane should resume after user intervention")
+        let ReviewReworkAction::Reactivated(resumed_assignment) =
+            send_lane_back_for_work(&mut connection, &project_root, &session_dir, &task.id)
+                .expect("lane should resume after user intervention")
         else {
             panic!("user intervention resume should reactivate the same assignment");
         };
@@ -8111,21 +8114,15 @@ mod tests {
             )
             .expect("review-paused assignment should insert");
 
-        let ReviewReworkAction::Relaned(relaned) = mark_task_needs_work(
-            &mut connection,
-            &project_root,
-            &session_dir,
-            &task.id,
-            None,
-        )
-        .expect("Needs Work should move the task to the configured lane")
+        let ReviewReworkAction::Relaned(relaned) =
+            mark_task_needs_work(&mut connection, &project_root, &session_dir, &task.id, None)
+                .expect("Needs Work should move the task to the configured lane")
         else {
             panic!("configured Needs Work should re-lane the task");
         };
         assert_eq!(relaned.current_lane_id.as_deref(), Some("lane-fix"));
         assert_eq!(relaned.status, "ready");
         assert!(relaned.active_lane_assignment.is_none());
-
     }
 
     #[test]
@@ -8319,7 +8316,10 @@ mod tests {
             None,
         )
         .expect("re-lane without a note should still move the task");
-        assert_eq!(relaned_without_note.current_lane_id.as_deref(), Some("lane-implement"));
+        assert_eq!(
+            relaned_without_note.current_lane_id.as_deref(),
+            Some("lane-implement")
+        );
         assert_eq!(relaned_without_note.comments.len(), 1);
         assert_eq!(
             relaned_without_note.comments[0].message,
@@ -9585,9 +9585,15 @@ mod tests {
             .next()
             .expect("candidate should exist");
 
-        let updated =
-            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, Some("Completed role lane".into()), None)
-                .expect("lane should complete");
+        let updated = complete_lane_as_success(
+            &mut connection,
+            &root,
+            &session_dir,
+            &task.id,
+            Some("Completed role lane".into()),
+            None,
+        )
+        .expect("lane should complete");
         assert_eq!(updated.status, "completed");
         assert!(updated.active_lane_assignment.is_none());
 
@@ -9966,9 +9972,15 @@ mod tests {
             .expect("agent assignment should expose a runtime cwd");
         assert!(Path::new(runtime_cwd).exists());
 
-        let updated =
-            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, Some("Completed agent lane".into()), None)
-                .expect("agent lane should complete");
+        let updated = complete_lane_as_success(
+            &mut connection,
+            &root,
+            &session_dir,
+            &task.id,
+            Some("Completed agent lane".into()),
+            None,
+        )
+        .expect("agent lane should complete");
         assert_eq!(updated.status, "completed");
         assert!(updated.active_lane_assignment.is_none());
         assert_eq!(
@@ -10095,9 +10107,15 @@ mod tests {
             Some(root.display().to_string().as_str()),
         );
 
-        let updated =
-            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, Some("Completed archived agent lane".into()), None)
-                .expect("role lane should complete");
+        let updated = complete_lane_as_success(
+            &mut connection,
+            &root,
+            &session_dir,
+            &task.id,
+            Some("Completed archived agent lane".into()),
+            None,
+        )
+        .expect("role lane should complete");
         assert_eq!(updated.status, "completed");
         assert_eq!(
             session_list::load_hidden_session_reason(&connection, "session-role-complete")
@@ -10214,9 +10232,15 @@ mod tests {
             Some(root.display().to_string().as_str()),
         );
 
-        let updated =
-            complete_lane_as_success(&mut connection, &root, &session_dir, &task.id, Some("Completed whip candidate lane".into()), None)
-                .expect("agent lane should complete");
+        let updated = complete_lane_as_success(
+            &mut connection,
+            &root,
+            &session_dir,
+            &task.id,
+            Some("Completed whip candidate lane".into()),
+            None,
+        )
+        .expect("agent lane should complete");
         assert_eq!(updated.status, "completed");
         assert_eq!(
             session_list::load_hidden_session_reason(&connection, "session-agent-complete")

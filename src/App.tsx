@@ -2524,6 +2524,29 @@ export function App() {
     }));
   }, []);
 
+  const migrateDraftMessage = useCallback(
+    (fromSessionId: string | null, toSessionId: string | null, fallbackDraft = "") => {
+      if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) {
+        return;
+      }
+
+      setDraftMessages((current) => {
+        const previousDraft = current[fromSessionId] ?? fallbackDraft;
+        if (!previousDraft || current[toSessionId]) {
+          return current;
+        }
+
+        const next = {
+          ...current,
+          [toSessionId]: previousDraft,
+        };
+        delete next[fromSessionId];
+        return next;
+      });
+    },
+    [],
+  );
+
   const handleSessionScrollLockChange = useCallback(
     (lockedToBottom: boolean) => {
       setSessionScrollState((current) =>
@@ -3948,13 +3971,15 @@ export function App() {
         if (cancelled || !session) {
           return;
         }
+        const previousVisibleChatSessionId =
+          chatSessionIdStateRef.current ?? lastKnownChatSessionIdRef.current;
         console.info("[orchestra][chat-load:resolved]", {
           agentId: selectedChatAgentId,
           activeProjectId: activeProject?.id ?? null,
           activeProjectSlug: activeProject?.slug ?? null,
           loadedSessionId: session.id,
           loadedSessionTitle: session.title,
-          previousVisibleChatSessionId: chatSessionId,
+          previousVisibleChatSessionId,
           selectedSnapshotMainSessionId:
             selectedChatAgentSnapshot?.runtimeState.mainSessionId ?? null,
         });
@@ -3965,6 +3990,11 @@ export function App() {
             : current,
         );
         mergeSessionRecord(session, { select: false });
+        migrateDraftMessage(
+          previousVisibleChatSessionId,
+          session.id,
+          lastKnownChatSessionDraftRef.current,
+        );
         setChatSessionId(session.id);
         chatSessionAgentIdRef.current = selectedChatAgentId;
         lastKnownChatSessionRef.current = session;
@@ -3991,10 +4021,11 @@ export function App() {
         const fallbackAgentId =
           chatSessionAgentIdRef.current ??
           lastKnownChatSessionAgentIdRef.current;
+        const recoveryKey = fallbackSessionId ?? `agent:${selectedChatAgentId}`;
         const now = Date.now();
         const currentRecoveryMiss = chatSessionRecoveryMissRef.current;
         const recoveryStartedAt =
-          currentRecoveryMiss?.sessionId === fallbackSessionId
+          currentRecoveryMiss?.sessionId === recoveryKey
             ? currentRecoveryMiss.startedAt
             : now;
 
@@ -4003,16 +4034,13 @@ export function App() {
             activePage: activePageRef.current,
             selectedAgentId: selectedChatAgentId,
             fallbackAgentId,
-            fallbackSessionId,
             errorCode: uiError.code,
           })
         ) {
-          chatSessionRecoveryMissRef.current = fallbackSessionId
-            ? {
-                sessionId: fallbackSessionId,
-                startedAt: recoveryStartedAt,
-              }
-            : null;
+          chatSessionRecoveryMissRef.current = {
+            sessionId: recoveryKey,
+            startedAt: recoveryStartedAt,
+          };
           setSessionActionError((current) =>
             current && isPassiveSessionLoadOperation(current.error.operation)
               ? null
@@ -4054,6 +4082,7 @@ export function App() {
     chatSessionId,
     isDetachedWindow,
     mergeSessionRecord,
+    migrateDraftMessage,
     selectedChatAgentId,
     selectedChatAgentSnapshot?.runtimeState.mainSessionId,
   ]);

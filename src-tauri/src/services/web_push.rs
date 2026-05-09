@@ -1,10 +1,7 @@
 use std::time::Duration;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use p256::{
-    ecdsa::SigningKey,
-    elliptic_curve::rand_core::OsRng,
-};
+use p256::{ecdsa::SigningKey, elliptic_curve::rand_core::OsRng};
 use rusqlite::{params, Connection};
 use tauri::{AppHandle, Manager};
 use web_push::{
@@ -138,10 +135,7 @@ fn load_eligible_web_push_targets(
 
     let rows = statement
         .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-            ))
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
         .map_err(|error| format!("Unable to query remote web push targets: {error}"))?;
 
@@ -182,11 +176,8 @@ fn send_web_push_message(
     signature_builder.add_claim("sub", VAPID_SUBJECT);
     let signature = signature_builder.build()?;
 
-    let payload = serde_json::to_vec(&WebPushNotificationPayload {
-        version: 1,
-        intent,
-    })
-    .map_err(|_| WebPushError::Unspecified)?;
+    let payload = serde_json::to_vec(&WebPushNotificationPayload { version: 1, intent })
+        .map_err(|_| WebPushError::Unspecified)?;
 
     let mut message_builder = WebPushMessageBuilder::new(subscription);
     message_builder.set_ttl(60 * 60 * 24);
@@ -233,13 +224,9 @@ where
     for target in targets {
         match send(&target, intent) {
             Ok(()) => delivered += 1,
-            Err(WebPushError::EndpointNotValid(_))
-            | Err(WebPushError::EndpointNotFound(_)) => {
+            Err(WebPushError::EndpointNotValid(_)) | Err(WebPushError::EndpointNotFound(_)) => {
                 let _ = remote_access::set_device_push_token(connection, &target.device_id, None);
-                failures.push(format!(
-                    "{}:subscription_invalid",
-                    target.device_id
-                ));
+                failures.push(format!("{}:subscription_invalid", target.device_id));
             }
             Err(error) => failures.push(format!(
                 "{}:{}",
@@ -355,8 +342,16 @@ mod tests {
     fn load_targets_skips_active_clients_and_non_web_push_tokens() {
         let connection = Connection::open_in_memory().expect("db should open");
         database::apply_migrations(&connection).expect("migrations should apply");
-        seed_device(&connection, "device-active", Some(&stored_subscription_json()));
-        seed_device(&connection, "device-idle", Some(&stored_subscription_json()));
+        seed_device(
+            &connection,
+            "device-active",
+            Some(&stored_subscription_json()),
+        );
+        seed_device(
+            &connection,
+            "device-idle",
+            Some(&stored_subscription_json()),
+        );
         seed_device(&connection, "device-legacy", Some("native-token"));
 
         let state = AppState::new(tool_bridge::dummy_tool_bridge_config(
@@ -372,8 +367,8 @@ mod tests {
             )
             .expect("client should register");
 
-        let targets = load_eligible_web_push_targets(&connection, &state)
-            .expect("targets should load");
+        let targets =
+            load_eligible_web_push_targets(&connection, &state).expect("targets should load");
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].device_id, "device-idle");
     }
@@ -382,8 +377,16 @@ mod tests {
     fn dispatch_clears_stale_subscriptions_without_failing_other_targets() {
         let connection = Connection::open_in_memory().expect("db should open");
         database::apply_migrations(&connection).expect("migrations should apply");
-        seed_device(&connection, "device-stale", Some(&stored_subscription_json()));
-        seed_device(&connection, "device-good", Some(&stored_subscription_json()));
+        seed_device(
+            &connection,
+            "device-stale",
+            Some(&stored_subscription_json()),
+        );
+        seed_device(
+            &connection,
+            "device-good",
+            Some(&stored_subscription_json()),
+        );
 
         let targets = vec![
             WebPushTarget {

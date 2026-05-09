@@ -541,8 +541,8 @@ mod tests {
             assert_eq!(audio_attachment.preview_text, None);
             assert_eq!(audio_attachment.image_data_url, None);
 
-            let (_, stored_zip_bytes) =
-                load_attachment_bytes(&connection, &zip_attachment.id).expect("zip bytes should load");
+            let (_, stored_zip_bytes) = load_attachment_bytes(&connection, &zip_attachment.id)
+                .expect("zip bytes should load");
             let (_, stored_audio_bytes) = load_attachment_bytes(&connection, &audio_attachment.id)
                 .expect("audio bytes should load");
             assert_eq!(stored_zip_bytes, zip_bytes);

@@ -66,13 +66,21 @@ describe("session error behavior helpers", () => {
     ).toBe(false);
   });
 
-  it("suppresses chat recovery not-found errors while the same agent fallback session is still visible", () => {
+  it("suppresses chat recovery not-found errors for the selected agent while recovery is still possible", () => {
     expect(
       shouldSuppressChatSessionRecoveryError({
         activePage: "chat",
         selectedAgentId: "agent-1",
         fallbackAgentId: "agent-1",
-        fallbackSessionId: "session-1",
+        errorCode: "not_found",
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldSuppressChatSessionRecoveryError({
+        activePage: "chat",
+        selectedAgentId: "agent-1",
+        fallbackAgentId: null,
         errorCode: "not_found",
       }),
     ).toBe(true);
@@ -82,7 +90,6 @@ describe("session error behavior helpers", () => {
         activePage: "chat",
         selectedAgentId: "agent-1",
         fallbackAgentId: "agent-2",
-        fallbackSessionId: "session-1",
         errorCode: "not_found",
       }),
     ).toBe(false);
@@ -90,9 +97,8 @@ describe("session error behavior helpers", () => {
     expect(
       shouldSuppressChatSessionRecoveryError({
         activePage: "chat",
-        selectedAgentId: "agent-1",
+        selectedAgentId: null,
         fallbackAgentId: "agent-1",
-        fallbackSessionId: null,
         errorCode: "not_found",
       }),
     ).toBe(false);

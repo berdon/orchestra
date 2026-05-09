@@ -2602,9 +2602,7 @@ fn ensure_task_lane_runs_table_columns(connection: &Connection) -> Result<(), St
     if !columns.contains("summary") {
         connection
             .execute("ALTER TABLE task_lane_runs ADD COLUMN summary TEXT", [])
-            .map_err(|error| {
-                format!("Unable to add summary column to task_lane_runs: {error}")
-            })?;
+            .map_err(|error| format!("Unable to add summary column to task_lane_runs: {error}"))?;
     }
 
     Ok(())

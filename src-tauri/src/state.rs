@@ -14,8 +14,8 @@ use tokio::sync::{broadcast, oneshot};
 
 use crate::{
     models::{
-        AuthorizationContext, LogEntry, RemoteClientRecord, RemoteDeviceRecord, RemoteEventEnvelope,
-        SessionControlOperationState,
+        AuthorizationContext, LogEntry, RemoteClientRecord, RemoteDeviceRecord,
+        RemoteEventEnvelope, SessionControlOperationState,
     },
     services::{
         agent_terminal::AgentTerminalSession, channels::ChannelRuntimeHandle,
