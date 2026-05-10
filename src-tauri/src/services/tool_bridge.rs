@@ -2510,6 +2510,7 @@ fn invoke_bridge_command(
             let mut writable = database::open_connection()?;
             let previous_assignment =
                 crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
+            let app_handle = config.clone_app_handle();
             let result = crate::services::task_runtime::complete_lane_as_failure_with_app(
                 &mut writable,
                 &context.project_root,
@@ -2518,14 +2519,14 @@ fn invoke_bridge_command(
                 Some(summary),
                 actually_failed,
                 notes,
-                None,
+                app_handle.as_ref(),
                 authorization,
             )?;
             let task = result.task;
             if !result.transitioned {
-                if let Some(app) = config.clone_app_handle() {
+                if let Some(app) = app_handle.as_ref() {
                     let _ = crate::services::app_events::emit_task_change(
-                        &app,
+                        app,
                         "task.transition.continue_working",
                         [task.id.clone()],
                     );
@@ -2548,16 +2549,16 @@ fn invoke_bridge_command(
                     &task,
                 )
             {
-                if let Some(app) = config.clone_app_handle() {
+                if let Some(app) = app_handle.as_ref() {
                     live_sessions::schedule_session_retirement(
-                        app,
+                        app.clone(),
                         session_id,
                         Duration::from_millis(250),
                         "tool.complete_lane_as_failure",
                     );
                 }
             }
-            if let Some(app) = config.clone_app_handle() {
+            if let Some(app) = app_handle.as_ref() {
                 let mut changed_task_ids = vec![task.id.clone()];
                 changed_task_ids.extend(
                     auto_dispatches
@@ -2565,7 +2566,7 @@ fn invoke_bridge_command(
                         .map(|outcome| outcome.task_id.clone()),
                 );
                 let _ = crate::services::app_events::emit_task_change(
-                    &app,
+                    app,
                     crate::services::task_runtime::task_transition_event_reason("failure", &task),
                     changed_task_ids,
                 );
@@ -2575,7 +2576,7 @@ fn invoke_bridge_command(
                     .collect::<Vec<_>>();
                 if !session_ids.is_empty() {
                     let _ = crate::services::app_events::emit_session_change(
-                        &app,
+                        app,
                         "task.transition.next_assignment",
                         session_ids,
                     );
@@ -2601,6 +2602,7 @@ fn invoke_bridge_command(
             let mut writable = database::open_connection()?;
             let previous_assignment =
                 crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
+            let app_handle = config.clone_app_handle();
             let result = crate::services::task_runtime::request_user_intervention_with_app(
                 &mut writable,
                 &context.project_root,
@@ -2609,14 +2611,14 @@ fn invoke_bridge_command(
                 Some(summary),
                 actually_blocked,
                 notes,
-                None,
+                app_handle.as_ref(),
                 authorization,
             )?;
             let task = result.task;
             if !result.transitioned {
-                if let Some(app) = config.clone_app_handle() {
+                if let Some(app) = app_handle.as_ref() {
                     let _ = crate::services::app_events::emit_task_change(
-                        &app,
+                        app,
                         "task.transition.continue_working",
                         [task.id.clone()],
                     );
@@ -2631,18 +2633,18 @@ fn invoke_bridge_command(
                     &task,
                 )
             {
-                if let Some(app) = config.clone_app_handle() {
+                if let Some(app) = app_handle.as_ref() {
                     live_sessions::schedule_session_retirement(
-                        app,
+                        app.clone(),
                         session_id,
                         Duration::from_millis(250),
                         "tool.request_user_intervention",
                     );
                 }
             }
-            if let Some(app) = config.clone_app_handle() {
+            if let Some(app) = app_handle.as_ref() {
                 let _ = crate::services::app_events::emit_task_change(
-                    &app,
+                    app,
                     crate::services::task_runtime::task_transition_event_reason(
                         "needs_user",
                         &task,
@@ -3240,9 +3242,31 @@ mod tests {
     use std::{
         env,
         path::PathBuf,
-        sync::{Arc, Mutex},
+        sync::{Arc, Mutex, OnceLock},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    static TOOL_BRIDGE_TEST_APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+    #[ctor::ctor]
+    fn initialize_tool_bridge_test_app_handle() {
+        let tool_bridge = Arc::new(dummy_bridge_config("tool-bridge-tests-main-thread"));
+        let app = tauri::Builder::default()
+            .manage(crate::state::AppState::new(tool_bridge.clone()))
+            .build(crate::tauri_context())
+            .expect("main-thread tool bridge test app should build");
+        let leaked_app = Box::leak(Box::new(app));
+        let app_handle = leaked_app.handle().clone();
+        tool_bridge.attach_app_handle(app_handle.clone());
+        let _ = TOOL_BRIDGE_TEST_APP_HANDLE.set(app_handle);
+    }
+
+    fn test_app_handle() -> tauri::AppHandle {
+        TOOL_BRIDGE_TEST_APP_HANDLE
+            .get()
+            .expect("main-thread tool bridge test app should exist")
+            .clone()
+    }
 
     fn unique_temp_db(label: &str) -> PathBuf {
         let suffix = format!(
@@ -4932,6 +4956,52 @@ mod tests {
             })
             .expect("reminder count should query");
         assert_eq!(stored_count, 1);
+    }
+
+    #[test]
+    fn complete_lane_as_failure_false_uses_the_bridge_app_handle_for_follow_up_delivery() {
+        with_temp_home("bridge-complete-lane-false-follow-up", || {
+            let mut connection = database::open_connection().expect("database should open");
+            let now = crate::state::now_iso();
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                    params![now.as_str()],
+                )
+                .expect("default project should seed");
+            let (_agent, task) = seed_bridge_task_todo_context(
+                &mut connection,
+                "Bridge continue-working completion task",
+            );
+
+            let config = dummy_bridge_config("bridge-complete-lane-false-follow-up");
+            config.attach_app_handle(test_app_handle());
+            let result = invoke_bridge_command(
+                &config,
+                &connection,
+                "complete_lane_as_failure",
+                None,
+                Some("worker-session"),
+                json!({
+                    "taskId": task.id,
+                    "summary": "Finished this slice.",
+                    "actuallyFailed": false,
+                    "notes": "Keep going.",
+                }),
+            )
+            .expect("bridge false-path completion should succeed");
+
+            assert_eq!(
+                result.get("status").and_then(Value::as_str),
+                Some("in_progress")
+            );
+            assert_eq!(
+                result
+                    .pointer("/activeLaneAssignment/status")
+                    .and_then(Value::as_str),
+                Some("active")
+            );
+        });
     }
 
     #[test]
