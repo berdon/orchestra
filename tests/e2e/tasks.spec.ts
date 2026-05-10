@@ -4383,25 +4383,11 @@ test("task detail shows open session for active or historical task sessions and 
     };
     testWindow.__orchestraTestOpenTaskDetail?.("task-session-linked");
   });
-  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task with active session");
-  await page.locator('[data-role="task-detail-tab-runtime"]').click();
-  await expect(page.locator('[data-role="task-runtime-assignment"]')).toContainText("session-task-linked");
-  await expect(page.locator('[data-role="task-runtime-session-link"]')).toBeVisible();
-  await expect(page.locator('[data-role="task-open-session"]')).toBeVisible();
-  await page.locator('[data-role="task-open-session"]').click();
-  await expect
-    .poll(async () => page.evaluate(() => window.location.search))
-    .toContain("page=sessions");
-  await expect
-    .poll(async () => page.evaluate(() => window.location.search))
-    .toContain("selectedSessionId=session-task-linked");
-  await expect(
-    page.locator('.session-list-link--active[data-role="session-link"]'),
-  ).toHaveAttribute("data-session-id", "session-task-linked");
-  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", "session-task-linked");
-  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Active task session");
+  const primaryHeaderOpenSession = page.locator('[data-role="task-detail-primary-header"] [data-role="task-open-session"]');
 
-  await page.getByRole("button", { name: "Tasks" }).click();
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task with active session");
+  await expect(primaryHeaderOpenSession).toBeVisible();
+
   await page.evaluate(() => {
     const testWindow = window as typeof window & {
       __orchestraTestOpenTaskDetail?: (taskId: string) => void;
@@ -4409,12 +4395,8 @@ test("task detail shows open session for active or historical task sessions and 
     testWindow.__orchestraTestOpenTaskDetail?.("task-session-history");
   });
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task with historical sessions");
-  await expect(page.locator('[data-role="task-open-session"]')).toBeVisible();
-  await page.locator('[data-role="task-open-session"]').click();
-  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", "session-task-history-latest");
-  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Latest task session");
+  await expect(primaryHeaderOpenSession).toBeVisible();
 
-  await page.getByRole("button", { name: "Tasks" }).click();
   await page.evaluate(() => {
     const testWindow = window as typeof window & {
       __orchestraTestOpenTaskDetail?: (taskId: string) => void;
@@ -4422,7 +4404,275 @@ test("task detail shows open session for active or historical task sessions and 
     testWindow.__orchestraTestOpenTaskDetail?.("task-session-missing");
   });
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task without task session history");
-  await expect(page.locator('[data-role="task-open-session"]')).toHaveCount(0);
+  await expect(primaryHeaderOpenSession).toHaveCount(0);
+});
+
+test("task detail opens the latest active historical task session from the primary header", async ({ page }) => {
+  const timestamp = new Date().toISOString();
+
+  await page.addInitScript((nextTimestamp) => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-session-history",
+          projectId: "orchestra",
+          number: "ORC-202",
+          title: "Task with historical sessions",
+          description: null,
+          type: "task",
+          status: "completed",
+          priority: "P2",
+          workflowId: null,
+          currentLaneId: null,
+          assigneeType: "unassigned",
+          assigneeId: null,
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          unreadCommentCount: 0,
+          laneRunCount: 2,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [
+            {
+              id: "lane-run-session-history-1",
+              taskId: "task-session-history",
+              laneId: "lane-plan",
+              sessionId: "session-task-history-earlier",
+              sessionTitle: "Earlier task session",
+              result: "success",
+              notes: null,
+              startedAt: nextTimestamp,
+              completedAt: nextTimestamp,
+            },
+            {
+              id: "lane-run-session-history-2",
+              taskId: "task-session-history",
+              laneId: "lane-implementation",
+              sessionId: "session-task-history-latest",
+              sessionTitle: "Latest task session",
+              result: "success",
+              notes: null,
+              startedAt: nextTimestamp,
+              completedAt: nextTimestamp,
+            },
+          ],
+          activeLaneAssignment: null,
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-task-history-earlier",
+          title: "Earlier task session",
+          status: "active",
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+          subscribed: false,
+          events: [{ id: "session-history-earlier-event", kind: "assistant", message: "Earlier historical session.", timestamp: nextTimestamp }],
+          taskId: "task-session-history",
+          taskNumber: "ORC-202",
+          taskTitle: "Task with historical sessions",
+          workerType: "role",
+          workerName: "Developer",
+        },
+        {
+          id: "session-task-history-latest",
+          title: "Latest task session",
+          status: "active",
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+          subscribed: false,
+          events: [{ id: "session-history-latest-event", kind: "assistant", message: "Latest historical session.", timestamp: nextTimestamp }],
+          taskId: "task-session-history",
+          taskNumber: "ORC-202",
+          taskTitle: "Task with historical sessions",
+          workerType: "role",
+          workerName: "Developer",
+        },
+      ]),
+    );
+  }, timestamp);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __orchestraTestOpenTaskDetail?: (taskId: string) => void;
+    };
+    testWindow.__orchestraTestOpenTaskDetail?.("task-session-history");
+  });
+
+  const primaryHeaderOpenSession = page.locator('[data-role="task-detail-primary-header"] [data-role="task-open-session"]');
+
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task with historical sessions");
+  await expect(primaryHeaderOpenSession).toBeVisible();
+  await primaryHeaderOpenSession.click();
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", "session-task-history-latest");
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Latest task session");
+});
+
+test("task detail compact desktop header shows open session when a task session exists", async ({ page }) => {
+  const timestamp = new Date().toISOString();
+
+  await page.addInitScript((nextTimestamp) => {
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      "orchestra.mock.tasks",
+      JSON.stringify([
+        {
+          id: "task-session-compact-header",
+          projectId: "orchestra",
+          number: "ORC-205",
+          title: "Task with compact header session access",
+          description: Array.from({ length: 80 }, (_, index) => `Compact header line ${index + 1}`).join("\n\n"),
+          type: "task",
+          status: "in_progress",
+          priority: "P1",
+          workflowId: null,
+          currentLaneId: "lane-implementation",
+          assigneeType: "role",
+          assigneeId: "developer",
+          repositoryId: null,
+          repositoryIds: [],
+          parentTaskId: null,
+          archived: false,
+          commentCount: 0,
+          unreadCommentCount: 0,
+          laneRunCount: 1,
+          childCount: 0,
+          completedChildCount: 0,
+          inProgressChildCount: 0,
+          blockedChildCount: 0,
+          blockedByCount: 0,
+          blockingCount: 0,
+          attachmentCount: 0,
+          dependencyBlocked: false,
+          readyForDispatch: false,
+          parent: null,
+          lineage: [],
+          children: [],
+          blockedBy: [],
+          blocking: [],
+          attachments: [],
+          taskRepositories: [],
+          fileReferences: [],
+          comments: [],
+          todos: [],
+          laneRuns: [
+            {
+              id: "lane-run-compact-header-session",
+              taskId: "task-session-compact-header",
+              laneId: "lane-implementation",
+              sessionId: "session-task-compact-header",
+              sessionTitle: "Compact header task session",
+              result: "success",
+              summary: "Finished the compact header flow.",
+              notes: "Finished the compact header flow.",
+              startedAt: nextTimestamp,
+              completedAt: nextTimestamp,
+            },
+          ],
+          activeLaneAssignment: {
+            id: "assignment-compact-header-session",
+            taskId: "task-session-compact-header",
+            workflowId: "workflow-dev",
+            laneId: "lane-implementation",
+            workerType: "role",
+            workerId: "developer",
+            workerName: "Developer",
+            status: "active",
+            sessionId: "session-task-compact-header",
+            sessionTitle: "Compact header task session",
+            runtimeCwd: "/tmp/orchestra/task-session-compact-header",
+            roleQueueEntryId: null,
+            roleInstanceId: null,
+            prompt: "Implement the compact header task.",
+            pendingOutcome: null,
+            completionNotes: null,
+            whipCount: 0,
+            lastWhipAt: null,
+            startedAt: nextTimestamp,
+            completedAt: null,
+            createdAt: nextTimestamp,
+            updatedAt: nextTimestamp,
+          },
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+        },
+      ]),
+    );
+    window.localStorage.setItem(
+      "orchestra.mock.sessions.orchestra",
+      JSON.stringify([
+        {
+          id: "session-task-compact-header",
+          title: "Compact header task session",
+          status: "active",
+          createdAt: nextTimestamp,
+          updatedAt: nextTimestamp,
+          subscribed: false,
+          events: [{ id: "compact-header-event", kind: "assistant", message: "Compact header session ready.", timestamp: nextTimestamp }],
+          taskId: "task-session-compact-header",
+          taskNumber: "ORC-205",
+          taskTitle: "Task with compact header session access",
+          activeTaskId: "task-session-compact-header",
+          activeTaskNumber: "ORC-205",
+          activeTaskTitle: "Task with compact header session access",
+          workerType: "role",
+          workerName: "Developer",
+        },
+      ]),
+    );
+  }, timestamp);
+
+  await page.setViewportSize({ width: 1180, height: 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Tasks" }).click();
+  await page.evaluate(() => {
+    const testWindow = window as typeof window & {
+      __orchestraTestOpenTaskDetail?: (taskId: string) => void;
+    };
+    testWindow.__orchestraTestOpenTaskDetail?.("task-session-compact-header");
+  });
+
+  const compactHeader = page.locator('[data-role="task-detail-compact-header"]');
+  const compactHeaderOpenSession = compactHeader.locator('[data-role="task-open-session"]');
+
+  await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task with compact header session access");
+  await scrollTaskDetailTo(page, 1400);
+  await expect(compactHeader).toHaveAttribute("data-scroll-state", "hidden");
+  await scrollTaskDetailTo(page, 1332);
+  await expect(compactHeader).toHaveAttribute("data-scroll-state", "visible");
+  await expect(compactHeaderOpenSession).toBeVisible();
+  await compactHeaderOpenSession.click();
+  await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", "session-task-compact-header");
+  await expect(page.locator('[data-role="selected-session-title"]')).toContainText("Compact header task session");
 });
 
 test("task detail mobile topbar actions include open session when a task session exists", async ({ page }) => {
@@ -4665,9 +4915,11 @@ test("task detail opens a linked session at the latest message with auto-scroll 
     testWindow.__orchestraTestOpenTaskDetail?.(taskId);
   }, linkedTaskId);
 
+  const primaryHeaderOpenSession = page.locator('[data-role="task-detail-primary-header"] [data-role="task-open-session"]');
+
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task with active session and transcript history");
-  await expect(page.locator('[data-role="task-open-session"]')).toBeVisible();
-  await page.locator('[data-role="task-open-session"]').click();
+  await expect(primaryHeaderOpenSession).toBeVisible();
+  await primaryHeaderOpenSession.click();
 
   const transcript = page.locator('[data-role="session-transcript"]');
   const toggle = page.locator('[data-role="session-scroll-lock-toggle"]');
@@ -4806,9 +5058,11 @@ test("task detail reopens the latest closed historical session before navigation
     testWindow.__orchestraTestOpenTaskDetail?.("task-reopen-history-session");
   });
 
+  const primaryHeaderOpenSession = page.locator('[data-role="task-detail-primary-header"] [data-role="task-open-session"]');
+
   await expect(page.locator('[data-role="task-title-heading"]')).toContainText("Task with reopenable history");
-  await expect(page.locator('[data-role="task-open-session"]')).toBeVisible();
-  await page.locator('[data-role="task-open-session"]').click();
+  await expect(primaryHeaderOpenSession).toBeVisible();
+  await primaryHeaderOpenSession.click();
 
   await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-session-id", "session-reopen-history-latest");
   await expect(page.locator('[data-role="session-chat-panel"]')).toHaveAttribute("data-messageable", "true");
@@ -5472,7 +5726,7 @@ test("task detail can re-lane an approval-paused task into a specific worker lan
   const compactMobileActions = page.locator('[data-role="task-detail-compact-actions-mobile"]');
   await expect(compactMobileActions.getByRole('button', { name: 'Actions' })).toBeVisible();
   await expect(compactHeader.locator('[data-role="toggle-task-relane"]:visible')).toHaveCount(0);
-  await expect(compactHeader.locator('[data-role="task-open-session"]')).toHaveCount(0);
+  await expect(compactHeader.locator('[data-role="task-open-session"]:visible')).toHaveCount(0);
 
   await compactMobileActions.getByRole('button', { name: 'Actions' }).click();
   const compactMobileRootLabels = await compactMobileActions.locator('.task-action-menu__dropdown > button').evaluateAll((nodes) =>

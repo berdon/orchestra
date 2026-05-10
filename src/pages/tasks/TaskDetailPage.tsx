@@ -2077,7 +2077,7 @@ export function TaskDetailPage({
     const desktopActionMenuActions = compact ? compactHeaderActionMenuActions : headerActionMenuActions;
     const mobileActionMenuEntries = compact ? compactHeaderMobileActionMenuEntries : primaryHeaderMobileActionMenuEntries;
     const showDesktopActionRow = canRelane || desktopActionMenuActions.length > 0;
-    const showDesktopHeaderActions = Boolean((!compact && taskOpenSessionTarget) || showDesktopActionRow);
+    const showDesktopHeaderActions = Boolean(taskOpenSessionTarget || showDesktopActionRow);
 
     if (!showDesktopHeaderActions && mobileActionMenuEntries.length === 0) {
       return null;
@@ -2087,7 +2087,7 @@ export function TaskDetailPage({
       <div className="task-detail-header-actions">
         {showDesktopHeaderActions ? (
           <div className="task-detail-header-actions__desktop">
-            {!compact && taskOpenSessionTarget ? (
+            {taskOpenSessionTarget ? (
               <button
                 className="secondary-button"
                 data-role="task-open-session"
