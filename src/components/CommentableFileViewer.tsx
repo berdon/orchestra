@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import hljs from "highlight.js";
 
 import type { AgentSummary, RoleSummary, TaskComment, TaskCommentInput, TaskFileReference, TaskSummary } from "../types";
@@ -24,12 +24,6 @@ interface FloatingCommentState {
   top: number;
   left: number;
   message: string;
-}
-
-interface SelectionCommentAction {
-  anchor: FileCommentAnchor;
-  top: number;
-  left: number;
 }
 
 interface OpenFileCommentDraftDetail {
@@ -92,37 +86,6 @@ function highlightLine(code: string, language: string) {
   }
 }
 
-function lineRowFromNode(node: Node | null): HTMLElement | null {
-  if (!node) {
-    return null;
-  }
-  if (node instanceof HTMLElement) {
-    return node.closest("[data-file-line-row]") as HTMLElement | null;
-  }
-  return node.parentElement?.closest("[data-file-line-row]") as HTMLElement | null;
-}
-
-function lineContentFromRow(row: HTMLElement | null) {
-  return row?.querySelector("[data-file-line-content]") as HTMLElement | null;
-}
-
-function lineNumberFromRow(row: HTMLElement | null) {
-  const value = row?.getAttribute("data-line-number") ?? "";
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function textOffsetWithin(container: HTMLElement, node: Node, offset: number) {
-  try {
-    const range = document.createRange();
-    range.setStart(container, 0);
-    range.setEnd(node, offset);
-    return range.toString().length;
-  } catch {
-    return null;
-  }
-}
-
 function clampOverlayPosition(container: HTMLElement, top: number, left: number, width = 360) {
   return {
     top: Math.max(8, top),
@@ -130,63 +93,16 @@ function clampOverlayPosition(container: HTMLElement, top: number, left: number,
   };
 }
 
-function buildSelectionCommentAction(
-  viewport: HTMLElement,
-  overlay: HTMLElement,
-  reference: TaskFileReference,
-  selection: Selection,
-): SelectionCommentAction | null {
-  if (!selection.rangeCount) {
-    return null;
+function normalizeFileCommentAnchor(anchor: FileCommentAnchor): FileCommentAnchor {
+  if (!anchor.selectedText?.trim()) {
+    return anchor;
   }
-
-  const range = selection.getRangeAt(0);
-  if (range.collapsed || !viewport.contains(range.commonAncestorContainer)) {
-    return null;
-  }
-
-  const startRow = lineRowFromNode(range.startContainer);
-  const endRow = lineRowFromNode(range.endContainer);
-  const startContent = lineContentFromRow(startRow);
-  const endContent = lineContentFromRow(endRow);
-  const startLine = lineNumberFromRow(startRow);
-  const endLine = lineNumberFromRow(endRow);
-  if (!startContent || !endContent || !startLine || !endLine) {
-    return null;
-  }
-
-  const startOffset = textOffsetWithin(startContent, range.startContainer, range.startOffset);
-  const endOffset = textOffsetWithin(endContent, range.endContainer, range.endOffset);
-  if (startOffset == null || endOffset == null) {
-    return null;
-  }
-
-  const selectedText = selection.toString();
-  if (!selectedText.trim()) {
-    return null;
-  }
-
-  const rangeRect = range.getBoundingClientRect();
-  const overlayRect = overlay.getBoundingClientRect();
-  const position = clampOverlayPosition(
-    overlay,
-    rangeRect.top - overlayRect.top - 44,
-    rangeRect.right - overlayRect.left + 8,
-    200,
-  );
 
   return {
-    anchor: {
-      repositoryId: reference.repositoryId,
-      relativePath: reference.relativePath,
-      absolutePath: reference.absolutePath ?? null,
-      lineStart: startLine,
-      lineEnd: endLine,
-      columnStart: startOffset + 1,
-      columnEnd: Math.max(startLine === endLine ? startOffset + 1 : 1, endOffset),
-      selectedText,
-    },
-    ...position,
+    ...anchor,
+    columnStart: null,
+    columnEnd: null,
+    selectedText: null,
   };
 }
 
@@ -205,20 +121,6 @@ function lineCommentCounts(threads: TaskCommentThread[]) {
     }
   }
   return counts;
-}
-
-function buildThreadsByLine(threads: TaskCommentThread[]) {
-  const byLine = new Map<number, TaskCommentThread[]>();
-  for (const thread of threads) {
-    const start = thread.comment.lineStart ?? 0;
-    const end = thread.comment.lineEnd ?? start;
-    for (let line = start; line <= end; line += 1) {
-      const entries = byLine.get(line) ?? [];
-      entries.push(thread);
-      byLine.set(line, entries);
-    }
-  }
-  return byLine;
 }
 
 export const CommentableFileViewer = memo(function CommentableFileViewer({
@@ -246,10 +148,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
   recordInputPerfRender("default-file-viewer");
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const selectionSyncFrameRef = useRef<number | null>(null);
-  const selectionInteractionModeRef = useRef<"pointer" | "keyboard" | null>(null);
   const floatingCommentMessageRef = useRef<HTMLTextAreaElement | null>(null);
-  const [selectionAction, setSelectionAction] = useState<SelectionCommentAction | null>(null);
   const [floatingComment, setFloatingComment] = useState<FloatingCommentState | null>(null);
   const [floatingCommentFocusToken, setFloatingCommentFocusToken] = useState(0);
   const [threadPopover, setThreadPopover] = useState<ThreadPopoverState | null>(null);
@@ -259,7 +158,6 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
   const [editingMessage, setEditingMessage] = useState("");
   const [isMinimized, setIsMinimized] = useState(false);
   const [wrapLines, setWrapLines] = useState(true);
-  const [selectionInteractionActive, setSelectionInteractionActive] = useState(false);
 
   const lines = useMemo(
     () => content.replace(/\r\n/g, "\n").split("\n").map((line, index) => ({
@@ -270,52 +168,15 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
   );
   const fileCommentThreads = useMemo(() => buildFileCommentThreads(comments, reference), [comments, reference]);
   const commentCountsByLine = useMemo(() => lineCommentCounts(fileCommentThreads), [fileCommentThreads]);
-  const commentThreadsByLine = useMemo(() => buildThreadsByLine(fileCommentThreads), [fileCommentThreads]);
-
-  const cancelPendingSelectionSync = useCallback(() => {
-    if (selectionSyncFrameRef.current !== null) {
-      window.cancelAnimationFrame(selectionSyncFrameRef.current);
-      selectionSyncFrameRef.current = null;
-    }
-  }, []);
-
-  const setSelectionInteractionMode = useCallback((mode: "pointer" | "keyboard" | null) => {
-    selectionInteractionModeRef.current = mode;
-    setSelectionInteractionActive(mode !== null);
-    if (mode) {
-      setSelectionAction(null);
-    }
-  }, []);
-
-  const scheduleSelectionSync = useCallback((force = false) => {
-    cancelPendingSelectionSync();
-    selectionSyncFrameRef.current = window.requestAnimationFrame(() => {
-      selectionSyncFrameRef.current = null;
-      const selection = window.getSelection();
-      const overlay = overlayRef.current;
-      const viewport = viewportRef.current;
-      if (!overlay || !viewport || !selection || selection.isCollapsed || !viewport.contains(selection.anchorNode)) {
-        setSelectionAction(null);
-        return;
-      }
-      if (!force && selectionInteractionModeRef.current) {
-        return;
-      }
-      setSelectionAction(buildSelectionCommentAction(viewport, overlay, reference, selection));
-    });
-  }, [cancelPendingSelectionSync, reference]);
 
   useEffect(() => {
-    setSelectionInteractionMode(null);
-    setSelectionAction(null);
     setFloatingComment(null);
     setThreadPopover(null);
     setReplyTargetCommentId(null);
     setReplyMessage("");
     setEditingCommentId(null);
     setEditingMessage("");
-    cancelPendingSelectionSync();
-  }, [cancelPendingSelectionSync, content, reference.absolutePath, reference.id, setSelectionInteractionMode]);
+  }, [content, reference.absolutePath, reference.id]);
 
   useEffect(() => {
     if (!floatingComment || floatingCommentFocusToken === 0) {
@@ -340,12 +201,6 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
   }, [Boolean(floatingComment), floatingCommentFocusToken]);
 
   useEffect(() => {
-    const openSelectionComment = () => {
-      window.requestAnimationFrame(() => {
-        openSelectionCommentFromCurrentSelection();
-      });
-    };
-
     const openFileCommentDraft = (event: Event) => {
       const customEvent = event as CustomEvent<OpenFileCommentDraftDetail>;
       const detail = customEvent.detail;
@@ -354,42 +209,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
         return;
       }
       const position = clampOverlayPosition(overlay, detail.top ?? 72, detail.left ?? 220);
-      openFloatingComment(detail.anchor, position.top, position.left);
-    };
-
-    const syncSelectionAction = () => {
-      scheduleSelectionSync();
-    };
-
-    const finalizeSelectionInteraction = () => {
-      if (selectionInteractionModeRef.current) {
-        setSelectionInteractionMode(null);
-      }
-      scheduleSelectionSync(true);
-    };
-
-    const beginKeyboardSelectionInteraction = (event: KeyboardEvent) => {
-      if (!event.shiftKey) {
-        return;
-      }
-      if (![
-        "ArrowUp",
-        "ArrowDown",
-        "ArrowLeft",
-        "ArrowRight",
-        "Home",
-        "End",
-        "PageUp",
-        "PageDown",
-      ].includes(event.key)) {
-        return;
-      }
-      const viewport = viewportRef.current;
-      const selection = window.getSelection();
-      if (!viewport || !selection?.anchorNode || !viewport.contains(selection.anchorNode)) {
-        return;
-      }
-      setSelectionInteractionMode("keyboard");
+      openFloatingComment(normalizeFileCommentAnchor(detail.anchor), position.top, position.left);
     };
 
     const closeOnOutsidePointer = (event: Event) => {
@@ -402,17 +222,12 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
         closeOverlays();
         return;
       }
-      if ((target as HTMLElement).closest('.file-content-viewer__comment-popover, .file-content-viewer__thread-popover, [data-role="default-file-selection-comment-button"]')) {
+      if ((target as HTMLElement).closest('.file-content-viewer__comment-popover, .file-content-viewer__thread-popover')) {
         return;
       }
       closeOverlays();
     };
 
-    document.addEventListener("selectionchange", syncSelectionAction);
-    document.addEventListener("mouseup", finalizeSelectionInteraction);
-    document.addEventListener("keydown", beginKeyboardSelectionInteraction);
-    document.addEventListener("keyup", finalizeSelectionInteraction);
-    document.addEventListener("orchestra:open-selected-file-comment", openSelectionComment as EventListener);
     document.addEventListener("orchestra:open-file-comment-draft", openFileCommentDraft as EventListener);
     document.addEventListener("pointerdown", closeOnOutsidePointer);
     (window as typeof window & { __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void }).__orchestraOpenFileCommentDraft = (detail) => {
@@ -420,34 +235,19 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
     };
 
     return () => {
-      cancelPendingSelectionSync();
-      document.removeEventListener("selectionchange", syncSelectionAction);
-      document.removeEventListener("mouseup", finalizeSelectionInteraction);
-      document.removeEventListener("keydown", beginKeyboardSelectionInteraction);
-      document.removeEventListener("keyup", finalizeSelectionInteraction);
-      document.removeEventListener("orchestra:open-selected-file-comment", openSelectionComment as EventListener);
       document.removeEventListener("orchestra:open-file-comment-draft", openFileCommentDraft as EventListener);
       document.removeEventListener("pointerdown", closeOnOutsidePointer);
       delete (window as typeof window & { __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void }).__orchestraOpenFileCommentDraft;
     };
-  }, [cancelPendingSelectionSync, reference, scheduleSelectionSync, setSelectionInteractionMode]);
+  }, []);
 
   function closeOverlays() {
-    setSelectionInteractionMode(null);
-    setSelectionAction(null);
     setFloatingComment(null);
     setThreadPopover(null);
     setReplyTargetCommentId(null);
     setReplyMessage("");
     setEditingCommentId(null);
     setEditingMessage("");
-  }
-
-  function handleViewportPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-    if (event.button !== 0) {
-      return;
-    }
-    setSelectionInteractionMode("pointer");
   }
 
   function handleScrollToBottom() {
@@ -466,33 +266,14 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
     const position = clampOverlayPosition(overlay, top, left);
     setThreadPopover(null);
     setFloatingComment({
-      anchor,
+      anchor: normalizeFileCommentAnchor(anchor),
       top: position.top,
       left: position.left,
       message: "",
     });
     setFloatingCommentFocusToken((current) => current + 1);
-    setSelectionAction(null);
     setReplyTargetCommentId(null);
     setReplyMessage("");
-  }
-
-  function openSelectionCommentFromCurrentSelection() {
-    const overlay = overlayRef.current;
-    const viewport = viewportRef.current;
-    const selection = window.getSelection();
-    if (!overlay || !viewport || !selection) {
-      return false;
-    }
-
-    const next = buildSelectionCommentAction(viewport, overlay, reference, selection);
-    if (!next) {
-      return false;
-    }
-
-    setSelectionAction(next);
-    openFloatingComment(next.anchor, next.top, next.left);
-    return true;
   }
 
   const openThreadPopoverForLine = useCallback((lineNumber: number, top: number, left: number) => {
@@ -507,7 +288,6 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
 
     const position = clampOverlayPosition(overlay, top, left);
     setFloatingComment(null);
-    setSelectionAction(null);
     setReplyTargetCommentId(null);
     setReplyMessage("");
     setThreadPopover({
@@ -517,15 +297,6 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
       left: position.left,
     });
   }, [fileCommentThreads]);
-
-  function handleSelectionCommentClick() {
-    if (selectionAction) {
-      openFloatingComment(selectionAction.anchor, selectionAction.top, selectionAction.left);
-      return;
-    }
-
-    openSelectionCommentFromCurrentSelection();
-  }
 
   const handleLineCommentClick = useCallback((lineNumber: number, event: ReactMouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -580,7 +351,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
       lineEnd: floatingComment.anchor.lineEnd,
       columnStart: floatingComment.anchor.columnStart ?? null,
       columnEnd: floatingComment.anchor.columnEnd ?? null,
-      selectedText: floatingComment.anchor.selectedText ?? null,
+      selectedText: null,
     });
 
     if (created) {
@@ -639,8 +410,6 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
   const renderedLines = useMemo(
     () => lines.map((line) => {
       const commentCount = commentCountsByLine.get(line.number) ?? 0;
-      const lineThreads = commentThreadsByLine.get(line.number) ?? [];
-      const selectedTextThreads = lineThreads.filter((thread) => Boolean(thread.comment.selectedText && thread.comment.columnStart && thread.comment.columnEnd));
       return (
         <div
           className={commentCount > 0 ? "file-content-viewer__line file-content-viewer__line--commented" : "file-content-viewer__line"}
@@ -667,40 +436,11 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
               data-file-line-content
               dangerouslySetInnerHTML={{ __html: line.html }}
             />
-            {selectedTextThreads.map(({ comment }) => {
-              const start = Math.max(1, comment.columnStart ?? 1);
-              const end = Math.max(start, comment.columnEnd ?? start);
-              const width = Math.max(1, end - start + 1);
-              return (
-                <button
-                  key={comment.id}
-                  className="file-content-viewer__selected-comment-anchor"
-                  data-role="default-file-selected-comment-anchor"
-                  style={{ left: `${start - 1}ch`, width: `${width}ch` }}
-                  title={comment.message}
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    const overlay = overlayRef.current;
-                    const target = event.currentTarget.getBoundingClientRect();
-                    const overlayRect = overlay?.getBoundingClientRect();
-                    if (!overlay || !overlayRect) {
-                      return;
-                    }
-                    openThreadPopoverForLine(line.number, target.top - overlayRect.top + 24, target.right - overlayRect.left + 12);
-                  }}
-                >
-                  <span className="file-content-viewer__selected-comment-highlight" />
-                  <span className="file-content-viewer__selected-comment-icon">💬</span>
-                </button>
-              );
-            })}
           </div>
         </div>
       );
     }),
-    [commentCountsByLine, commentThreadsByLine, handleLineCommentClick, lines, openThreadPopoverForLine, wrapLines],
+    [commentCountsByLine, handleLineCommentClick, lines, wrapLines],
   );
 
   return (
@@ -744,7 +484,6 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
         className={[
           "file-content-viewer__shell",
           isMinimized ? "file-content-viewer__shell--minimized" : null,
-          selectionInteractionActive ? "file-content-viewer__shell--selection-active" : null,
         ].filter(Boolean).join(" ")}
         ref={overlayRef}
       >
@@ -752,23 +491,10 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
           className={isMinimized ? "file-content-viewer__viewport file-content-viewer__viewport--minimized" : "file-content-viewer__viewport"}
           data-role="default-file-code-viewer"
           data-wrap-mode={wrapLines ? "wrap" : "nowrap"}
-          onPointerDown={handleViewportPointerDown}
           ref={viewportRef}
         >
           {renderedLines}
         </div>
-
-        {selectionAction ? (
-          <button
-            className="file-content-viewer__floating-button"
-            data-role="default-file-selection-comment-button"
-            style={{ top: `${selectionAction.top}px`, left: `${selectionAction.left}px` }}
-            type="button"
-            onClick={handleSelectionCommentClick}
-          >
-            💬 Comment
-          </button>
-        ) : null}
 
         {floatingComment ? (
           <div
@@ -782,11 +508,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                   ? `Line ${floatingComment.anchor.lineStart}`
                   : `Lines ${floatingComment.anchor.lineStart}-${floatingComment.anchor.lineEnd}`}
               </strong>
-              {floatingComment.anchor.selectedText ? <span className="status-badge status-badge--accent">Selection</span> : null}
             </div>
-            {floatingComment.anchor.selectedText ? (
-              <pre className="file-content-viewer__selection-preview">{floatingComment.anchor.selectedText}</pre>
-            ) : null}
             <TaskCommentComposer
               taskId={taskId}
               tasks={tasks}
@@ -860,7 +582,6 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                       onOpenRole={onOpenRole}
                     />
                   )}
-                  {comment.selectedText ? <pre className="file-content-viewer__selection-preview">{comment.selectedText}</pre> : null}
                   {replies.length ? (
                     <div className="file-content-viewer__thread-replies">
                       {replies.map((reply) => (

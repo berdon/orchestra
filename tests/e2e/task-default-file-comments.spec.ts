@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("task detail supports quick comments, line comments, replies, and viewer controls on the default file preview", async ({ page }) => {
+test("task detail keeps default-file line comments and viewer controls while selection comments stay disabled", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => {
     window.localStorage.clear();
@@ -226,9 +226,8 @@ test("task detail supports quick comments, line comments, replies, and viewer co
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Please revisit this line.");
 
   const selectionState = await page.evaluate(() => {
-    const viewer = document.querySelector('[data-role="default-file-code-viewer"]') as HTMLElement | null;
     const lineContent = document.querySelector('[data-file-line-row][data-line-number="2"] [data-file-line-content]') as HTMLElement | null;
-    if (!viewer || !lineContent) {
+    if (!lineContent) {
       throw new Error("Viewer line content was not available.");
     }
 
@@ -266,50 +265,22 @@ test("task detail supports quick comments, line comments, replies, and viewer co
       throw new Error("Unable to resolve selection offsets inside line 2.");
     }
 
-    viewer.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1, pointerType: "mouse", isPrimary: true }));
     const range = document.createRange();
     range.setStart(start.node, start.offset);
     range.setEnd(end.node, end.offset);
     selection.removeAllRanges();
     selection.addRange(range);
-    document.dispatchEvent(new Event("selectionchange", { bubbles: true }));
     return {
       selectedText: selection.toString(),
-      buttonCountDuringDrag: document.querySelectorAll('[data-role="default-file-selection-comment-button"]').length,
+      buttonCount: document.querySelectorAll('[data-role="default-file-selection-comment-button"]').length,
+      popoverCount: document.querySelectorAll('[data-role="default-file-comment-popover"]').length,
     };
   });
   expect(selectionState.selectedText).toBe("selected text");
-  expect(selectionState.buttonCountDuringDrag).toBe(0);
+  expect(selectionState.buttonCount).toBe(0);
+  expect(selectionState.popoverCount).toBe(0);
   await expect(page.locator('[data-role="default-file-selection-comment-button"]')).toHaveCount(0);
-  await page.evaluate(() => {
-    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-  });
-  await page.evaluate(() => {
-    const openDraft = (window as Window & { __orchestraOpenFileCommentDraft?: (detail: unknown) => void }).__orchestraOpenFileCommentDraft;
-    if (typeof openDraft !== "function") {
-      throw new Error("Comment draft helper was not available.");
-    }
-    openDraft({
-      anchor: {
-        repositoryId: "repo-default-file",
-        relativePath: "docs/design.md",
-        absolutePath: "/mock/projects/orchestra/repository/docs/design.md",
-        lineStart: 2,
-        lineEnd: 2,
-        columnStart: 6,
-        columnEnd: 18,
-        selectedText: "selected text",
-      },
-      top: 132,
-      left: 260,
-    });
-  });
-  await expect(page.locator('[data-role="default-file-comment-popover"]')).toContainText("Selection");
-  await expect(page.locator('[data-role="default-file-comment-popover"]')).toContainText("selected text");
-  await page.locator('[data-role="default-file-comment-popover"]').getByRole("textbox", { name: "Comment" }).fill("Clarify this selected text.");
-  await page.locator('[data-role="add-default-file-comment"]').click();
-  await expect(page.locator('[data-role="task-comments"]')).toContainText("Clarify this selected text.");
-  await expect(page.locator('[data-role="task-comments"]')).toContainText("selected text");
+  await expect(page.locator('[data-role="default-file-comment-popover"]')).toHaveCount(0);
 
   await expect(page.locator('[data-role="default-file-viewer-toggle"]')).toHaveText("Minimize");
   await page.locator('[data-role="default-file-viewer-toggle"]').click();

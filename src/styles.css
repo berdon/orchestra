@@ -6497,15 +6497,6 @@ strong {
   background: var(--accent-soft);
 }
 
-.file-content-viewer__shell--selection-active .file-content-viewer__line-comment-button,
-.file-content-viewer__shell--selection-active .file-content-viewer__selected-comment-anchor {
-  pointer-events: none;
-}
-
-.file-content-viewer__shell--selection-active .file-content-viewer__line-comment-button {
-  opacity: 0;
-}
-
 .file-content-viewer__line-comment-count {
   position: absolute;
   top: -6px;
@@ -6826,42 +6817,6 @@ strong {
   word-break: break-word;
 }
 
-.file-content-viewer__selected-comment-anchor {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  z-index: 2;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-
-.file-content-viewer__selected-comment-highlight {
-  position: absolute;
-  inset: 1px 0;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--warning-soft) 80%, white);
-  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
-  opacity: 0.9;
-}
-
-.file-content-viewer__selected-comment-icon {
-  position: absolute;
-  top: -12px;
-  right: -12px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  border: 1px solid var(--accent);
-  background: var(--color-file-viewer-floating-button-background);
-  color: var(--accent);
-  font-size: 0.72rem;
-  box-shadow: var(--shadow);
-}
-
 .file-content-viewer__code code,
 .file-content-viewer__viewport code {
   font-family: inherit;
@@ -6873,20 +6828,10 @@ strong {
   padding: 0;
 }
 
-.file-content-viewer__floating-button,
 .file-content-viewer__comment-popover,
 .file-content-viewer__thread-popover {
   position: absolute;
   z-index: 20;
-}
-
-.file-content-viewer__floating-button {
-  padding: 6px 10px;
-  border: 1px solid var(--accent);
-  border-radius: 999px;
-  background: var(--color-file-viewer-floating-button-background);
-  color: var(--accent);
-  box-shadow: var(--shadow);
 }
 
 .file-content-viewer__comment-popover,
@@ -6906,15 +6851,6 @@ strong {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-}
-
-.file-content-viewer__selection-preview {
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--color-selection-preview-background);
-  color: var(--text-muted);
-  white-space: pre-wrap;
 }
 
 .file-content-viewer__thread-list,

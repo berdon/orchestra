@@ -24,7 +24,7 @@ const isDesktopE2E = Boolean(process.env.ORCHESTRA_DESKTOP_E2E);
 const testHome = process.env.ORCHESTRA_TEST_HOME;
 
 describe("desktop default-file anchored task comments", () => {
-  it.skipIf(!isDesktopE2E)("supports quick comments, line comments, and selected-text comments on the default file preview", async () => {
+  it.skipIf(!isDesktopE2E)("keeps default-file line comments working while selected-text comments stay disabled", async () => {
     expect(testHome).toBeTruthy();
 
     const repoPath = join(testHome!, "workspace", "task-default-file-comments-repo", "repository");
@@ -207,44 +207,65 @@ describe("desktop default-file anchored task comments", () => {
       await clickSelector(sessionId, '[data-role="add-default-file-reply"]');
       await waitForText(sessionId, 'Acknowledged on line 3.');
 
-      await executeScript(sessionId, `
-        const selection = window.getSelection();
-        selection?.removeAllRanges?.();
-        document.dispatchEvent(new Event('selectionchange', { bubbles: true }));
-        return true;
-      `);
-
-      await executeScript(sessionId, `
-        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-        return true;
-      `);
-      await executeScript(sessionId, `
-        const openDraft = window.__orchestraOpenFileCommentDraft;
-        if (typeof openDraft !== 'function') {
-          throw new Error('Comment draft helper was not available');
+      const selectionState = await executeScript<{
+        selectedText: string;
+        buttonCount: number;
+        popoverCount: number;
+      }>(sessionId, `
+        const lineContent = document.querySelector('[data-file-line-row][data-line-number="2"] [data-file-line-content]');
+        if (!(lineContent instanceof HTMLElement)) {
+          throw new Error('Viewer line content was not available');
         }
-        openDraft({
-          anchor: {
-            repositoryId: ${JSON.stringify(repository.id)},
-            relativePath: 'docs/design.md',
-            absolutePath: ${JSON.stringify(join(repoPath, 'docs', 'design.md'))},
-            lineStart: 2,
-            lineEnd: 2,
-            columnStart: 6,
-            columnEnd: 18,
-            selectedText: 'selected text',
-          },
-          top: 132,
-          left: 260,
-        });
-        return true;
+
+        const textNodes = [];
+        const walker = document.createTreeWalker(lineContent, NodeFilter.SHOW_TEXT);
+        let current = walker.nextNode();
+        while (current) {
+          if (current.textContent && current.textContent.length > 0) {
+            textNodes.push(current);
+          }
+          current = walker.nextNode();
+        }
+
+        const selection = window.getSelection();
+        if (!selection) {
+          throw new Error('Selection API was not available');
+        }
+
+        const locate = (targetOffset) => {
+          let traversed = 0;
+          for (const node of textNodes) {
+            const value = node.textContent || '';
+            const nextTraversed = traversed + value.length;
+            if (targetOffset <= nextTraversed) {
+              return { node, offset: Math.max(0, targetOffset - traversed) };
+            }
+            traversed = nextTraversed;
+          }
+          return null;
+        };
+
+        const start = locate(5);
+        const end = locate(18);
+        if (!start || !end) {
+          throw new Error('Unable to resolve selection offsets inside line 2');
+        }
+
+        const range = document.createRange();
+        range.setStart(start.node, start.offset);
+        range.setEnd(end.node, end.offset);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        return {
+          selectedText: selection.toString(),
+          buttonCount: document.querySelectorAll('[data-role="default-file-selection-comment-button"]').length,
+          popoverCount: document.querySelectorAll('[data-role="default-file-comment-popover"]').length,
+        };
       `);
-      await waitForText(sessionId, 'Selection');
-      await waitForText(sessionId, 'selected text');
-      await setInputValue(sessionId, '[data-role="default-file-comment-message"]', 'Clarify this selected text.');
-      await clickSelector(sessionId, '[data-role="add-default-file-comment"]');
-      await waitForText(sessionId, 'Clarify this selected text.');
-      await waitForText(sessionId, 'selected text');
+      expect(selectionState.selectedText).toBe('selected text');
+      expect(selectionState.buttonCount).toBe(0);
+      expect(selectionState.popoverCount).toBe(0);
 
       const comments = await invokeCommand<Array<{
         message: string;
@@ -258,7 +279,7 @@ describe("desktop default-file anchored task comments", () => {
         anchorHasUncommittedChanges?: boolean | null;
       }>>(sessionId, 'list_task_comments', { taskId: task.id });
 
-      expect(comments).toHaveLength(4);
+      expect(comments).toHaveLength(3);
 
       await clickSelector(sessionId, '[data-role="default-file-scroll-bottom"]');
       const distanceFromBottom = await executeScript<number>(sessionId, `
@@ -284,16 +305,6 @@ describe("desktop default-file anchored task comments", () => {
       expect(lineComment?.anchorCommitHash).toBe(commitHash);
       expect(lineComment?.anchorHasUncommittedChanges).toBe(false);
 
-      const selectionComment = comments.find((entry) => entry.message.includes('Clarify this selected text.'));
-      expect(selectionComment).toBeTruthy();
-      expect(selectionComment?.relativePath).toBe('docs/design.md');
-      expect(selectionComment?.lineStart).toBe(2);
-      expect(selectionComment?.lineEnd).toBe(2);
-      expect(selectionComment?.columnStart).toBe(6);
-      expect(selectionComment?.columnEnd).toBe(18);
-      expect(selectionComment?.selectedText).toBe('selected text');
-      expect(selectionComment?.anchorCommitHash).toBe(commitHash);
-      expect(selectionComment?.anchorHasUncommittedChanges).toBe(false);
     } finally {
       await deleteWebdriverSession(sessionId);
     }
