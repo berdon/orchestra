@@ -1059,7 +1059,7 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
           {loadingList ? <p className="muted-copy">Loading skills…</p> : null}
           {actionError ? <p className="error-copy">{actionError}</p> : null}
 
-          <nav className="skills-list settings-mobile-subnav-list" aria-label="Skills" data-role="skills-list">
+          <nav className="task-list skills-list settings-mobile-subnav-list" aria-label="Skills" data-role="skills-list">
             {filteredSkills.length === 0 ? (
               <div className="skills-list-empty muted-copy">
                 No skills match the current filters.
@@ -1068,12 +1068,13 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
               const selected = !isCreatingLocalSkill && skill.id === selectedSkillId;
               return (
                 <button
-                  className={selected ? "skills-list-item skills-list-item--active" : "skills-list-item"}
+                  className={selected ? "task-list-link task-list-link--active skills-list-item" : "task-list-link skills-list-item"}
                   data-role={`skill-row-${skill.id}`}
                   key={skill.id}
                   type="button"
                   onClick={() => handleSelectSkill(skill.id)}
                 >
+                  <span className="task-list-link__eyebrow">{getSkillListMeta(skill)}</span>
                   <div className="skills-list-item__header">
                     <strong>{skill.name}</strong>
                     <div className="skills-list-item__badges">
@@ -1086,8 +1087,7 @@ export function SkillsPanel({ selectionRequest = null }: SkillsPanelProps) {
                       {skill.runtimeWarnings.length > 0 ? <span className="status-badge status-badge--warning">Conflict</span> : null}
                     </div>
                   </div>
-                  <span className="skills-list-item__meta">{getSkillListMeta(skill)}</span>
-                  {skill.description ? <span className="skills-list-item__description">{skill.description}</span> : null}
+                  {skill.description ? <span className="task-list-link__eyebrow skills-list-item__description">{skill.description}</span> : null}
                 </button>
               );
             })}
