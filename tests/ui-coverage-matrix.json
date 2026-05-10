@@ -34,13 +34,15 @@
       "status": "covered",
       "specs": [
         "tests/e2e/task-default-file-comments.spec.ts",
+        "tests/e2e/task-repo-file-comments.spec.ts",
         "tests/desktop-e2e/task-comment-replies.test.ts",
         "tests/desktop-e2e/task-comment-file-mentions.test.ts",
         "tests/desktop-e2e/task-quick-comment-file-mentions.test.ts",
         "tests/desktop-e2e/task-comment-file-links.test.ts",
         "tests/desktop-e2e/task-comment-ordering.test.ts",
         "tests/desktop-e2e/task-comment-unread-badges.test.ts",
-        "tests/desktop-e2e/task-default-file-comments.test.ts"
+        "tests/desktop-e2e/task-default-file-comments.test.ts",
+        "tests/desktop-e2e/task-repo-file-comments.test.ts"
       ]
     },
     {
@@ -62,7 +64,8 @@
       "specs": [
         "tests/desktop-e2e/task-repo-files-tab.test.ts",
         "tests/desktop-e2e/task-repository-info-pane.test.ts",
-        "tests/desktop-e2e/task-file-viewer-controls.test.ts"
+        "tests/desktop-e2e/task-file-viewer-controls.test.ts",
+        "tests/desktop-e2e/task-repo-file-comments.test.ts"
       ]
     },
     {

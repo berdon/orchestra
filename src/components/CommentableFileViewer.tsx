@@ -27,6 +27,7 @@ interface FloatingCommentState {
 }
 
 interface OpenFileCommentDraftDetail {
+  viewerId?: string;
   anchor: FileCommentAnchor;
   top?: number;
   left?: number;
@@ -60,6 +61,31 @@ interface CommentableFileViewerProps {
   onOpenTask: (taskId: string) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
+  viewerId?: string;
+  dataRolePrefix?: string;
+  perfRenderKey?: string;
+}
+
+type FileCommentDraftWindow = typeof window & {
+  __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void;
+};
+
+let installedOpenFileCommentDraftHelperCount = 0;
+
+function dispatchOpenFileCommentDraft(detail: OpenFileCommentDraftDetail) {
+  document.dispatchEvent(new CustomEvent<OpenFileCommentDraftDetail>("orchestra:open-file-comment-draft", { detail }));
+}
+
+function installOpenFileCommentDraftHelper() {
+  const globalWindow = window as FileCommentDraftWindow;
+  installedOpenFileCommentDraftHelperCount += 1;
+  globalWindow.__orchestraOpenFileCommentDraft = dispatchOpenFileCommentDraft;
+  return () => {
+    installedOpenFileCommentDraftHelperCount = Math.max(0, installedOpenFileCommentDraftHelperCount - 1);
+    if (installedOpenFileCommentDraftHelperCount === 0) {
+      delete globalWindow.__orchestraOpenFileCommentDraft;
+    }
+  };
 }
 
 function escapeHtml(value: string) {
@@ -144,8 +170,11 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
   onOpenTask,
   onOpenAgent,
   onOpenRole,
+  viewerId = "default-file",
+  dataRolePrefix = "default-file",
+  perfRenderKey = "default-file-viewer",
 }: CommentableFileViewerProps) {
-  recordInputPerfRender("default-file-viewer");
+  recordInputPerfRender(perfRenderKey);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const floatingCommentMessageRef = useRef<HTMLTextAreaElement | null>(null);
@@ -158,6 +187,28 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
   const [editingMessage, setEditingMessage] = useState("");
   const [isMinimized, setIsMinimized] = useState(false);
   const [wrapLines, setWrapLines] = useState(true);
+  const lineCommentButtonDataRole = `${dataRolePrefix}-line-comment-button`;
+  const scrollBottomDataRole = `${dataRolePrefix}-scroll-bottom`;
+  const wrapToggleDataRole = `${dataRolePrefix}-wrap-toggle`;
+  const viewerToggleDataRole = `${dataRolePrefix}-viewer-toggle`;
+  const codeViewerDataRole = `${dataRolePrefix}-code-viewer`;
+  const commentPopoverDataRole = `${dataRolePrefix}-comment-popover`;
+  const commentInterruptDataRole = `${dataRolePrefix}-comment-interrupt`;
+  const commentMessageDataRole = `${dataRolePrefix}-comment-message`;
+  const commentMentionListDataRole = `${dataRolePrefix}-comment-mention-list`;
+  const commentMentionOptionDataRole = `${dataRolePrefix}-comment-mention-option`;
+  const addCommentDataRole = `add-${dataRolePrefix}-comment`;
+  const cancelCommentDataRole = `cancel-${dataRolePrefix}-comment`;
+  const threadPopoverDataRole = `${dataRolePrefix}-thread-popover`;
+  const editMessageDataRole = `${dataRolePrefix}-edit-message`;
+  const saveEditDataRole = `${dataRolePrefix}-save-edit`;
+  const editCommentDataRole = `${dataRolePrefix}-edit-comment`;
+  const deleteCommentDataRole = `${dataRolePrefix}-delete-comment`;
+  const replyMessageDataRole = `${dataRolePrefix}-reply-message`;
+  const replyMentionListDataRole = `${dataRolePrefix}-reply-mention-list`;
+  const replyMentionOptionDataRole = `${dataRolePrefix}-reply-mention-option`;
+  const addReplyDataRole = `add-${dataRolePrefix}-reply`;
+  const openReplyDataRole = `${dataRolePrefix}-open-reply`;
 
   const lines = useMemo(
     () => content.replace(/\r\n/g, "\n").split("\n").map((line, index) => ({
@@ -204,8 +255,14 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
     const openFileCommentDraft = (event: Event) => {
       const customEvent = event as CustomEvent<OpenFileCommentDraftDetail>;
       const detail = customEvent.detail;
+      if (!detail?.anchor) {
+        return;
+      }
+      if (detail.viewerId ? detail.viewerId !== viewerId : viewerId !== "default-file") {
+        return;
+      }
       const overlay = overlayRef.current;
-      if (!overlay || !detail?.anchor) {
+      if (!overlay) {
         return;
       }
       const position = clampOverlayPosition(overlay, detail.top ?? 72, detail.left ?? 220);
@@ -228,18 +285,16 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
       closeOverlays();
     };
 
+    const uninstallOpenFileCommentDraftHelper = installOpenFileCommentDraftHelper();
     document.addEventListener("orchestra:open-file-comment-draft", openFileCommentDraft as EventListener);
     document.addEventListener("pointerdown", closeOnOutsidePointer);
-    (window as typeof window & { __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void }).__orchestraOpenFileCommentDraft = (detail) => {
-      openFileCommentDraft(new CustomEvent("orchestra:open-file-comment-draft", { detail }));
-    };
 
     return () => {
       document.removeEventListener("orchestra:open-file-comment-draft", openFileCommentDraft as EventListener);
       document.removeEventListener("pointerdown", closeOnOutsidePointer);
-      delete (window as typeof window & { __orchestraOpenFileCommentDraft?: (detail: OpenFileCommentDraftDetail) => void }).__orchestraOpenFileCommentDraft;
+      uninstallOpenFileCommentDraftHelper();
     };
-  }, []);
+  }, [viewerId]);
 
   function closeOverlays() {
     setFloatingComment(null);
@@ -420,7 +475,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
           <div className="file-content-viewer__line-gutter">
             <button
               className={commentCount > 0 ? "file-content-viewer__line-comment-button file-content-viewer__line-comment-button--active" : "file-content-viewer__line-comment-button"}
-              data-role="default-file-line-comment-button"
+              data-role={lineCommentButtonDataRole}
               data-line-number={String(line.number)}
               type="button"
               onClick={(event) => handleLineCommentClick(line.number, event)}
@@ -450,7 +505,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
         <div className="action-cluster action-cluster--wrap">
           <button
             className="secondary-button"
-            data-role="default-file-scroll-bottom"
+            data-role={scrollBottomDataRole}
             type="button"
             onClick={handleScrollToBottom}
           >
@@ -458,7 +513,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
           </button>
           <button
             className="transcript-wrap-toggle"
-            data-role="default-file-wrap-toggle"
+            data-role={wrapToggleDataRole}
             data-wrap-mode={wrapLines ? "wrap" : "nowrap"}
             type="button"
             aria-pressed={wrapLines}
@@ -471,7 +526,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
           </button>
           <button
             className="secondary-button"
-            data-role="default-file-viewer-toggle"
+            data-role={viewerToggleDataRole}
             type="button"
             onClick={() => setIsMinimized((current) => !current)}
           >
@@ -489,7 +544,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
       >
         <div
           className={isMinimized ? "file-content-viewer__viewport file-content-viewer__viewport--minimized" : "file-content-viewer__viewport"}
-          data-role="default-file-code-viewer"
+          data-role={codeViewerDataRole}
           data-wrap-mode={wrapLines ? "wrap" : "nowrap"}
           ref={viewportRef}
         >
@@ -499,7 +554,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
         {floatingComment ? (
           <div
             className="file-content-viewer__comment-popover"
-            data-role="default-file-comment-popover"
+            data-role={commentPopoverDataRole}
             style={{ top: `${floatingComment.top}px`, left: `${floatingComment.left}px` }}
           >
             <div className="file-content-viewer__comment-meta">
@@ -517,20 +572,20 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
               currentTaskTags={currentTaskTags}
               className="task-comment-composer"
               interruptChecked={commentInterruptAgent}
-              interruptDataRole="default-file-comment-interrupt"
+              interruptDataRole={commentInterruptDataRole}
               message={floatingComment.message}
-              messageDataRole="default-file-comment-message"
+              messageDataRole={commentMessageDataRole}
               messageLabel="Comment"
-              mentionListDataRole="default-file-comment-mention-list"
-              mentionOptionDataRole="default-file-comment-mention-option"
+              mentionListDataRole={commentMentionListDataRole}
+              mentionOptionDataRole={commentMentionOptionDataRole}
               messageRef={floatingCommentMessageRef}
               onInterruptChange={onCommentInterruptChange}
               onMessageChange={(message) => setFloatingComment((current) => current ? { ...current, message } : current)}
               onSubmit={() => void submitFloatingComment()}
               rows={3}
-              submitDataRole="add-default-file-comment"
+              submitDataRole={addCommentDataRole}
               submitLabel="Add comment"
-              cancelDataRole="cancel-default-file-comment"
+              cancelDataRole={cancelCommentDataRole}
               cancelLabel="Cancel"
               onCancel={closeOverlays}
             />
@@ -540,7 +595,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
         {threadPopover ? (
           <div
             className="file-content-viewer__thread-popover"
-            data-role="default-file-thread-popover"
+            data-role={threadPopoverDataRole}
             style={{ top: `${threadPopover.top}px`, left: `${threadPopover.left}px` }}
           >
             <div className="file-content-viewer__comment-meta">
@@ -562,7 +617,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                       <span className="field-group__label">Edit comment</span>
                       <textarea
                         className="text-area"
-                        data-role="default-file-edit-message"
+                        data-role={editMessageDataRole}
                         rows={3}
                         value={editingMessage}
                         onChange={(event) => setEditingMessage(event.target.value)}
@@ -595,7 +650,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                               <span className="field-group__label">Edit reply</span>
                               <textarea
                                 className="text-area"
-                                data-role="default-file-edit-message"
+                                data-role={editMessageDataRole}
                                 rows={3}
                                 value={editingMessage}
                                 onChange={(event) => setEditingMessage(event.target.value)}
@@ -618,7 +673,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                           <div className="file-content-viewer__thread-actions">
                             {editingCommentId === reply.id ? (
                               <>
-                                <button className="secondary-button" data-role="default-file-save-edit" type="button" onClick={() => void submitEdit(reply.id)}>Save</button>
+                                <button className="secondary-button" data-role={saveEditDataRole} type="button" onClick={() => void submitEdit(reply.id)}>Save</button>
                                 <button className="secondary-button" type="button" onClick={() => {
                                   setEditingCommentId(null);
                                   setEditingMessage("");
@@ -628,7 +683,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                               <>
                                 <button
                                   className="secondary-button file-content-viewer__icon-button"
-                                  data-role="default-file-edit-comment"
+                                  data-role={editCommentDataRole}
                                   type="button"
                                   title="Edit reply"
                                   onClick={() => {
@@ -640,7 +695,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                                 </button>
                                 <button
                                   className="secondary-button secondary-button--danger file-content-viewer__icon-button"
-                                  data-role="default-file-delete-comment"
+                                  data-role={deleteCommentDataRole}
                                   type="button"
                                   title="Delete reply"
                                   onClick={() => void handleDelete(reply.id)}
@@ -663,14 +718,14 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                       currentTaskTags={currentTaskTags}
                       className="file-content-viewer__reply-composer"
                       message={replyMessage}
-                      messageDataRole="default-file-reply-message"
+                      messageDataRole={replyMessageDataRole}
                       messageLabel="Reply"
-                      mentionListDataRole="default-file-reply-mention-list"
-                      mentionOptionDataRole="default-file-reply-mention-option"
+                      mentionListDataRole={replyMentionListDataRole}
+                      mentionOptionDataRole={replyMentionOptionDataRole}
                       onMessageChange={setReplyMessage}
                       onSubmit={() => void submitReply(comment.id)}
                       rows={3}
-                      submitDataRole="add-default-file-reply"
+                      submitDataRole={addReplyDataRole}
                       submitLabel="Add reply"
                       onCancel={() => {
                         setReplyTargetCommentId(null);
@@ -681,7 +736,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                   <div className="file-content-viewer__thread-actions">
                     {editingCommentId === comment.id ? (
                       <>
-                        <button className="secondary-button" data-role="default-file-save-edit" type="button" onClick={() => void submitEdit(comment.id)}>Save</button>
+                        <button className="secondary-button" data-role={saveEditDataRole} type="button" onClick={() => void submitEdit(comment.id)}>Save</button>
                         <button className="secondary-button" type="button" onClick={() => {
                           setEditingCommentId(null);
                           setEditingMessage("");
@@ -691,7 +746,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                       <>
                         <button
                           className="secondary-button file-content-viewer__icon-button"
-                          data-role="default-file-open-reply"
+                          data-role={openReplyDataRole}
                           type="button"
                           title="Reply"
                           onClick={() => {
@@ -703,7 +758,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                         </button>
                         <button
                           className="secondary-button file-content-viewer__icon-button"
-                          data-role="default-file-edit-comment"
+                          data-role={editCommentDataRole}
                           type="button"
                           title="Edit comment"
                           onClick={() => {
@@ -715,7 +770,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
                         </button>
                         <button
                           className="secondary-button secondary-button--danger file-content-viewer__icon-button"
-                          data-role="default-file-delete-comment"
+                          data-role={deleteCommentDataRole}
                           type="button"
                           title="Delete comment"
                           onClick={() => void handleDelete(comment.id)}

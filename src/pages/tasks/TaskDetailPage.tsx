@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 
-import hljs from "highlight.js";
 import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { useTaskFileContent } from "../../lib/orchestraData/tasks";
 import { useExplanatoryTooltipProps } from "../../lib/tooltips";
@@ -1091,23 +1090,6 @@ export function TaskDetailPage({
     return languageMap[ext] || "plaintext";
   }
 
-  function highlightCode(code: string, language: string) {
-    try {
-      if (language && hljs.getLanguage(language)) {
-        return hljs.highlight(code, { language, ignoreIllegals: true }).value;
-      }
-      const result = hljs.highlightAuto(code);
-      return result.value;
-    } catch {
-      return code
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-    }
-  }
-
   const headerActionMenuActions = buildTaskDetailHeaderActions({
     task,
     canPublish,
@@ -1217,6 +1199,40 @@ export function TaskDetailPage({
       tabBodyRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     });
   }, [loadFileContent]);
+
+  function renderTaskFileViewer(reference: TaskFileReference, content: string, options: {
+    viewerId: string;
+    dataRolePrefix: string;
+    perfRenderKey: string;
+  }) {
+    return (
+      <CommentableFileViewer
+        taskId={task.id}
+        currentTaskTags={task.tags}
+        tasks={tasks}
+        agents={agents}
+        roles={roles}
+        commentAuthor={commentDraft.author}
+        commentInterruptAgent={commentDraft.interruptAgent}
+        comments={task.comments}
+        content={content}
+        fileReferences={task.fileReferences}
+        language={detectLanguage(reference.relativePath)}
+        onAddComment={onAddComment}
+        onCommentInterruptChange={handleTopLevelCommentInterruptChange}
+        onDeleteComment={onDeleteComment}
+        onOpenFileReference={handleOpenCommentFileReference}
+        onOpenTask={onOpenTask}
+        onOpenAgent={onOpenAgent}
+        onOpenRole={onOpenRole}
+        onUpdateComment={onUpdateComment}
+        reference={reference}
+        viewerId={options.viewerId}
+        dataRolePrefix={options.dataRolePrefix}
+        perfRenderKey={options.perfRenderKey}
+      />
+    );
+  }
 
   function handleScrollToTaskDetails() {
     setActiveNavAnchor("details");
@@ -1654,8 +1670,6 @@ export function TaskDetailPage({
                   const reference = task.fileReferences.find((ref) => ref.id === selectedFileReference);
                   if (!reference) return null;
 
-                  const language = detectLanguage(reference.relativePath);
-
                   return (
                     <article
                       className="task-history-card task-history-card--file-reference"
@@ -1704,26 +1718,11 @@ export function TaskDetailPage({
                   const reference = task.fileReferences.find((ref) => ref.id === selectedFileReference);
                   if (!reference) return null;
 
-                  const language = detectLanguage(reference.relativePath);
-
-                  return (
-                    <div className="file-content-viewer">
-                      <div className="file-content-viewer__header">
-                        <span className="field-group__label">File content</span>
-                        <span className="muted-copy">{reference.relativePath}</span>
-                      </div>
-                      {loadingFileContent ? (
-                        <p className="muted-copy">Loading file content…</p>
-                      ) : (
-                        <pre
-                          className="file-content-viewer__code"
-                          dangerouslySetInnerHTML={{
-                            __html: highlightCode(fileContent, language),
-                          }}
-                        />
-                      )}
-                    </div>
-                  );
+                  return renderTaskFileViewer(reference, fileContent, {
+                    viewerId: "repo-file",
+                    dataRolePrefix: "repo-file",
+                    perfRenderKey: "repo-file-viewer",
+                  });
                 })()}
 
                 {selectedFileReference && fileContent === null && !loadingFileContent && (() => {
@@ -2344,30 +2343,11 @@ export function TaskDetailPage({
                   {defaultFile.exists ? (
                     loadingDefaultFileContent ? (
                       <p className="muted-copy">Loading file preview…</p>
-                    ) : (
-                      <CommentableFileViewer
-                        taskId={task.id}
-                        currentTaskTags={task.tags}
-                        tasks={tasks}
-                        agents={agents}
-                        roles={roles}
-                        commentAuthor={commentDraft.author}
-                        commentInterruptAgent={commentDraft.interruptAgent}
-                        comments={task.comments}
-                        content={defaultFileContent ?? ""}
-                        fileReferences={task.fileReferences}
-                        language={detectLanguage(defaultFile.relativePath)}
-                        onAddComment={onAddComment}
-                        onCommentInterruptChange={handleTopLevelCommentInterruptChange}
-                        onDeleteComment={onDeleteComment}
-                        onOpenFileReference={handleOpenCommentFileReference}
-                        onOpenTask={onOpenTask}
-                        onOpenAgent={onOpenAgent}
-                        onOpenRole={onOpenRole}
-                        onUpdateComment={onUpdateComment}
-                        reference={defaultFile}
-                      />
-                    )
+                    ) : renderTaskFileViewer(defaultFile, defaultFileContent ?? "", {
+                      viewerId: "default-file",
+                      dataRolePrefix: "default-file",
+                      perfRenderKey: "default-file-viewer",
+                    })
                   ) : null}
                 </>
               ) : (
