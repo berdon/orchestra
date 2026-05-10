@@ -310,6 +310,54 @@ async function sendComposerMessage(
   await waitForText(webdriverSessionId, message, 15_000);
 }
 
+async function sendComposerMessageWithMode(
+  webdriverSessionId: string,
+  message: string,
+  mode: "queue" | "interrupt",
+) {
+  await setInputValue(
+    webdriverSessionId,
+    '[data-role="composer-input"]',
+    message,
+  );
+  await clickSelector(
+    webdriverSessionId,
+    '[data-role="session-send-options-trigger"]',
+  );
+  await waitForSelector(
+    webdriverSessionId,
+    '[data-role="session-send-options-menu"]',
+  );
+  await clickSelector(
+    webdriverSessionId,
+    mode === "queue"
+      ? '[data-role="session-send-mode-queue"]'
+      : '[data-role="session-send-mode-interrupt"]',
+  );
+}
+
+async function getTranscriptRowCount(
+  webdriverSessionId: string,
+  kind: TranscriptRow["kind"],
+) {
+  const snapshot = await getTranscriptSnapshot(webdriverSessionId);
+  return snapshot.rows.filter((row) => row.kind === kind).length;
+}
+
+async function countSessionLogEntries(
+  webdriverSessionId: string,
+  target: string,
+  sessionId: string,
+) {
+  const logs = await invokeCommand<
+    Array<{ target?: string; message?: string }>
+  >(webdriverSessionId, "get_logs");
+  return logs.filter(
+    (entry) =>
+      entry.target === target && (entry.message ?? "").includes(sessionId),
+  ).length;
+}
+
 async function waitForPendingAssistant(
   webdriverSessionId: string,
   sessionId: string,
@@ -660,7 +708,7 @@ describe("desktop session message lifecycle", () => {
   );
 
   it.skipIf(!isDesktopE2E)(
-    "delivers explicit interrupt sends ahead of queued follow-ups after the current turn finishes",
+    "delivers Queue and Interrupt sends from the real send-options menu with the correct busy-session ordering",
     async () => {
       const webdriverSessionId = await createReadyWebdriverSession();
 
@@ -683,7 +731,7 @@ describe("desktop session message lifecycle", () => {
         const interruptToken = `ORC273-INTERRUPT-${runToken}`;
         const firstPrompt = [
           "Use the bash tool exactly once and wait for it to finish before replying.",
-          `Run this exact shell command: sh -lc 'sleep 8; printf "${initialToken}"'`,
+          `Run this exact shell command: sh -lc 'sleep 12; printf "${initialToken}"'`,
           "After the command completes, reply with only the printed token.",
         ].join(" ");
         const queuedPrompt = `Reply with exactly ${queuedToken} and nothing else.`;
@@ -692,63 +740,141 @@ describe("desktop session message lifecycle", () => {
         await sendComposerMessage(webdriverSessionId, firstPrompt);
         await waitForPendingAssistant(webdriverSessionId, sessionId);
 
-        await invokeCommand<{
-          sessionId: string;
-          runId: string;
-          message: string;
-        }>(webdriverSessionId, "send_session_message", {
+        const followUpCountBefore = await countSessionLogEntries(
+          webdriverSessionId,
+          "sessions.message.follow_up",
           sessionId,
-          message: queuedPrompt,
-          runId: `queue-${runToken}`,
-          sendMode: "queue",
-        });
+        );
+        const steerCountBefore = await countSessionLogEntries(
+          webdriverSessionId,
+          "sessions.message.steer",
+          sessionId,
+        );
+        const transcriptUserCountBefore = await getTranscriptRowCount(
+          webdriverSessionId,
+          "user",
+        );
+
+        await sendComposerMessageWithMode(
+          webdriverSessionId,
+          queuedPrompt,
+          "queue",
+        );
         await waitForConditionWithDiagnostics(
           webdriverSessionId,
           sessionId,
-          () =>
-            invokeCommand<Array<{ target?: string; message?: string }>>(
+          async () => ({
+            transcriptUserCount: await getTranscriptRowCount(
               webdriverSessionId,
-              "get_logs",
+              "user",
             ),
-          (logs) =>
-            logs.some(
-              (entry) =>
-                entry.target === "sessions.message.follow_up" &&
-                (entry.message ?? "").includes(sessionId),
+            record: await invokeCommand<SessionRecordLike>(
+              webdriverSessionId,
+              "get_session_record",
+              { sessionId },
             ),
-          "explicit queue send to log a follow_up delivery while the session is busy",
-          45_000,
+          }),
+          ({ transcriptUserCount, record }) =>
+            transcriptUserCount >= transcriptUserCountBefore + 1 &&
+            record.status !== "idle",
+          "queued send from the menu to appear in the transcript while the prior turn is still active",
+          20_000,
           250,
         );
 
-        await invokeCommand<{
-          sessionId: string;
-          runId: string;
-          message: string;
-        }>(webdriverSessionId, "send_session_message", {
+        await sendComposerMessageWithMode(
+          webdriverSessionId,
+          interruptPrompt,
+          "interrupt",
+        );
+        await waitForConditionWithDiagnostics(
+          webdriverSessionId,
           sessionId,
-          message: interruptPrompt,
-          runId: `interrupt-${runToken}`,
-          sendMode: "interrupt",
-        });
+          async () => ({
+            transcriptUserCount: await getTranscriptRowCount(
+              webdriverSessionId,
+              "user",
+            ),
+            record: await invokeCommand<SessionRecordLike>(
+              webdriverSessionId,
+              "get_session_record",
+              { sessionId },
+            ),
+          }),
+          ({ transcriptUserCount, record }) =>
+            transcriptUserCount >= transcriptUserCountBefore + 2 &&
+            record.status !== "idle",
+          "interrupt send from the menu to appear in the transcript while the prior turn is still active",
+          20_000,
+          250,
+        );
+
         await waitForConditionWithDiagnostics(
           webdriverSessionId,
           sessionId,
           () =>
-            invokeCommand<Array<{ target?: string; message?: string }>>(
+            countSessionLogEntries(
               webdriverSessionId,
-              "get_logs",
+              "sessions.message.follow_up",
+              sessionId,
             ),
-          (logs) =>
-            logs.some(
-              (entry) =>
-                entry.target === "sessions.message.steer" &&
-                (entry.message ?? "").includes(sessionId),
-            ),
-          "explicit interrupt send to log a steer delivery while the session is busy",
+          (count) => count === followUpCountBefore + 1,
+          "queue send from the menu to log exactly one busy-session follow_up delivery",
           45_000,
           250,
         );
+        await waitForConditionWithDiagnostics(
+          webdriverSessionId,
+          sessionId,
+          () =>
+            countSessionLogEntries(
+              webdriverSessionId,
+              "sessions.message.steer",
+              sessionId,
+            ),
+          (count) => count === steerCountBefore + 1,
+          "interrupt send from the menu to log exactly one busy-session steer delivery",
+          45_000,
+          250,
+        );
+        await waitForConditionWithDiagnostics(
+          webdriverSessionId,
+          sessionId,
+          () =>
+            invokeCommand<SessionRecordLike>(
+              webdriverSessionId,
+              "get_session_record",
+              { sessionId },
+            ),
+          (record) =>
+            (record.events ?? []).some(
+              (event) =>
+                event.kind === "user" &&
+                normalizeComparableText(event.message).includes(queuedToken),
+            ) &&
+            (record.events ?? []).some(
+              (event) =>
+                event.kind === "user" &&
+                normalizeComparableText(event.message).includes(interruptToken),
+            ),
+          "queue and interrupt sends to persist their user events",
+          30_000,
+          250,
+        );
+        expect(
+          await countSessionLogEntries(
+            webdriverSessionId,
+            "sessions.message.follow_up",
+            sessionId,
+          ),
+        ).toBe(followUpCountBefore + 1);
+        expect(
+          await countSessionLogEntries(
+            webdriverSessionId,
+            "sessions.message.steer",
+            sessionId,
+          ),
+        ).toBe(steerCountBefore + 1);
 
         const settled = await waitForSessionSettled(
           webdriverSessionId,
@@ -783,6 +909,10 @@ describe("desktop session message lifecycle", () => {
         expect(initialToolResultIndex).toBeGreaterThan(initialUserIndex);
         expect(interruptIndex).toBeGreaterThan(initialToolResultIndex);
         expect(queuedIndex).toBeGreaterThan(interruptIndex);
+        expect(settled.snapshot.pendingCount).toBe(0);
+        expect(
+          await getTranscriptRowCount(webdriverSessionId, "user"),
+        ).toBe(transcriptUserCountBefore + 2);
       } finally {
         await deleteWebdriverSession(webdriverSessionId);
       }
