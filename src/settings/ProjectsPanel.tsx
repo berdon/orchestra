@@ -1051,10 +1051,17 @@ export function ProjectsPanel() {
                   {projectSecretsState.secrets.length ? projectSecretsState.secrets.map((secret) => {
                     const status = formatSecretStatus(secret);
                     return (
-                      <article className="task-history-card" key={secret.id}>
+                      <article className="task-history-card" key={secret.id} data-role="project-secret-card" data-secret-key={secret.secretKey}>
                         <div className="workflow-section__header">
                           <strong>{secret.secretKey}</strong>
-                          <span className={`status-badge status-badge--${status.tone}`}>{status.label}</span>
+                          <span
+                            className={`status-badge status-badge--${status.tone}`}
+                            data-role="project-secret-status"
+                            data-secret-key={secret.secretKey}
+                            data-value-state={secret.valueState}
+                          >
+                            {status.label}
+                          </span>
                         </div>
                         <p className="muted-copy">{secret.description || "No description"}</p>
                         <div className="workforce-meta-grid muted-copy">

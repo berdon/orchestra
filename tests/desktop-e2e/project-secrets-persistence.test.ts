@@ -63,6 +63,42 @@ async function openProjectSecrets(sessionId: string, projectName: string) {
   await waitForSelector(sessionId, '[data-role="project-secrets-status"]');
 }
 
+function projectSecretCardSelector(secretKey: string) {
+  return `[data-role="project-secret-card"][data-secret-key="${secretKey}"]`;
+}
+
+function projectSecretStatusSelector(secretKey: string) {
+  return `${projectSecretCardSelector(secretKey)} [data-role="project-secret-status"]`;
+}
+
+async function waitForSecretStatus(
+  sessionId: string,
+  secretKey: string,
+  expectedStatus: string,
+  forbiddenStatus = "Missing value",
+  timeoutMs = 30_000,
+) {
+  const cardSelector = projectSecretCardSelector(secretKey);
+  const statusSelector = projectSecretStatusSelector(secretKey);
+  await waitForSelector(sessionId, cardSelector, timeoutMs);
+  await waitForCondition(
+    async () => executeScript<{ cardText: string | null; statusText: string | null }>(
+      sessionId,
+      `
+        const card = document.querySelector(arguments[0]);
+        const status = document.querySelector(arguments[1]);
+        return {
+          cardText: card ? (card.textContent || "").trim() : null,
+          statusText: status ? (status.textContent || "").trim() : null,
+        };
+      `,
+      [cardSelector, statusSelector],
+    ),
+    (state) => state?.statusText === expectedStatus && !String(state?.cardText ?? "").includes(forbiddenStatus),
+    timeoutMs,
+  );
+}
+
 async function reloadDesktopApp(sessionId: string) {
   await executeScript(sessionId, `window.location.reload(); return true;`);
   await sleep(1_000);
@@ -192,9 +228,8 @@ describe("desktop project secret persistence", () => {
       await setInputValue(webdriverSessionId, '[data-role="project-secret-description"]', initialDescription);
       await setInputValue(webdriverSessionId, '[data-role="project-secret-value"]', initialValue);
       await clickSelector(webdriverSessionId, '[data-role="save-project-secret"]');
-      await waitForText(webdriverSessionId, secretKey);
+      await waitForSecretStatus(webdriverSessionId, secretKey, "Ready");
       await waitForText(webdriverSessionId, initialDescription);
-      await waitForText(webdriverSessionId, "Ready");
 
       await waitForCondition(
         () => invokeCommand<any>(webdriverSessionId, "get_project_secrets", { projectSlug: project!.slug }),
@@ -205,6 +240,7 @@ describe("desktop project secret persistence", () => {
 
       await reloadDesktopApp(webdriverSessionId);
       await openProjectSecrets(webdriverSessionId, projectName);
+      await waitForSecretStatus(webdriverSessionId, secretKey, "Ready");
       await waitForText(webdriverSessionId, initialDescription);
       await verifySecretViaAgent(webdriverSessionId, {
         agentId: agent.id,
@@ -221,6 +257,7 @@ describe("desktop project secret persistence", () => {
       await setInputValue(webdriverSessionId, '[data-role="project-secret-description"]', rotatedDescription);
       await setInputValue(webdriverSessionId, '[data-role="project-secret-value"]', rotatedValue);
       await clickSelector(webdriverSessionId, '[data-role="save-project-secret"]');
+      await waitForSecretStatus(webdriverSessionId, secretKey, "Ready");
       await waitForText(webdriverSessionId, rotatedDescription);
 
       await waitForCondition(
@@ -231,6 +268,7 @@ describe("desktop project secret persistence", () => {
 
       await reloadDesktopApp(webdriverSessionId);
       await openProjectSecrets(webdriverSessionId, projectName);
+      await waitForSecretStatus(webdriverSessionId, secretKey, "Ready");
       await waitForText(webdriverSessionId, rotatedDescription);
       await verifySecretViaAgent(webdriverSessionId, {
         agentId: agent.id,
