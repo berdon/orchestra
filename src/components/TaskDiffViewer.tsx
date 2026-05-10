@@ -23,6 +23,10 @@ export interface ParsedDiffLine {
 
 export interface ParsedDiffHunk {
   header: string;
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
   lines: ParsedDiffLine[];
 }
 
@@ -31,6 +35,28 @@ interface ParsedSplitDiffRow {
   oldLine: ParsedDiffLine | null;
   newLine: ParsedDiffLine | null;
   metaLine?: ParsedDiffLine | null;
+}
+
+interface ParsedDiffGap {
+  key: string;
+  oldCount: number;
+  oldStart: number | null;
+  oldEnd: number | null;
+  newCount: number;
+  newStart: number | null;
+  newEnd: number | null;
+}
+
+interface RenderedDiffLineState {
+  side: "old" | "new";
+  line: ParsedDiffLine | null;
+  lineKey: string | null;
+  lineNumber: number | null;
+  kind: ParsedDiffLine["kind"] | "empty";
+  marker: string;
+  commentable: boolean;
+  lineThreads: TaskCommentThread[];
+  isDraftOpen: boolean;
 }
 
 interface TaskDiffViewerProps {
@@ -117,6 +143,48 @@ function buildSplitDiffRows(hunk: ParsedDiffHunk): ParsedSplitDiffRow[] {
   return rows;
 }
 
+function buildHunkGap(previous: ParsedDiffHunk, next: ParsedDiffHunk): ParsedDiffGap | null {
+  const previousOldEnd = previous.oldStart + previous.oldCount - 1;
+  const previousNewEnd = previous.newStart + previous.newCount - 1;
+  const oldStart = previous.oldCount === 0 ? previous.oldStart : previousOldEnd + 1;
+  const newStart = previous.newCount === 0 ? previous.newStart : previousNewEnd + 1;
+  const oldEnd = next.oldStart - 1;
+  const newEnd = next.newStart - 1;
+  const oldCount = oldEnd >= oldStart ? oldEnd - oldStart + 1 : 0;
+  const newCount = newEnd >= newStart ? newEnd - newStart + 1 : 0;
+
+  if (Math.max(oldCount, newCount) <= 0) {
+    return null;
+  }
+
+  return {
+    key: `gap:${previous.header}:${next.header}`,
+    oldCount,
+    oldStart: oldCount ? oldStart : null,
+    oldEnd: oldCount ? oldEnd : null,
+    newCount,
+    newStart: newCount ? newStart : null,
+    newEnd: newCount ? newEnd : null,
+  };
+}
+
+function formatGapRange(label: string, start: number | null, end: number | null) {
+  if (start == null || end == null) {
+    return null;
+  }
+  return start === end ? `${label} ${start}` : `${label} ${start}-${end}`;
+}
+
+function formatGapLabel(gap: ParsedDiffGap) {
+  const skippedCount = Math.max(gap.oldCount, gap.newCount);
+  const label = skippedCount === 1 ? "Skipped 1 unchanged line" : `Skipped ${skippedCount} unchanged lines`;
+  const details = [
+    formatGapRange("Base", gap.oldStart, gap.oldEnd),
+    formatGapRange("Current", gap.newStart, gap.newEnd),
+  ].filter(Boolean);
+  return details.length ? `${label} · ${details.join(" · ")}` : label;
+}
+
 export function parseUnifiedDiff(patch?: string | null): ParsedDiffHunk[] {
   if (!patch?.trim()) {
     return [];
@@ -131,10 +199,17 @@ export function parseUnifiedDiff(patch?: string | null): ParsedDiffHunk[] {
   for (const rawLine of patch.split(/\r?\n/)) {
     const hunkMatch = rawLine.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
     if (hunkMatch) {
-      currentHunk = { header: rawLine, lines: [] };
+      currentHunk = {
+        header: rawLine,
+        oldStart: Number(hunkMatch[1]),
+        oldCount: Number(hunkMatch[2] ?? "1"),
+        newStart: Number(hunkMatch[3]),
+        newCount: Number(hunkMatch[4] ?? "1"),
+        lines: [],
+      };
       hunks.push(currentHunk);
-      oldLine = Number(hunkMatch[1]);
-      newLine = Number(hunkMatch[3]);
+      oldLine = currentHunk.oldStart;
+      newLine = currentHunk.newStart;
       continue;
     }
     if (!currentHunk) {
@@ -417,53 +492,51 @@ export function TaskDiffViewer({
     setDraftFocusToken((current) => current + 1);
   }
 
-  function renderDiffPane(side: "old" | "new", line: ParsedDiffLine | null, rowKey: string) {
-    const key = side === "old" ? lineKey("old", line?.oldLineNumber ?? null) : lineKey("new", line?.newLineNumber ?? null);
-    const lineThreads = key ? (threadsByLine.get(key) ?? []) : [];
-    const commentable = (side === "old" && line?.kind === "del") || (side === "new" && line?.kind === "add");
-    const isDraftOpen = draftState?.lineKey === key;
-    const paneKind = line?.kind ?? "empty";
-    const paneLineNumber = side === "old" ? line?.oldLineNumber : line?.newLineNumber;
+  function getRenderedLineState(side: "old" | "new", line: ParsedDiffLine | null): RenderedDiffLineState {
+    const nextLineKey = side === "old" ? lineKey("old", line?.oldLineNumber ?? null) : lineKey("new", line?.newLineNumber ?? null);
+    return {
+      side,
+      line,
+      lineKey: nextLineKey,
+      lineNumber: side === "old" ? line?.oldLineNumber ?? null : line?.newLineNumber ?? null,
+      kind: line?.kind ?? "empty",
+      marker: line?.kind === "add" ? "+" : line?.kind === "del" ? "-" : " ",
+      commentable: (side === "old" && line?.kind === "del") || (side === "new" && line?.kind === "add"),
+      lineThreads: nextLineKey ? (threadsByLine.get(nextLineKey) ?? []) : [],
+      isDraftOpen: nextLineKey != null && draftState?.lineKey === nextLineKey,
+    };
+  }
 
+  function renderCommentThread(thread: TaskCommentThread) {
     return (
-      <div
-        className={[
-          "task-pr-diff-pane",
-          `task-pr-diff-pane--${paneKind}`,
-          lineThreads.length ? "task-pr-diff-pane--commented" : null,
-          isDraftOpen ? "task-pr-diff-pane--draft-open" : null,
-        ].filter(Boolean).join(" ")}
-        data-role="task-pr-diff-line"
-        key={`${rowKey}:${side}`}
-      >
-        <div className="task-pr-diff-pane__header">
-          <div className="task-pr-diff-pane__line-number muted-copy">{paneLineNumber ?? ""}</div>
-          {commentable && line ? (
-            <button
-              aria-label={`Add review comment on ${side} line ${paneLineNumber}`}
-              className={lineThreads.length || isDraftOpen
-                ? "task-pr-diff-line__comment-button task-pr-diff-line__comment-button--active"
-                : "task-pr-diff-line__comment-button"}
-              data-role="task-pr-comment-line"
-              type="button"
-              onClick={() => openDraft(line!)}
-            >
-              💬
-              {lineThreads.length ? <span className="task-pr-diff-line__comment-count">{lineThreads.length}</span> : null}
-            </button>
-          ) : null}
+      <article className="transcript-event transcript-event--system task-comment-thread__parent" key={thread.comment.id}>
+        <div className="transcript-event__meta">
+          <span>{thread.comment.author}</span>
+          <div className="transcript-event__meta-group">
+            <span className="status-badge status-badge--accent">{formatThreadLabel(thread)}</span>
+            <time dateTime={thread.comment.updatedAt}>{new Date(thread.comment.updatedAt).toLocaleString()}</time>
+          </div>
         </div>
-        <pre className="file-content-viewer__code task-pr-diff-pane__code"><code>{line?.content || " "}</code></pre>
-        {lineThreads.length ? (
-          <div className="task-section-list task-pr-diff-pane__threads" data-role="task-pr-line-comments">
-            {lineThreads.map((thread) => (
-              <article className="transcript-event transcript-event--system task-comment-thread__parent" key={thread.comment.id}>
+        <TaskCommentMessage
+          dataRole="task-pr-comment-message-link"
+          fileReferences={fileReferences}
+          tasks={tasks}
+          agents={agents}
+          roles={roles}
+          message={thread.comment.message}
+          onOpenFileReference={onOpenFileReference}
+          onOpenTask={onOpenTask}
+          onOpenAgent={onOpenAgent}
+          onOpenRole={onOpenRole}
+        />
+        {thread.comment.selectedText ? <pre className="task-comment-thread__quote">{thread.comment.selectedText}</pre> : null}
+        {thread.replies.length ? (
+          <div className="task-comment-thread__replies">
+            {thread.replies.map((reply) => (
+              <article className="transcript-event transcript-event--system task-comment-thread__reply" key={reply.id}>
                 <div className="transcript-event__meta">
-                  <span>{thread.comment.author}</span>
-                  <div className="transcript-event__meta-group">
-                    <span className="status-badge status-badge--accent">{formatThreadLabel(thread)}</span>
-                    <time dateTime={thread.comment.updatedAt}>{new Date(thread.comment.updatedAt).toLocaleString()}</time>
-                  </div>
+                  <span>{reply.author}</span>
+                  <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
                 </div>
                 <TaskCommentMessage
                   dataRole="task-pr-comment-message-link"
@@ -471,70 +544,122 @@ export function TaskDiffViewer({
                   tasks={tasks}
                   agents={agents}
                   roles={roles}
-                  message={thread.comment.message}
+                  message={reply.message}
                   onOpenFileReference={onOpenFileReference}
                   onOpenTask={onOpenTask}
                   onOpenAgent={onOpenAgent}
                   onOpenRole={onOpenRole}
                 />
-                {thread.comment.selectedText ? <pre className="task-comment-thread__quote">{thread.comment.selectedText}</pre> : null}
-                {thread.replies.length ? (
-                  <div className="task-comment-thread__replies">
-                    {thread.replies.map((reply) => (
-                      <article className="transcript-event transcript-event--system task-comment-thread__reply" key={reply.id}>
-                        <div className="transcript-event__meta">
-                          <span>{reply.author}</span>
-                          <time dateTime={reply.updatedAt}>{new Date(reply.updatedAt).toLocaleString()}</time>
-                        </div>
-                        <TaskCommentMessage
-                          dataRole="task-pr-comment-message-link"
-                          fileReferences={fileReferences}
-                          tasks={tasks}
-                          agents={agents}
-                          roles={roles}
-                          message={reply.message}
-                          onOpenFileReference={onOpenFileReference}
-                          onOpenTask={onOpenTask}
-                          onOpenAgent={onOpenAgent}
-                          onOpenRole={onOpenRole}
-                        />
-                      </article>
-                    ))}
-                  </div>
-                ) : null}
               </article>
             ))}
           </div>
         ) : null}
-        {isDraftOpen ? (
-          <TaskCommentComposer
-            author={draftState.anchor.author}
-            authorDataRole="task-pr-comment-author"
-            className="task-comment-reply-composer task-pr-diff-line__composer"
-            tasks={tasks}
-            agents={agents}
-            roles={roles}
-            message={draftState.anchor.message}
-            messageDataRole="task-pr-comment-message"
-            messageLabel={`Comment on ${draftState.side} line ${draftState.anchor.lineStart}`}
-            mentionListDataRole="task-pr-comment-mention-list"
-            mentionOptionDataRole="task-pr-comment-mention-option"
-            messageRef={draftMessageRef}
-            onAuthorChange={(author) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, author } } : current)}
-            onInterruptChange={(interruptAgent) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, interruptAgent } } : current)}
-            onMessageChange={(message) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, message } } : current)}
-            onSubmit={() => void submitDraft()}
-            rows={3}
-            submitDataRole="add-task-pr-comment"
-            submitLabel="Add review comment"
-            cancelDataRole="cancel-task-pr-comment"
-            cancelLabel="Cancel"
-            onCancel={() => setDraftState(null)}
-            taskId={taskId}
-            interruptChecked={draftState.anchor.interruptAgent}
-            interruptDataRole="task-pr-comment-interrupt"
-          />
-        ) : null}
+      </article>
+    );
+  }
+
+  function renderLineCells(state: RenderedDiffLineState, rowKey: string) {
+    return (
+      <>
+        <div
+          className={[
+            "task-pr-diff-cell",
+            "task-pr-diff-cell--gutter",
+            `task-pr-diff-cell--${state.side}`,
+            `task-pr-diff-cell--${state.kind}`,
+            state.lineThreads.length ? "task-pr-diff-cell--commented" : null,
+            state.isDraftOpen ? "task-pr-diff-cell--draft-open" : null,
+          ].filter(Boolean).join(" ")}
+          key={`${rowKey}:${state.side}:gutter`}
+        >
+          <span className="task-pr-diff-cell__marker" aria-hidden="true">{state.marker}</span>
+          <span className="task-pr-diff-cell__line-number">{state.lineNumber ?? ""}</span>
+          {state.commentable && state.line ? (
+            <button
+              aria-label={`Add review comment on ${state.side} line ${state.lineNumber}`}
+              className={state.lineThreads.length || state.isDraftOpen
+                ? "task-pr-diff-line__comment-button task-pr-diff-line__comment-button--active"
+                : "task-pr-diff-line__comment-button"}
+              data-role="task-pr-comment-line"
+              type="button"
+              onClick={() => openDraft(state.line!)}
+            >
+              💬
+              {state.lineThreads.length ? <span className="task-pr-diff-line__comment-count">{state.lineThreads.length}</span> : null}
+            </button>
+          ) : <span className="task-pr-diff-cell__comment-spacer" aria-hidden="true" />}
+        </div>
+        <div
+          className={[
+            "task-pr-diff-cell",
+            "task-pr-diff-cell--code",
+            `task-pr-diff-cell--${state.side}`,
+            `task-pr-diff-cell--${state.kind}`,
+            state.lineThreads.length ? "task-pr-diff-cell--commented" : null,
+            state.isDraftOpen ? "task-pr-diff-cell--draft-open" : null,
+          ].filter(Boolean).join(" ")}
+          key={`${rowKey}:${state.side}:code`}
+        >
+          <pre className="task-pr-diff-cell__code"><code>{state.line?.content || " "}</code></pre>
+        </div>
+      </>
+    );
+  }
+
+  function renderSupplementalRow(rowKey: string, states: RenderedDiffLineState[]) {
+    const activeStates = states.filter((state) => state.lineThreads.length || state.isDraftOpen);
+    if (!activeStates.length) {
+      return null;
+    }
+
+    return (
+      <div className="task-pr-diff-detail-row" data-role="task-pr-diff-detail-row" key={`${rowKey}:detail`}>
+        <div className="task-pr-diff-detail-row__content">
+          {activeStates.map((state) => (
+            <section className="task-pr-diff-detail-row__section" key={`${rowKey}:${state.side}:detail`}>
+              <div className="task-pr-diff-detail-row__section-header">
+                <span className={`status-badge status-badge--${state.side === "old" ? "warning" : "accent"}`}>
+                  {state.side === "old" ? "Base" : "Current"}
+                </span>
+                {state.lineNumber != null ? <span className="muted-copy">Line {state.lineNumber}</span> : null}
+              </div>
+              {state.lineThreads.length ? (
+                <div className="task-section-list" data-role="task-pr-line-comments">
+                  {state.lineThreads.map((thread) => renderCommentThread(thread))}
+                </div>
+              ) : null}
+              {state.isDraftOpen ? (
+                <TaskCommentComposer
+                  author={draftState?.anchor.author ?? commentAuthor}
+                  authorDataRole="task-pr-comment-author"
+                  className="task-comment-reply-composer task-pr-diff-line__composer"
+                  tasks={tasks}
+                  agents={agents}
+                  roles={roles}
+                  message={draftState?.anchor.message ?? ""}
+                  messageDataRole="task-pr-comment-message"
+                  messageLabel={`Comment on ${state.side} line ${draftState?.anchor.lineStart ?? state.lineNumber ?? ""}`}
+                  mentionListDataRole="task-pr-comment-mention-list"
+                  mentionOptionDataRole="task-pr-comment-mention-option"
+                  messageRef={draftMessageRef}
+                  onAuthorChange={(author) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, author } } : current)}
+                  onInterruptChange={(interruptAgent) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, interruptAgent } } : current)}
+                  onMessageChange={(message) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, message } } : current)}
+                  onSubmit={() => void submitDraft()}
+                  rows={3}
+                  submitDataRole="add-task-pr-comment"
+                  submitLabel="Add review comment"
+                  cancelDataRole="cancel-task-pr-comment"
+                  cancelLabel="Cancel"
+                  onCancel={() => setDraftState(null)}
+                  taskId={taskId}
+                  interruptChecked={draftState?.anchor.interruptAgent ?? false}
+                  interruptDataRole="task-pr-comment-interrupt"
+                />
+              ) : null}
+            </section>
+          ))}
+        </div>
       </div>
     );
   }
@@ -558,36 +683,56 @@ export function TaskDiffViewer({
         </p>
       ) : (
         <div className="task-section-list" data-role="task-pr-diff-hunks">
-          {hunks.map((hunk, hunkIndex) => {
-            const rows = buildSplitDiffRows(hunk);
-            return (
-              <section className="file-content-viewer" key={`${file.displayPath}-${hunkIndex}`}>
-                <div className="file-content-viewer__header">
-                  <span className="field-group__label">{hunk.header}</span>
+          <section className="file-content-viewer" key={file.displayPath}>
+            <div className="task-pr-diff-split-shell">
+              <div className="task-pr-diff-surface">
+                <div className="task-pr-diff-surface__header">
+                  <div className="task-pr-diff-surface__header-cell">Base</div>
+                  <div className="task-pr-diff-surface__header-cell">Current</div>
                 </div>
-                <div className="task-pr-diff-split-shell">
-                  <div className="task-pr-diff-split-table">
-                    <div className="task-pr-diff-split-table__header">
-                      <div className="task-pr-diff-split-table__header-cell">Base</div>
-                      <div className="task-pr-diff-split-table__header-cell">Current</div>
-                    </div>
-                    <div className="task-section-list">
-                      {rows.map((row) => row.metaLine ? (
-                        <div className="task-pr-diff-row task-pr-diff-row--meta" key={row.key}>
-                          <pre className="file-content-viewer__code task-pr-diff-row__meta-code"><code>{row.metaLine.content}</code></pre>
+                {hunks.map((hunk, hunkIndex) => {
+                  const rows = buildSplitDiffRows(hunk);
+                  const gap = hunkIndex > 0 ? buildHunkGap(hunks[hunkIndex - 1], hunk) : null;
+
+                  return (
+                    <div className="task-pr-diff-hunk" key={`${file.displayPath}-${hunkIndex}`}>
+                      {gap ? (
+                        <div className="task-pr-diff-gap" data-role="task-pr-diff-gap">
+                          <span className="task-pr-diff-gap__rule" aria-hidden="true" />
+                          <span className="task-pr-diff-gap__label">{formatGapLabel(gap)}</span>
+                          <span className="task-pr-diff-gap__rule" aria-hidden="true" />
                         </div>
-                      ) : (
-                        <div className="task-pr-diff-row" key={row.key}>
-                          {renderDiffPane("old", row.oldLine, row.key)}
-                          {renderDiffPane("new", row.newLine, row.key)}
-                        </div>
-                      ))}
+                      ) : null}
+                      <div className="task-pr-diff-hunk-header" data-role="task-pr-diff-hunk-header">
+                        <span className="task-pr-diff-hunk-header__label">{hunk.header}</span>
+                      </div>
+                      {rows.map((row) => {
+                        if (row.metaLine) {
+                          return (
+                            <div className="task-pr-diff-meta-row" key={row.key}>
+                              <pre className="task-pr-diff-meta-row__code"><code>{row.metaLine.content}</code></pre>
+                            </div>
+                          );
+                        }
+
+                        const oldState = getRenderedLineState("old", row.oldLine);
+                        const newState = getRenderedLineState("new", row.newLine);
+                        return (
+                          <div className="task-pr-diff-row-group" key={row.key}>
+                            <div className="task-pr-diff-code-row" data-role="task-pr-diff-code-row">
+                              {renderLineCells(oldState, row.key)}
+                              {renderLineCells(newState, row.key)}
+                            </div>
+                            {renderSupplementalRow(row.key, [oldState, newState])}
+                          </div>
+                        );
+                      })}
                     </div>
-                  </div>
-                </div>
-              </section>
-            );
-          })}
+                  );
+                })}
+              </div>
+            </div>
+          </section>
         </div>
       )}
 

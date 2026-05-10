@@ -156,6 +156,10 @@ describe("task PR tab", () => {
     ].join("\n"));
 
     expect(hunks).toHaveLength(1);
+    expect(hunks[0].oldStart).toBe(1);
+    expect(hunks[0].oldCount).toBe(2);
+    expect(hunks[0].newStart).toBe(1);
+    expect(hunks[0].newCount).toBe(3);
     expect(hunks[0].lines.map((line) => line.kind)).toEqual(["context", "del", "add", "add"]);
     expect(hunks[0].lines[1].oldLineNumber).toBe(2);
     expect(hunks[0].lines[2].newLineNumber).toBe(2);
@@ -216,7 +220,7 @@ describe("task PR tab", () => {
     expect(html).toContain("task-pr-file-selection-meta");
   });
 
-  it("renders diff review comments and only exposes inline comment affordances on changed lines", () => {
+  it("renders a continuous multi-hunk diff surface with gap separators and changed-line comment affordances", () => {
     const file: TaskPullRequestFile = {
       repositoryId: "repo-1",
       repositoryName: "Repo 1",
@@ -226,16 +230,21 @@ describe("task PR tab", () => {
       newPath: "src/example.ts",
       displayPath: "src/example.ts",
       origin: "mixed",
-      additions: 2,
-      deletions: 1,
+      additions: 3,
+      deletions: 2,
       isBinary: false,
       patch: [
         "diff --git a/src/example.ts b/src/example.ts",
-        "@@ -1,2 +1,3 @@",
+        "@@ -1,3 +1,4 @@",
         " line one",
         "-line two",
         "+line two changed",
         "+line three",
+        " line four",
+        "@@ -10,2 +11,2 @@",
+        " context ten",
+        "-line eleven",
+        "+line eleven changed",
       ].join("\n"),
     };
     const html = renderToString(
@@ -262,11 +271,16 @@ describe("task PR tab", () => {
     expect(html).toContain("Looks good");
     expect(html).toContain("Outdated comments");
     expect(html).toContain("Outdated now");
-    expect(html).toContain("task-pr-diff-split-table__header-cell");
+    expect(html).toContain("task-pr-diff-surface__header-cell");
+    expect(html).toContain("task-pr-diff-code-row");
+    expect(html).toContain("task-pr-diff-gap");
+    expect(html).toContain("Skipped 6 unchanged lines");
     expect(html).toContain("Base");
     expect(html).toContain("Current");
-    expect(html.match(/data-role="task-pr-comment-line"/g)).toHaveLength(3);
+    expect(html.match(/data-role="task-pr-comment-line"/g)).toHaveLength(5);
     expect(html).toContain("task-pr-diff-line__comment-button");
+    expect(html).not.toContain("task-pr-diff-pane");
+    expect(html).not.toContain("data-role=\"task-pr-diff-line\"");
     expect(html).not.toContain(">Comment<");
   });
 });
