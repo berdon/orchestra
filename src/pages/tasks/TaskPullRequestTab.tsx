@@ -6,6 +6,7 @@ import { TaskDiffViewer } from "../../components/TaskDiffViewer";
 import { TaskCommentMessage } from "../../components/TaskCommentMessage";
 import type {
   AgentSummary,
+  ProjectSummary,
   RoleSummary,
   TaskCommentInput,
   TaskDetail,
@@ -17,6 +18,7 @@ import type {
 
 interface TaskPullRequestTabProps {
   task: TaskDetail;
+  projects: ProjectSummary[];
   tasks: TaskSummary[];
   agents: AgentSummary[];
   roles: RoleSummary[];
@@ -24,6 +26,7 @@ interface TaskPullRequestTabProps {
   initialDetail?: TaskPullRequestDetail | null;
   onAddComment: (draft: TaskCommentInput) => Promise<boolean>;
   onOpenFileReference: (reference: TaskFileReference) => void;
+  onOpenProject: (projectId: string) => void;
   onOpenTask: (taskId: string) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
@@ -45,6 +48,7 @@ function repoCommentPathSet(repository: TaskPullRequestDetail["repositories"][nu
 
 export function TaskPullRequestTab({
   task,
+  projects,
   tasks,
   agents,
   roles,
@@ -52,6 +56,7 @@ export function TaskPullRequestTab({
   initialDetail = null,
   onAddComment,
   onOpenFileReference,
+  onOpenProject,
   onOpenTask,
   onOpenAgent,
   onOpenRole,
@@ -282,11 +287,13 @@ export function TaskPullRequestTab({
                         <TaskCommentMessage
                           dataRole="task-pr-comment-message-link"
                           fileReferences={task.fileReferences}
+                          projects={projects}
                           tasks={tasks}
                           agents={agents}
                           roles={roles}
                           message={thread.comment.message}
                           onOpenFileReference={onOpenFileReference}
+                          onOpenProject={onOpenProject}
                           onOpenTask={onOpenTask}
                           onOpenAgent={onOpenAgent}
                           onOpenRole={onOpenRole}
@@ -304,6 +311,7 @@ export function TaskPullRequestTab({
       {selectedFile ? (
         <TaskDiffViewer
           taskId={task.id}
+          projects={projects}
           tasks={tasks}
           agents={agents}
           roles={roles}
@@ -319,6 +327,7 @@ export function TaskPullRequestTab({
             return success;
           }}
           onOpenFileReference={onOpenFileReference}
+          onOpenProject={onOpenProject}
           onOpenTask={onOpenTask}
           onOpenAgent={onOpenAgent}
           onOpenRole={onOpenRole}

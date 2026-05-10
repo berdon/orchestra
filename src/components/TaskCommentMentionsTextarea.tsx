@@ -3,10 +3,11 @@ import type { MutableRefObject } from "react";
 import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { mapTaskFileMentionAutocompleteCandidates, searchProjectReferenceAutocompleteCandidates, searchProjectTagAutocompleteCandidates } from "../lib/referenceMentions";
 import { useTaskCommentFileMentions } from "../lib/orchestraData/tasks";
-import type { AgentSummary, RoleSummary, TaskSummary } from "../types";
+import type { AgentSummary, ProjectSummary, RoleSummary, TaskSummary } from "../types";
 
 interface TaskCommentMentionsTextareaProps {
   taskId: string;
+  projects: ProjectSummary[];
   tasks: TaskSummary[];
   agents: AgentSummary[];
   roles: RoleSummary[];
@@ -23,6 +24,7 @@ interface TaskCommentMentionsTextareaProps {
 
 export function TaskCommentMentionsTextarea({
   taskId,
+  projects,
   tasks,
   agents,
   roles,
@@ -50,7 +52,7 @@ export function TaskCommentMentionsTextarea({
       sources={[
         {
           trigger: "@",
-          search: async (query) => searchProjectReferenceAutocompleteCandidates(query, { tasks, agents, roles }, 12),
+          search: async (query) => searchProjectReferenceAutocompleteCandidates(query, { projects, tasks, agents, roles }, 12),
         },
         {
           trigger: "#",

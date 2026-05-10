@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   AgentSummary,
+  ProjectSummary,
   RoleSummary,
   TaskComment,
   TaskCommentInput,
@@ -61,6 +62,7 @@ interface RenderedDiffLineState {
 
 interface TaskDiffViewerProps {
   taskId: string;
+  projects: ProjectSummary[];
   tasks: TaskSummary[];
   agents: AgentSummary[];
   roles: RoleSummary[];
@@ -70,6 +72,7 @@ interface TaskDiffViewerProps {
   commentAuthor: string;
   onAddComment: (draft: TaskCommentInput) => Promise<boolean>;
   onOpenFileReference: (reference: TaskFileReference) => void;
+  onOpenProject: (projectId: string) => void;
   onOpenTask: (taskId: string) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
@@ -344,6 +347,7 @@ function formatThreadLabel(thread: TaskCommentThread) {
 
 export function TaskDiffViewer({
   taskId,
+  projects,
   tasks,
   agents,
   roles,
@@ -353,6 +357,7 @@ export function TaskDiffViewer({
   commentAuthor,
   onAddComment,
   onOpenFileReference,
+  onOpenProject,
   onOpenTask,
   onOpenAgent,
   onOpenRole,
@@ -520,11 +525,13 @@ export function TaskDiffViewer({
         <TaskCommentMessage
           dataRole="task-pr-comment-message-link"
           fileReferences={fileReferences}
+          projects={projects}
           tasks={tasks}
           agents={agents}
           roles={roles}
           message={thread.comment.message}
           onOpenFileReference={onOpenFileReference}
+          onOpenProject={onOpenProject}
           onOpenTask={onOpenTask}
           onOpenAgent={onOpenAgent}
           onOpenRole={onOpenRole}
@@ -541,11 +548,13 @@ export function TaskDiffViewer({
                 <TaskCommentMessage
                   dataRole="task-pr-comment-message-link"
                   fileReferences={fileReferences}
+                  projects={projects}
                   tasks={tasks}
                   agents={agents}
                   roles={roles}
                   message={reply.message}
                   onOpenFileReference={onOpenFileReference}
+                  onOpenProject={onOpenProject}
                   onOpenTask={onOpenTask}
                   onOpenAgent={onOpenAgent}
                   onOpenRole={onOpenRole}
@@ -633,6 +642,7 @@ export function TaskDiffViewer({
                   author={draftState?.anchor.author ?? commentAuthor}
                   authorDataRole="task-pr-comment-author"
                   className="task-comment-reply-composer task-pr-diff-line__composer"
+                  projects={projects}
                   tasks={tasks}
                   agents={agents}
                   roles={roles}
@@ -751,11 +761,13 @@ export function TaskDiffViewer({
               <TaskCommentMessage
                 dataRole="task-pr-comment-message-link"
                 fileReferences={fileReferences}
+                projects={projects}
                 tasks={tasks}
                 agents={agents}
                 roles={roles}
                 message={thread.comment.message}
                 onOpenFileReference={onOpenFileReference}
+                onOpenProject={onOpenProject}
                 onOpenTask={onOpenTask}
                 onOpenAgent={onOpenAgent}
                 onOpenRole={onOpenRole}

@@ -1,10 +1,11 @@
 import type { MutableRefObject } from "react";
 
 import { TaskCommentMentionsTextarea } from "./TaskCommentMentionsTextarea";
-import type { AgentSummary, RoleSummary, TaskSummary } from "../types";
+import type { AgentSummary, ProjectSummary, RoleSummary, TaskSummary } from "../types";
 
 interface TaskCommentComposerProps {
   taskId: string;
+  projects: ProjectSummary[];
   tasks: TaskSummary[];
   agents: AgentSummary[];
   roles: RoleSummary[];
@@ -38,6 +39,7 @@ interface TaskCommentComposerProps {
 
 export function TaskCommentComposer({
   taskId,
+  projects,
   tasks,
   agents,
   roles,
@@ -93,6 +95,7 @@ export function TaskCommentComposer({
         <span className="field-group__label">{messageLabel}</span>
         <TaskCommentMentionsTextarea
           taskId={taskId}
+          projects={projects}
           tasks={tasks}
           agents={agents}
           roles={roles}

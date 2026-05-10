@@ -12,7 +12,7 @@ import {
 import { getSessionListMetadata, getSessionListTitle } from "../lib/sessionList";
 import { recordInputPerfRender } from "../lib/testInputPerformance";
 import { useExplanatoryTooltipProps, type ExplanatoryTooltipProps } from "../lib/tooltips";
-import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionSendMode, SessionStats, SessionStatus, TaskSummary } from "../types";
+import type { AgentSummary, PiSetupState, ProjectSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionSendMode, SessionStats, SessionStatus, TaskSummary } from "../types";
 
 function formatListControlLabel(session: SessionRecord) {
   if (session.controlOperation?.status !== "running") {
@@ -179,6 +179,7 @@ const SessionListContent = memo(function SessionListContent({
   && previousProps.hintClassName === nextProps.hintClassName);
 
 interface SessionsPageProps {
+  projects: ProjectSummary[];
   sessions: SessionRecord[];
   referenceTasks: TaskSummary[];
   referenceAgents: AgentSummary[];
@@ -218,6 +219,7 @@ interface SessionsPageProps {
   onDraftChange: (value: string) => void;
   onSendMessage: (mode?: SessionSendMode) => void;
   onStopSession: () => void;
+  onOpenProject: (projectId: string) => void;
   onOpenTask: (taskId: string, projectId?: string | null) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
@@ -230,6 +232,7 @@ interface SessionsPageProps {
 }
 
 export function SessionsPage({
+  projects,
   sessions,
   referenceTasks,
   referenceAgents,
@@ -269,6 +272,7 @@ export function SessionsPage({
   onDraftChange,
   onSendMessage,
   onStopSession,
+  onOpenProject,
   onOpenTask,
   onOpenAgent,
   onOpenRole,
@@ -510,6 +514,7 @@ export function SessionsPage({
         <>
           <SessionChatPanel
             session={selectedSession}
+            projects={projects}
             referenceTasks={referenceTasks}
             referenceAgents={referenceAgents}
             referenceRoles={referenceRoles}
@@ -540,6 +545,7 @@ export function SessionsPage({
             onDraftChange={onDraftChange}
             onSendMessage={onSendMessage}
             onStopSession={onStopSession}
+            onOpenProject={onOpenProject}
             onOpenTask={onOpenTask}
             onOpenAgent={onOpenAgent}
             onOpenRole={onOpenRole}

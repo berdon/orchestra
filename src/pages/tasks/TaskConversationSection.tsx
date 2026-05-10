@@ -8,12 +8,13 @@ import { getTaskCommentDeleteActionState, type TaskCommentDeleteActionState } fr
 import { formatTaskCommentAnchorLabel, isTaskCommentAnchoredToReference } from "../../lib/taskComments";
 import { shouldShowUnreadCommentAttention } from "../../lib/taskUnreadCommentVisibility";
 import { useExplanatoryTooltipProps } from "../../lib/tooltips";
-import type { AgentSummary, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskSummary } from "../../types";
+import type { AgentSummary, ProjectSummary, RoleSummary, TaskComment, TaskCommentInput, TaskDetail, TaskFileReference, TaskSummary } from "../../types";
 
 interface TaskConversationSectionProps {
   task: TaskDetail;
   defaultFile: TaskFileReference | null;
   commentDraft: TaskCommentInput;
+  projects: ProjectSummary[];
   currentTaskTags: string[];
   tasks: TaskSummary[];
   agents: AgentSummary[];
@@ -22,6 +23,7 @@ interface TaskConversationSectionProps {
   onAddComment: (draft: TaskCommentInput) => Promise<boolean>;
   onDeleteComment: (commentId: string) => Promise<boolean>;
   onOpenFileReference: (reference: TaskFileReference) => void;
+  onOpenProject: (projectId: string) => void;
   onOpenTask: (taskId: string) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
@@ -139,6 +141,7 @@ const TaskCommentThreadItem = memo(function TaskCommentThreadItem({
   thread,
   defaultFile,
   taskId,
+  projects,
   currentTaskTags,
   fileReferences,
   tasks,
@@ -146,6 +149,7 @@ const TaskCommentThreadItem = memo(function TaskCommentThreadItem({
   roles,
   deleteAction,
   onOpenFileReference,
+  onOpenProject,
   onOpenTask,
   onOpenAgent,
   onOpenRole,
@@ -156,6 +160,7 @@ const TaskCommentThreadItem = memo(function TaskCommentThreadItem({
   thread: TaskCommentThread;
   defaultFile: TaskFileReference | null;
   taskId: string;
+  projects: ProjectSummary[];
   currentTaskTags: string[];
   fileReferences: TaskFileReference[];
   tasks: TaskSummary[];
@@ -163,6 +168,7 @@ const TaskCommentThreadItem = memo(function TaskCommentThreadItem({
   roles: RoleSummary[];
   deleteAction: TaskCommentDeleteActionState;
   onOpenFileReference: (reference: TaskFileReference) => void;
+  onOpenProject: (projectId: string) => void;
   onOpenTask: (taskId: string) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
@@ -187,11 +193,13 @@ const TaskCommentThreadItem = memo(function TaskCommentThreadItem({
         <TaskCommentMessage
           dataRole="task-comment-mention-link"
           fileReferences={fileReferences}
+          projects={projects}
           tasks={tasks}
           agents={agents}
           roles={roles}
           message={comment.message}
           onOpenFileReference={onOpenFileReference}
+          onOpenProject={onOpenProject}
           onOpenTask={onOpenTask}
           onOpenAgent={onOpenAgent}
           onOpenRole={onOpenRole}
@@ -221,11 +229,13 @@ const TaskCommentThreadItem = memo(function TaskCommentThreadItem({
               <TaskCommentMessage
                 dataRole="task-comment-mention-link"
                 fileReferences={fileReferences}
+                projects={projects}
                 tasks={tasks}
                 agents={agents}
                 roles={roles}
                 message={reply.message}
                 onOpenFileReference={onOpenFileReference}
+                onOpenProject={onOpenProject}
                 onOpenTask={onOpenTask}
                 onOpenAgent={onOpenAgent}
                 onOpenRole={onOpenRole}
@@ -247,6 +257,7 @@ const TaskCommentThreadItem = memo(function TaskCommentThreadItem({
           author={replyComposer.draft.author}
           authorDataRole="task-reply-author"
           className="task-comment-reply-composer"
+          projects={projects}
           tasks={tasks}
           agents={agents}
           roles={roles}
@@ -282,6 +293,7 @@ export function TaskConversationSection({
   task,
   defaultFile,
   commentDraft,
+  projects,
   currentTaskTags,
   tasks,
   agents,
@@ -290,6 +302,7 @@ export function TaskConversationSection({
   onAddComment,
   onDeleteComment,
   onOpenFileReference,
+  onOpenProject,
   onOpenTask,
   onOpenAgent,
   onOpenRole,
@@ -423,6 +436,7 @@ export function TaskConversationSection({
       <TaskCommentComposer
         author={commentDraft.author}
         authorDataRole="task-comment-author"
+        projects={projects}
         tasks={tasks}
         agents={agents}
         roles={roles}
@@ -452,6 +466,7 @@ export function TaskConversationSection({
               thread={thread}
               defaultFile={defaultFile}
               taskId={task.id}
+              projects={projects}
               currentTaskTags={currentTaskTags}
               fileReferences={task.fileReferences}
               tasks={tasks}
@@ -459,6 +474,7 @@ export function TaskConversationSection({
               roles={roles}
               deleteAction={taskCommentDeleteAction}
               onOpenFileReference={onOpenFileReference}
+              onOpenProject={onOpenProject}
               onOpenTask={onOpenTask}
               onOpenAgent={onOpenAgent}
               onOpenRole={onOpenRole}

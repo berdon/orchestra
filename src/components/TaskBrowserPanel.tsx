@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { AgentSummary, RoleSummary, TaskCommentInput, TaskDetail, TaskSummary } from "../types";
+import type { AgentSummary, ProjectSummary, RoleSummary, TaskCommentInput, TaskDetail, TaskSummary } from "../types";
 import { useOrchestraBootstrap, useOrchestraClient } from "../lib/orchestraClient";
 import { formatDomAnchorTarget } from "../lib/taskComments";
 import { TaskCommentComposer } from "./TaskCommentComposer";
 
 interface TaskBrowserPanelProps {
   task: TaskDetail;
+  projects: ProjectSummary[];
   tasks: TaskSummary[];
   agents: AgentSummary[];
   roles: RoleSummary[];
@@ -25,6 +26,7 @@ function createBrowserCommentDraft(author = "User"): TaskCommentInput {
 
 export function TaskBrowserPanel({
   task,
+  projects,
   tasks,
   agents,
   roles,
@@ -244,6 +246,7 @@ export function TaskBrowserPanel({
             <TaskCommentComposer
               author={commentDraft.author}
               authorDataRole="task-browser-comment-author"
+              projects={projects}
               tasks={tasks}
               agents={agents}
               roles={roles}

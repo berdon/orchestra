@@ -294,6 +294,15 @@ test("chat composer autocompletes project tasks, agents, and roles and renders t
   await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("Reviewer");
   await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("Role · reviewer");
 
+  await page.locator('[data-role="composer-input"]').fill("Coordinate in @orc");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("Orchestra");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("Project · orchestra · ORC");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("Autocomplete navigation task");
+
+  await page.locator('[data-role="composer-input"]').fill("Coordinate in @orc-");
+  await expect(page.locator('[data-role="composer-mention-list"]')).not.toContainText("Project · orchestra · ORC");
+  await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("Autocomplete navigation task");
+
   await page.locator('[data-role="composer-input"]').fill("Please follow up on @auto");
   await expect(page.locator('[data-role="composer-mention-list"]')).toContainText("Autocomplete navigation task");
   await page.locator('[data-role="composer-mention-option"]').filter({ hasText: "Autocomplete navigation task" }).click();

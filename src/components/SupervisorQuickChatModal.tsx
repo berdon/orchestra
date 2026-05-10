@@ -4,11 +4,12 @@ import { AutocompleteTextarea } from "./AutocompleteTextarea";
 import { SessionSendControls } from "./SessionSendControls";
 import { TranscriptEventCard } from "./TranscriptEventCard";
 import { buildProjectMentionLookup, searchProjectReferenceAutocompleteCandidates, searchProjectTagAutocompleteCandidates, type ProjectMentionLink } from "../lib/referenceMentions";
-import type { AgentSummary, RoleSummary, SessionEvent, SessionRecord, SessionSendMode, TaskSummary } from "../types";
+import type { AgentSummary, ProjectSummary, RoleSummary, SessionEvent, SessionRecord, SessionSendMode, TaskSummary } from "../types";
 
 function resolveMentionAction(
   reference: ProjectMentionLink | null | undefined,
   actions: {
+    onOpenProject: (projectId: string) => void;
     onOpenTask: (taskId: string) => void;
     onOpenAgent: (agentId: string) => void;
     onOpenRole: (roleId: string) => void;
@@ -16,6 +17,14 @@ function resolveMentionAction(
 ) {
   if (!reference) {
     return null;
+  }
+
+  if (reference.kind === "project" && reference.projectId) {
+    return {
+      key: `project:${reference.projectId}`,
+      label: reference.label,
+      onClick: () => actions.onOpenProject(reference.projectId as string),
+    };
   }
 
   if (reference.kind === "task" && reference.taskId) {
@@ -52,6 +61,7 @@ interface SupervisorQuickChatModalProps {
   draftMessage: string;
   pending: boolean;
   error: string | null;
+  projects: ProjectSummary[];
   referenceTasks: TaskSummary[];
   referenceAgents: AgentSummary[];
   referenceRoles: RoleSummary[];
@@ -60,6 +70,7 @@ interface SupervisorQuickChatModalProps {
   onSend: (mode?: SessionSendMode) => void;
   onClose: () => void;
   onOpenFullSession: () => void;
+  onOpenProject: (projectId: string) => void;
   onOpenTask: (taskId: string) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
@@ -72,6 +83,7 @@ export function SupervisorQuickChatModal({
   draftMessage,
   pending,
   error,
+  projects,
   referenceTasks,
   referenceAgents,
   referenceRoles,
@@ -80,6 +92,7 @@ export function SupervisorQuickChatModal({
   onSend,
   onClose,
   onOpenFullSession,
+  onOpenProject,
   onOpenTask,
   onOpenAgent,
   onOpenRole,
@@ -91,16 +104,17 @@ export function SupervisorQuickChatModal({
     || session?.activityState === "tool_running"
     || session?.activityState === "streaming";
   const projectMentionLookup = useMemo(
-    () => buildProjectMentionLookup({ tasks: referenceTasks, agents: referenceAgents, roles: referenceRoles }),
-    [referenceAgents, referenceRoles, referenceTasks],
+    () => buildProjectMentionLookup({ projects, tasks: referenceTasks, agents: referenceAgents, roles: referenceRoles }),
+    [projects, referenceAgents, referenceRoles, referenceTasks],
   );
   const mentionResolver = useMemo(
     () => (mention: string) => resolveMentionAction(projectMentionLookup.get(mention.trim().toLowerCase()), {
+      onOpenProject,
       onOpenTask,
       onOpenAgent,
       onOpenRole,
     }),
-    [onOpenAgent, onOpenRole, onOpenTask, projectMentionLookup],
+    [onOpenAgent, onOpenProject, onOpenRole, onOpenTask, projectMentionLookup],
   );
 
   useEffect(() => {
@@ -181,6 +195,7 @@ export function SupervisorQuickChatModal({
                 {
                   trigger: "@",
                   search: async (query) => searchProjectReferenceAutocompleteCandidates(query, {
+                    projects,
                     tasks: referenceTasks,
                     agents: referenceAgents,
                     roles: referenceRoles,

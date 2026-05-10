@@ -14,6 +14,7 @@ import { useExplanatoryTooltipProps } from "../lib/tooltips";
 import type {
   AgentSummary,
   MailboxMessage,
+  ProjectSummary,
   RepositoryRecord,
   RoleSummary,
   SessionRecord,
@@ -272,6 +273,7 @@ export interface TasksMobileHeaderContext {
 }
 
 interface TasksPageProps {
+  projects: ProjectSummary[];
   projectId?: string | null;
   createTaskToken?: number;
   createTaskProjectId?: string | null;
@@ -281,6 +283,7 @@ interface TasksPageProps {
   onTaskOverviewStateChange?: (nextState: TaskOverviewState | ((current: TaskOverviewState) => TaskOverviewState)) => void;
   onSelectedTaskIdChange?: (taskId: string | null) => void;
   onOpenTaskTag?: (tag: string) => void;
+  onOpenProject?: (projectId: string) => void;
   onOpenAgent?: (agentId: string) => void;
   onOpenRole?: (roleId: string) => void;
   onOpenSession?: (sessionId: string, projectId?: string | null) => void;
@@ -299,6 +302,7 @@ function stripMobileHeaderActionData(actions: TaskActionMenuAction[]): TasksMobi
 }
 
 export function TasksPage({
+  projects,
   projectId = null,
   createTaskToken = 0,
   createTaskProjectId = null,
@@ -308,6 +312,7 @@ export function TasksPage({
   onTaskOverviewStateChange,
   onSelectedTaskIdChange,
   onOpenTaskTag,
+  onOpenProject,
   onOpenAgent,
   onOpenRole,
   onOpenSession,
@@ -1955,6 +1960,7 @@ export function TasksPage({
           <TaskDetailPage
             agents={agents}
             commentDraft={commentDraft}
+            projects={projects}
             tasks={tasks}
             deleting={deletingTask}
             closing={closingTask}
@@ -1991,6 +1997,7 @@ export function TasksPage({
             onOpenTag={openTaskTagHandler}
             onOpenSession={openSessionHandler}
             onOpenTaskSession={openTaskSessionHandler}
+            onOpenProject={onOpenProject ?? (() => undefined)}
             onOpenAgent={openAgentHandler}
             onOpenRole={openRoleHandler}
             entityLookup={entityLookup}

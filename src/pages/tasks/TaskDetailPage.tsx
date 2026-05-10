@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 
-import type { AgentSummary, MailboxMessage, RepositoryRecord, RoleSummary, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
+import type { AgentSummary, MailboxMessage, ProjectSummary, RepositoryRecord, RoleSummary, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { useTaskFileContent } from "../../lib/orchestraData/tasks";
 import { useExplanatoryTooltipProps } from "../../lib/tooltips";
 import { AgentReferenceLink, RoleReferenceLink, SessionReferenceLink, TaskReferenceLink, WorkerReferenceLink, type EntityReferenceLookup } from "../../components/entity-links";
@@ -74,6 +74,7 @@ interface TaskDetailPageProps {
   dependencyTree: TaskDependencyTreeNode | null;
   dependencyTreeLoading: boolean;
   dependencyViewMode: TaskDependencyViewMode;
+  projects: ProjectSummary[];
   tasks: TaskSummary[];
   workflows: WorkflowSummary[];
   workflowLanes: Array<{ id: string; name: string }>;
@@ -104,6 +105,7 @@ interface TaskDetailPageProps {
   onOpenTag: (tag: string) => void;
   onOpenSession: (sessionId: string, projectId?: string | null) => void;
   onOpenTaskSession: (sessionId: string, projectId?: string | null) => void;
+  onOpenProject: (projectId: string) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
   onDispatch: () => void;
@@ -579,6 +581,7 @@ export function TaskDetailPage({
   dependencyTree,
   dependencyTreeLoading,
   dependencyViewMode,
+  projects,
   tasks,
   workflows,
   workflowLanes,
@@ -609,6 +612,7 @@ export function TaskDetailPage({
   onOpenTag,
   onOpenSession,
   onOpenTaskSession,
+  onOpenProject,
   onOpenAgent,
   onOpenRole,
   onDispatch,
@@ -1208,6 +1212,7 @@ export function TaskDetailPage({
     return (
       <CommentableFileViewer
         taskId={task.id}
+        projects={projects}
         currentTaskTags={task.tags}
         tasks={tasks}
         agents={agents}
@@ -1222,6 +1227,7 @@ export function TaskDetailPage({
         onCommentInterruptChange={handleTopLevelCommentInterruptChange}
         onDeleteComment={onDeleteComment}
         onOpenFileReference={handleOpenCommentFileReference}
+        onOpenProject={onOpenProject}
         onOpenTask={onOpenTask}
         onOpenAgent={onOpenAgent}
         onOpenRole={onOpenRole}
@@ -1561,6 +1567,7 @@ export function TaskDetailPage({
           <section className="task-section" data-role="task-detail-tabpanel-browser">
             <TaskBrowserPanel
               task={task}
+              projects={projects}
               tasks={tasks}
               agents={agents}
               roles={roles}
@@ -1572,12 +1579,14 @@ export function TaskDetailPage({
         return (
           <TaskPullRequestTab
             task={task}
+            projects={projects}
             tasks={tasks}
             agents={agents}
             roles={roles}
             commentAuthor={commentDraft.author}
             onAddComment={onAddComment}
             onOpenFileReference={handleOpenCommentFileReference}
+            onOpenProject={onOpenProject}
             onOpenTask={onOpenTask}
             onOpenAgent={onOpenAgent}
             onOpenRole={onOpenRole}
@@ -2393,6 +2402,7 @@ export function TaskDetailPage({
                 task={task}
                 defaultFile={defaultFile}
                 commentDraft={commentDraft}
+                projects={projects}
                 currentTaskTags={task.tags}
                 tasks={tasks}
                 agents={agents}
@@ -2401,6 +2411,7 @@ export function TaskDetailPage({
                 onAddComment={onAddComment}
                 onDeleteComment={onDeleteComment}
                 onOpenFileReference={handleOpenCommentFileReference}
+                onOpenProject={onOpenProject}
                 onOpenTask={onOpenTask}
                 onOpenAgent={onOpenAgent}
                 onOpenRole={onOpenRole}

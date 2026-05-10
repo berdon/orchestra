@@ -1,6 +1,6 @@
 import { fuzzyScore, fuzzySearch, type FuzzySearchCandidate } from "./fuzzy";
 import { normalizeTaskTags } from "./taskTags";
-import type { AgentSummary, RoleSummary, TaskCommentFileMentionCandidate, TaskFileReference, TaskSummary } from "../types";
+import type { AgentSummary, ProjectSummary, RoleSummary, TaskCommentFileMentionCandidate, TaskFileReference, TaskSummary } from "../types";
 
 export interface ComposerAutocompleteCandidate {
   id: string;
@@ -10,14 +10,16 @@ export interface ComposerAutocompleteCandidate {
 }
 
 export interface ProjectReferenceContext {
+  projects: ProjectSummary[];
   tasks: TaskSummary[];
   agents: AgentSummary[];
   roles: RoleSummary[];
 }
 
 export interface ProjectMentionLink {
-  kind: "task" | "agent" | "role";
+  kind: "project" | "task" | "agent" | "role";
   label: string;
+  projectId?: string;
   taskId?: string;
   agentId?: string;
   roleId?: string;
@@ -41,8 +43,18 @@ interface SearchableTagAutocompleteCandidate extends SearchableAutocompleteCandi
   normalizedTag: string;
 }
 
+interface ProjectAutocompleteCandidate extends SearchableAutocompleteCandidate {
+  projectSlugKey: string;
+  projectPrefixKey: string;
+  projectNameKey: string;
+}
+
 function normalizeToken(token: string) {
   return token.trim().toLowerCase();
+}
+
+function compareAutocompleteStrings(left: string, right: string) {
+  return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
 }
 
 function slugifyTaskTitle(title: string) {
@@ -56,8 +68,25 @@ function getTaskNumberSuffix(taskNumber: string) {
   return segments.length > 1 ? segments[segments.length - 1] : null;
 }
 
+function buildProjectMentionLabel(project: ProjectSummary) {
+  return project.name.trim() || project.slug;
+}
+
 function buildTaskMentionLabel(task: TaskSummary) {
   return `${task.number} ${task.title}`.trim();
+}
+
+function buildProjectAutocompleteItem(project: ProjectSummary): ProjectAutocompleteCandidate {
+  return {
+    id: `project:${project.id}`,
+    label: buildProjectMentionLabel(project),
+    detail: `Project · ${project.slug} · ${project.taskPrefix}`,
+    insertText: `@${project.slug}`,
+    keywords: [project.slug, project.name, project.taskPrefix],
+    projectSlugKey: normalizeToken(project.slug),
+    projectPrefixKey: normalizeToken(project.taskPrefix),
+    projectNameKey: normalizeToken(project.name),
+  };
 }
 
 function buildTaskAutocompleteItem(task: TaskSummary): TaskAutocompleteCandidate {
@@ -79,7 +108,7 @@ function buildTaskAutocompleteItem(task: TaskSummary): TaskAutocompleteCandidate
   };
 }
 
-function buildNonTaskAutocompleteItems({ agents, roles }: Omit<ProjectReferenceContext, "tasks">): SearchableAutocompleteCandidate[] {
+function buildNonTaskAutocompleteItems({ agents, roles }: Omit<ProjectReferenceContext, "projects" | "tasks">): SearchableAutocompleteCandidate[] {
   return [
     ...agents.map((agent) => ({
       id: `agent:${agent.id}`,
@@ -126,6 +155,34 @@ function mapAutocompleteCandidate(item: SearchableAutocompleteCandidate): Compos
   };
 }
 
+function compareProjectAutocompleteItems(left: ProjectAutocompleteCandidate, right: ProjectAutocompleteCandidate) {
+  const prefixComparison = compareAutocompleteStrings(left.projectPrefixKey, right.projectPrefixKey);
+  if (prefixComparison !== 0) {
+    return prefixComparison;
+  }
+
+  const nameComparison = compareAutocompleteStrings(left.label, right.label);
+  if (nameComparison !== 0) {
+    return nameComparison;
+  }
+
+  return compareAutocompleteStrings(left.id, right.id);
+}
+
+function compareTaskAutocompleteItems(left: TaskAutocompleteCandidate, right: TaskAutocompleteCandidate) {
+  const numberComparison = compareAutocompleteStrings(left.taskNumberKey, right.taskNumberKey);
+  if (numberComparison !== 0) {
+    return numberComparison;
+  }
+
+  const titleComparison = compareAutocompleteStrings(left.taskTitleKey, right.taskTitleKey);
+  if (titleComparison !== 0) {
+    return titleComparison;
+  }
+
+  return compareAutocompleteStrings(left.id, right.id);
+}
+
 function getTitleMatchRank(query: string, title: string) {
   if (title === query) {
     return 0;
@@ -144,6 +201,34 @@ function getTitleMatchRank(query: string, title: string) {
   }
 
   return 4;
+}
+
+function getPreciseProjectMatchRank(query: string, item: ProjectAutocompleteCandidate) {
+  if (item.projectPrefixKey === query) {
+    return 0;
+  }
+
+  if (item.projectSlugKey === query) {
+    return 1;
+  }
+
+  if (item.projectNameKey === query) {
+    return 2;
+  }
+
+  if (item.projectPrefixKey.startsWith(query)) {
+    return 3;
+  }
+
+  if (item.projectSlugKey.startsWith(query)) {
+    return 4;
+  }
+
+  if (item.projectNameKey.startsWith(query)) {
+    return 5;
+  }
+
+  return null;
 }
 
 function getPreciseTaskMatchRank(query: string, item: TaskAutocompleteCandidate) {
@@ -174,10 +259,65 @@ function getPreciseTaskMatchRank(query: string, item: TaskAutocompleteCandidate)
   return null;
 }
 
+function searchProjectAutocompleteCandidates(query: string, projects: ProjectSummary[], limit: number) {
+  const items = projects.map(buildProjectAutocompleteItem);
+  if (!query) {
+    return items.sort(compareProjectAutocompleteItems).slice(0, limit).map(mapAutocompleteCandidate);
+  }
+
+  if (query.includes("-")) {
+    return [];
+  }
+
+  const preciseMatches: Array<{ item: ProjectAutocompleteCandidate; rank: number }> = [];
+  const fallbackMatches: Array<{ item: ProjectAutocompleteCandidate; rank: number; fuzzy: number }> = [];
+
+  for (const item of items) {
+    const preciseRank = getPreciseProjectMatchRank(query, item);
+    if (preciseRank !== null) {
+      preciseMatches.push({ item, rank: preciseRank });
+      continue;
+    }
+
+    const fuzzy = fuzzyScore(query, item);
+    if (fuzzy < 0) {
+      continue;
+    }
+
+    fallbackMatches.push({
+      item,
+      rank: getTitleMatchRank(query, item.projectNameKey),
+      fuzzy,
+    });
+  }
+
+  preciseMatches.sort((left, right) => {
+    if (left.rank !== right.rank) {
+      return left.rank - right.rank;
+    }
+    return compareProjectAutocompleteItems(left.item, right.item);
+  });
+
+  fallbackMatches.sort((left, right) => {
+    if (left.rank !== right.rank) {
+      return left.rank - right.rank;
+    }
+    if (right.fuzzy !== left.fuzzy) {
+      return right.fuzzy - left.fuzzy;
+    }
+    return compareProjectAutocompleteItems(left.item, right.item);
+  });
+
+  return [
+    ...preciseMatches.map(({ item }) => mapAutocompleteCandidate(item)),
+    ...fallbackMatches.slice(0, limit).map(({ item }) => mapAutocompleteCandidate(item)),
+  ];
+}
+
 function searchTaskAutocompleteCandidates(query: string, tasks: TaskSummary[], limit: number) {
   const items = tasks.map(buildTaskAutocompleteItem);
   if (!query) {
-    return items.slice(0, limit).map(mapAutocompleteCandidate);
+    return items.sort(compareTaskAutocompleteItems).slice(0, limit).map(mapAutocompleteCandidate);
   }
 
   const preciseMatches: Array<{ item: TaskAutocompleteCandidate; rank: number }> = [];
@@ -206,7 +346,7 @@ function searchTaskAutocompleteCandidates(query: string, tasks: TaskSummary[], l
     if (left.rank !== right.rank) {
       return left.rank - right.rank;
     }
-    return left.item.label.localeCompare(right.item.label);
+    return compareTaskAutocompleteItems(left.item, right.item);
   });
 
   fallbackMatches.sort((left, right) => {
@@ -216,7 +356,7 @@ function searchTaskAutocompleteCandidates(query: string, tasks: TaskSummary[], l
     if (right.fuzzy !== left.fuzzy) {
       return right.fuzzy - left.fuzzy;
     }
-    return left.item.label.localeCompare(right.item.label);
+    return compareTaskAutocompleteItems(left.item, right.item);
   });
 
   return [
@@ -233,14 +373,16 @@ export function searchProjectReferenceAutocompleteCandidates(
   const normalizedQuery = normalizeToken(query);
   if (!normalizedQuery) {
     return [
-      ...context.tasks.map(buildTaskAutocompleteItem),
+      ...context.projects.map(buildProjectAutocompleteItem).sort(compareProjectAutocompleteItems),
+      ...context.tasks.map(buildTaskAutocompleteItem).sort(compareTaskAutocompleteItems),
       ...buildNonTaskAutocompleteItems(context),
     ].slice(0, limit).map(mapAutocompleteCandidate);
   }
 
+  const projectMatches = searchProjectAutocompleteCandidates(normalizedQuery, context.projects, limit);
   const taskMatches = searchTaskAutocompleteCandidates(normalizedQuery, context.tasks, limit);
   const otherMatches = fuzzySearch(normalizedQuery, buildNonTaskAutocompleteItems(context), limit).map(({ item }) => mapAutocompleteCandidate(item));
-  return [...taskMatches, ...otherMatches];
+  return [...projectMatches, ...taskMatches, ...otherMatches];
 }
 
 export function searchProjectTagAutocompleteCandidates(
@@ -276,7 +418,7 @@ export function searchProjectTagAutocompleteCandidates(
     }));
 }
 
-export function buildProjectMentionLookup({ tasks, agents, roles }: ProjectReferenceContext) {
+export function buildProjectMentionLookup({ projects, tasks, agents, roles }: ProjectReferenceContext) {
   const lookup = new Map<string, ProjectMentionLink>();
 
   for (const task of tasks) {
@@ -301,6 +443,20 @@ export function buildProjectMentionLookup({ tasks, agents, roles }: ProjectRefer
       label: role.name,
       roleId: role.id,
     });
+  }
+
+  for (const project of projects) {
+    const entry: ProjectMentionLink = {
+      kind: "project",
+      label: buildProjectMentionLabel(project),
+      projectId: project.id,
+    };
+    lookup.set(normalizeToken(`@${project.slug}`), entry);
+
+    const taskPrefixAlias = normalizeToken(`@${project.taskPrefix}`);
+    if (!lookup.has(taskPrefixAlias)) {
+      lookup.set(taskPrefixAlias, entry);
+    }
   }
 
   return lookup;

@@ -3251,6 +3251,15 @@ test("task comment composer autocompletes tasks, agents, and roles and renders t
   await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("Reviewer");
   await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("Role · reviewer");
 
+  await page.locator('[data-role="task-comment-message"]').fill("Coordinate in @orc");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("Orchestra");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("Project · orchestra · ORC");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("Mention target task");
+
+  await page.locator('[data-role="task-comment-message"]').fill("Coordinate in @orc-");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).not.toContainText("Project · orchestra · ORC");
+  await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("Mention target task");
+
   await page.locator('[data-role="task-comment-message"]').fill("Please review @target");
   await expect(page.locator('[data-role="task-comment-mention-list"]')).toContainText("Mention target task");
   await page.locator('[data-role="task-comment-mention-option"]').filter({ hasText: "Mention target task" }).click();

@@ -12,6 +12,7 @@ import type {
   AgentDefinition,
   AgentSummary,
   PiSetupState,
+  ProjectSummary,
   RoleSummary,
   SessionEvent,
   SessionModelState,
@@ -28,6 +29,7 @@ interface AgentChatPageProps {
   chatAgents: Array<Pick<AgentDefinition, "id" | "name" | "slug">>;
   selectedAgentId: string | null;
   session: SessionRecord | null;
+  projects: ProjectSummary[];
   referenceTasks: TaskSummary[];
   referenceAgents: AgentSummary[];
   referenceRoles: RoleSummary[];
@@ -61,6 +63,7 @@ interface AgentChatPageProps {
   onDraftChange: (value: string) => void;
   onSendMessage: (mode?: SessionSendMode) => void;
   onStopSession: () => void;
+  onOpenProject: (projectId: string) => void;
   onOpenTask: (taskId: string, projectId?: string | null) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
@@ -75,6 +78,7 @@ export function AgentChatPage({
   chatAgents,
   selectedAgentId,
   session,
+  projects,
   referenceTasks,
   referenceAgents,
   referenceRoles,
@@ -108,6 +112,7 @@ export function AgentChatPage({
   onDraftChange,
   onSendMessage,
   onStopSession,
+  onOpenProject,
   onOpenTask,
   onOpenAgent,
   onOpenRole,
@@ -251,6 +256,7 @@ export function AgentChatPage({
         <SessionChatPanel
           session={session}
           title={agent ? `${agent.name} chat` : null}
+          projects={projects}
           referenceTasks={referenceTasks}
           referenceAgents={referenceAgents}
           referenceRoles={referenceRoles}
@@ -281,6 +287,7 @@ export function AgentChatPage({
           onDraftChange={onDraftChange}
           onSendMessage={onSendMessage}
           onStopSession={onStopSession}
+          onOpenProject={onOpenProject}
           onOpenTask={onOpenTask}
           onOpenAgent={onOpenAgent}
           onOpenRole={onOpenRole}

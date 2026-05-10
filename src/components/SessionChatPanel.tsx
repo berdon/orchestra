@@ -11,7 +11,7 @@ import {
 } from "../lib/orchestraData/errors";
 import { recordInputPerfRender } from "../lib/testInputPerformance";
 import { useExplanatoryTooltipProps } from "../lib/tooltips";
-import type { AgentSummary, PiSetupState, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionSendMode, SessionStats, SessionStatus, TaskSummary } from "../types";
+import type { AgentSummary, PiSetupState, ProjectSummary, RoleSummary, SessionActivityState, SessionEvent, SessionModelState, SessionRecord, SessionScrollState, SessionSendMode, SessionStats, SessionStatus, TaskSummary } from "../types";
 
 function formatControlOperationLabel(session: SessionRecord) {
   const operation = session.controlOperation;
@@ -108,6 +108,7 @@ function formatCost(value: number | null | undefined) {
 function resolveMentionAction(
   reference: ProjectMentionLink | null | undefined,
   actions: {
+    onOpenProject: (projectId: string) => void;
     onOpenTask: (taskId: string) => void;
     onOpenAgent: (agentId: string) => void;
     onOpenRole: (roleId: string) => void;
@@ -115,6 +116,14 @@ function resolveMentionAction(
 ) {
   if (!reference) {
     return null;
+  }
+
+  if (reference.kind === "project" && reference.projectId) {
+    return {
+      key: `project:${reference.projectId}`,
+      label: reference.label,
+      onClick: () => actions.onOpenProject(reference.projectId as string),
+    };
   }
 
   if (reference.kind === "task" && reference.taskId) {
@@ -147,6 +156,7 @@ function resolveMentionAction(
 interface SessionChatPanelProps {
   session: SessionRecord | null;
   title?: string | null;
+  projects: ProjectSummary[];
   referenceTasks: TaskSummary[];
   referenceAgents: AgentSummary[];
   referenceRoles: RoleSummary[];
@@ -177,6 +187,7 @@ interface SessionChatPanelProps {
   onDraftChange: (value: string) => void;
   onSendMessage: (mode?: SessionSendMode) => void;
   onStopSession: () => void;
+  onOpenProject: (projectId: string) => void;
   onOpenTask: (taskId: string, projectId?: string | null) => void;
   onOpenAgent: (agentId: string) => void;
   onOpenRole: (roleId: string) => void;
@@ -193,6 +204,7 @@ interface SessionChatPanelProps {
 
 interface SessionComposerProps {
   session: SessionRecord;
+  projects: ProjectSummary[];
   referenceTasks: TaskSummary[];
   referenceAgents: AgentSummary[];
   referenceRoles: RoleSummary[];
@@ -354,6 +366,7 @@ function SessionHeaderActionMenu({
 
 function SessionComposer({
   session,
+  projects,
   referenceTasks,
   referenceAgents,
   referenceRoles,
@@ -405,6 +418,7 @@ function SessionComposer({
     const projectReferenceSource = {
       trigger: "@",
       search: async (query: string) => searchProjectReferenceAutocompleteCandidates(query, {
+        projects,
         tasks: referenceTasks,
         agents: referenceAgents,
         roles: referenceRoles,
@@ -429,7 +443,7 @@ function SessionComposer({
         search: async (query: string) => mapTaskFileMentionAutocompleteCandidates(await searchFileMentions(query, 12)),
       },
     ];
-  }, [activeTaskId, referenceAgents, referenceRoles, referenceTasks, searchFileMentions]);
+  }, [activeTaskId, projects, referenceAgents, referenceRoles, referenceTasks, searchFileMentions]);
 
   function handleComposerSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -752,6 +766,7 @@ const SessionTranscript = memo(function SessionTranscript({
 export function SessionChatPanel({
   session,
   title,
+  projects,
   referenceTasks,
   referenceAgents,
   referenceRoles,
@@ -782,6 +797,7 @@ export function SessionChatPanel({
   onDraftChange,
   onSendMessage,
   onStopSession,
+  onOpenProject,
   onOpenTask,
   onOpenAgent,
   onOpenRole,
@@ -796,17 +812,18 @@ export function SessionChatPanel({
   surface = "default",
 }: SessionChatPanelProps) {
   const projectMentionLookup = useMemo(
-    () => buildProjectMentionLookup({ tasks: referenceTasks, agents: referenceAgents, roles: referenceRoles }),
-    [referenceAgents, referenceRoles, referenceTasks],
+    () => buildProjectMentionLookup({ projects, tasks: referenceTasks, agents: referenceAgents, roles: referenceRoles }),
+    [projects, referenceAgents, referenceRoles, referenceTasks],
   );
 
   const mentionResolver = useMemo(
     () => (mention: string) => resolveMentionAction(projectMentionLookup.get(mention.trim().toLowerCase()), {
+      onOpenProject,
       onOpenTask,
       onOpenAgent,
       onOpenRole,
     }),
-    [onOpenAgent, onOpenRole, onOpenTask, projectMentionLookup],
+    [onOpenAgent, onOpenProject, onOpenRole, onOpenTask, projectMentionLookup],
   );
   const activeTaskId = session?.activeTaskId ?? null;
   const activeTaskProjectId = session?.activeTaskProjectId ?? session?.taskProjectId ?? null;
@@ -872,6 +889,7 @@ export function SessionChatPanel({
 
           <SessionComposer
             session={session}
+            projects={projects}
             referenceTasks={referenceTasks}
             referenceAgents={referenceAgents}
             referenceRoles={referenceRoles}

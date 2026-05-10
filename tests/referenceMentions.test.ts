@@ -1,9 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import { buildProjectMentionLookup, buildTaskFileMentionLookup, searchProjectReferenceAutocompleteCandidates, searchProjectTagAutocompleteCandidates } from "../src/lib/referenceMentions";
-import type { AgentSummary, RoleSummary, TaskFileReference, TaskSummary } from "../src/types";
+import type { AgentSummary, ProjectSummary, RoleSummary, TaskFileReference, TaskSummary } from "../src/types";
 
 const timestamp = new Date().toISOString();
+
+function makeProject(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
+  return {
+    id: overrides.id ?? "project-1",
+    slug: overrides.slug ?? "orchestra",
+    name: overrides.name ?? "Orchestra",
+    description: overrides.description ?? null,
+    taskPrefix: overrides.taskPrefix ?? "ORC",
+    defaultRepositoryId: overrides.defaultRepositoryId ?? null,
+    createdAt: overrides.createdAt ?? timestamp,
+    updatedAt: overrides.updatedAt ?? timestamp,
+  };
+}
 
 function makeTask(overrides: Partial<TaskSummary> = {}): TaskSummary {
   return {
@@ -93,8 +106,34 @@ function makeFileReference(overrides: Partial<TaskFileReference> = {}): TaskFile
 }
 
 describe("referenceMentions", () => {
+  it("surfaces matching projects alongside task, agent, and role results", () => {
+    const candidates = searchProjectReferenceAutocompleteCandidates("orc", {
+      projects: [makeProject()],
+      tasks: [makeTask({ number: "ORC-2", title: "Mention autocomplete work" })],
+      agents: [makeAgent()],
+      roles: [makeRole()],
+    });
+
+    expect(candidates[0]).toMatchObject({
+      id: "project:project-1",
+      insertText: "@orchestra",
+      label: "Orchestra",
+      detail: "Project · orchestra · ORC",
+    });
+    expect(candidates[1]?.insertText).toBe("@ORC-2");
+
+    const hyphenatedCandidates = searchProjectReferenceAutocompleteCandidates("orc-", {
+      projects: [makeProject()],
+      tasks: [makeTask({ number: "ORC-2", title: "Mention autocomplete work" })],
+      agents: [makeAgent()],
+      roles: [makeRole()],
+    });
+    expect(hyphenatedCandidates.some((candidate) => candidate.id.startsWith("project:"))).toBe(false);
+  });
+
   it("prefers task numbers while still matching task titles, agent slugs, and role names", () => {
     const candidates = searchProjectReferenceAutocompleteCandidates("orc", {
+      projects: [],
       tasks: [makeTask({ title: "Mention autocomplete work" })],
       agents: [makeAgent()],
       roles: [makeRole()],
@@ -104,6 +143,7 @@ describe("referenceMentions", () => {
     expect(candidates[0]?.label).toBe("ORC-1 Mention autocomplete work");
 
     const agentCandidates = searchProjectReferenceAutocompleteCandidates("super", {
+      projects: [],
       tasks: [],
       agents: [makeAgent()],
       roles: [makeRole()],
@@ -111,6 +151,7 @@ describe("referenceMentions", () => {
     expect(agentCandidates[0]?.insertText).toBe("@supervisor");
 
     const roleCandidates = searchProjectReferenceAutocompleteCandidates("review", {
+      projects: [],
       tasks: [],
       agents: [],
       roles: [makeRole()],
@@ -120,6 +161,7 @@ describe("referenceMentions", () => {
 
   it("matches exact slug queries while keeping inserted mentions canonical", () => {
     const candidates = searchProjectReferenceAutocompleteCandidates("fix-task-slug-autocomplete", {
+      projects: [],
       tasks: [
         makeTask({ id: "task-253", number: "ORC-253", title: "Fix task slug autocomplete" }),
         makeTask({ id: "task-254", number: "ORC-254", title: "Different task" }),
@@ -136,17 +178,19 @@ describe("referenceMentions", () => {
     });
   });
 
-  it("prefers exact and prefix task-number matches before broader suffix matches", () => {
+  it("sorts exact and prefix task-number matches numerically by task ID", () => {
     const candidates = searchProjectReferenceAutocompleteCandidates("253", {
+      projects: [],
       tasks: [
-        makeTask({ id: "task-253", number: "ORC-253", title: "Exact number task" }),
         makeTask({ id: "task-2530", number: "ORC-2530", title: "Prefix number task" }),
+        makeTask({ id: "task-253", number: "ORC-253", title: "Exact number task" }),
+        makeTask({ id: "task-25300", number: "ORC-25300", title: "Later prefix number task" }),
       ],
       agents: [],
       roles: [],
     });
 
-    expect(candidates.map((candidate) => candidate.insertText)).toEqual(["@ORC-253", "@ORC-2530"]);
+    expect(candidates.map((candidate) => candidate.insertText)).toEqual(["@ORC-253", "@ORC-2530", "@ORC-25300"]);
   });
 
   it("returns all precise slug-prefix task matches even when they exceed the fallback limit", () => {
@@ -157,6 +201,7 @@ describe("referenceMentions", () => {
     }));
 
     const candidates = searchProjectReferenceAutocompleteCandidates("fix-task-slug-autocomplete", {
+      projects: [],
       tasks,
       agents: [],
       roles: [],
@@ -166,8 +211,7 @@ describe("referenceMentions", () => {
     expect(candidates.every((candidate) => candidate.insertText.startsWith("@ORC-"))).toBe(true);
     expect(candidates.map((candidate) => candidate.label)).toEqual(
       tasks
-        .map((task) => `${task.number} ${task.title}`)
-        .sort((left, right) => left.localeCompare(right)),
+        .map((task) => `${task.number} ${task.title}`),
     );
   });
 
@@ -189,13 +233,16 @@ describe("referenceMentions", () => {
     expect(candidates.map((candidate) => candidate.insertText)).toEqual(["#ops", "#openapi"]);
   });
 
-  it("builds rich lookup labels for project mentions", () => {
+  it("builds rich lookup labels for project and task mentions", () => {
     const lookup = buildProjectMentionLookup({
+      projects: [makeProject({ id: "project-2", slug: "orchestra", name: "Orchestra", taskPrefix: "ORC" })],
       tasks: [makeTask({ id: "task-2", number: "ORC-2", title: "Link task mentions" })],
       agents: [makeAgent({ id: "agent-2", slug: "data", name: "Data" })],
       roles: [makeRole({ id: "role-2", slug: "qa", name: "QA" })],
     });
 
+    expect(lookup.get("@orchestra")).toMatchObject({ kind: "project", label: "Orchestra", projectId: "project-2" });
+    expect(lookup.get("@orc")).toMatchObject({ kind: "project", label: "Orchestra", projectId: "project-2" });
     expect(lookup.get("@orc-2")).toMatchObject({ kind: "task", label: "ORC-2 Link task mentions", taskId: "task-2" });
     expect(lookup.get("@data")).toMatchObject({ kind: "agent", label: "Data", agentId: "agent-2" });
     expect(lookup.get("@qa")).toMatchObject({ kind: "role", label: "QA", roleId: "role-2" });

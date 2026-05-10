@@ -6687,6 +6687,7 @@ export function App() {
               ) : activePage === "chat" ? (
                 <AgentChatPage
                   agent={selectedChatAgent}
+                  projects={projects}
                   chatAgents={chatAgents.map(
                     (agentSnapshot) => agentSnapshot.agent,
                   )}
@@ -6759,6 +6760,7 @@ export function App() {
                       handleStopSession(chatSession.id);
                     }
                   }}
+                  onOpenProject={handleProjectSelection}
                   onOpenTask={navigateToTask}
                   onOpenAgent={navigateToChatAgent}
                   onOpenRole={navigateToRole}
@@ -6799,6 +6801,7 @@ export function App() {
                 />
               ) : activePage === "sessions" ? (
                 <SessionsPage
+                  projects={projects}
                   sessions={filteredSessions}
                   referenceTasks={referenceTasks}
                   referenceAgents={referenceAgents}
@@ -6860,6 +6863,7 @@ export function App() {
                   onDraftChange={handleSelectedSessionDraftChange}
                   onSendMessage={handleSelectedSessionSend}
                   onStopSession={handleSelectedSessionStop}
+                  onOpenProject={handleProjectSelection}
                   onOpenTask={navigateToTask}
                   onOpenAgent={navigateToChatAgent}
                   onOpenRole={navigateToRole}
@@ -6888,6 +6892,7 @@ export function App() {
                 />
               ) : (
                 <TasksPage
+                  projects={projects}
                   createTaskProjectId={tasksCreateProjectId}
                   createTaskToken={tasksCreateToken}
                   key={activeProject?.id ?? "default"}
@@ -6899,6 +6904,7 @@ export function App() {
                   onTaskOverviewStateChange={setTaskOverviewState}
                   onSelectedTaskIdChange={setSelectedTaskId}
                   onOpenTaskTag={navigateToTasksOverview}
+                  onOpenProject={handleProjectSelection}
                   onOpenAgent={navigateToChatAgent}
                   onOpenRole={navigateToRole}
                   onOpenSession={navigateToSession}
@@ -6942,6 +6948,7 @@ export function App() {
           <Suspense fallback={null}>
             <SupervisorQuickChatModal
               draftMessage={supervisorSessionDraftMessage}
+              projects={projects}
               error={visibleSupervisorSessionActionError?.message ?? null}
               events={supervisorSession?.events ?? []}
               referenceTasks={referenceTasks}
@@ -6968,6 +6975,7 @@ export function App() {
                   setSupervisorQuickChatOpen(false);
                 }
               }}
+              onOpenProject={handleProjectSelection}
               onOpenTask={navigateToTask}
               onOpenAgent={navigateToChatAgent}
               onOpenRole={navigateToRole}
