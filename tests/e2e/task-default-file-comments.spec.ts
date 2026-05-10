@@ -175,6 +175,7 @@ test("task detail supports quick comments, line comments, replies, and viewer co
     });
   });
   await expect(page.locator('[data-role="default-file-comment-popover"]')).toBeVisible();
+  await expect(page.locator('[data-role="default-file-comment-message"]')).toBeFocused();
   await page.locator('[data-role="default-file-comment-popover"]').getByRole("textbox", { name: "Comment" }).fill("Please revisit this line.");
   await page.locator('[data-role="add-default-file-comment"]').click();
   await expect(page.locator('[data-role="default-file-comment-popover"]')).toHaveCount(0);
@@ -191,6 +192,26 @@ test("task detail supports quick comments, line comments, replies, and viewer co
       viewer.scrollTop = 0;
     }
   });
+  await page.evaluate(() => {
+    const button = document.querySelector('[data-role="default-file-line-comment-button"][data-line-number="4"]') as HTMLButtonElement | null;
+    if (!button) {
+      throw new Error("Line 4 comment button was not available.");
+    }
+    button.click();
+  });
+  await expect(page.locator('[data-role="default-file-comment-popover"]')).toContainText("Line 4");
+  await expect(page.locator('[data-role="default-file-comment-message"]')).toBeFocused();
+  await page.evaluate(() => {
+    const button = document.querySelector('[data-role="default-file-line-comment-button"][data-line-number="5"]') as HTMLButtonElement | null;
+    if (!button) {
+      throw new Error("Line 5 comment button was not available.");
+    }
+    button.click();
+  });
+  await expect(page.locator('[data-role="default-file-comment-popover"]')).toContainText("Line 5");
+  await expect(page.locator('[data-role="default-file-comment-message"]')).toBeFocused();
+  await page.locator('[data-role="cancel-default-file-comment"]').click();
+  await expect(page.locator('[data-role="default-file-comment-popover"]')).toHaveCount(0);
   await page.evaluate(() => {
     const button = document.querySelector('[data-role="default-file-line-comment-button"][data-line-number="3"]') as HTMLButtonElement | null;
     if (!button) {

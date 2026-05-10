@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   AgentSummary,
@@ -283,6 +283,7 @@ export function TaskDiffViewer({
   onOpenRole,
 }: TaskDiffViewerProps) {
   const hunks = useMemo(() => parseUnifiedDiff(file.patch), [file.patch]);
+  const draftMessageRef = useRef<HTMLTextAreaElement | null>(null);
   const threads = useMemo(
     () => buildTaskCommentThreads(comments).filter((thread) => commentMatchesFile(thread.comment, file)),
     [comments, file],
@@ -300,6 +301,7 @@ export function TaskDiffViewer({
     return keys;
   }, [hunks]);
   const [draftState, setDraftState] = useState<DraftState | null>(null);
+  const [draftFocusToken, setDraftFocusToken] = useState(0);
 
   useEffect(() => {
     setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, author: commentAuthor } } : current);
@@ -308,6 +310,28 @@ export function TaskDiffViewer({
   useEffect(() => {
     setDraftState(null);
   }, [file.displayPath]);
+
+  useEffect(() => {
+    if (!draftState || draftFocusToken === 0) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const messageField = draftMessageRef.current;
+      if (!messageField) {
+        return;
+      }
+      try {
+        messageField.focus({ preventScroll: true });
+      } catch {
+        messageField.focus();
+      }
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [Boolean(draftState), draftFocusToken]);
 
   const currentThreads = useMemo(
     () => threads.filter((thread) => threadTouchesRenderedLine(thread, renderedLineKeys)),
@@ -360,36 +384,37 @@ export function TaskDiffViewer({
     if (!lineStart || !nextLineKey) {
       return;
     }
-    setDraftState((current) => {
-      if (current?.lineKey === nextLineKey) {
-        return null;
-      }
-      return {
-        side,
-        lineKey: nextLineKey,
-        anchor: {
-          author: commentAuthor,
-          message: "",
-          interruptAgent: false,
+    if (draftState?.lineKey === nextLineKey) {
+      setDraftState(null);
+      return;
+    }
+
+    setDraftState({
+      side,
+      lineKey: nextLineKey,
+      anchor: {
+        author: commentAuthor,
+        message: "",
+        interruptAgent: false,
+        repositoryId: file.repositoryId,
+        relativePath: file.newPath ?? file.oldPath ?? file.displayPath,
+        lineStart,
+        lineEnd: lineStart,
+        selectedText: line.content,
+        diffAnchor: {
+          kind: "task_pr",
           repositoryId: file.repositoryId,
-          relativePath: file.newPath ?? file.oldPath ?? file.displayPath,
-          lineStart,
-          lineEnd: lineStart,
-          selectedText: line.content,
-          diffAnchor: {
-            kind: "task_pr",
-            repositoryId: file.repositoryId,
-            oldPath: file.oldPath ?? null,
-            newPath: file.newPath ?? null,
-            side,
-            oldLineStart: side === "old" ? line.oldLineNumber : null,
-            oldLineEnd: side === "old" ? line.oldLineNumber : null,
-            newLineStart: side === "new" ? line.newLineNumber : null,
-            newLineEnd: side === "new" ? line.newLineNumber : null,
-          },
+          oldPath: file.oldPath ?? null,
+          newPath: file.newPath ?? null,
+          side,
+          oldLineStart: side === "old" ? line.oldLineNumber : null,
+          oldLineEnd: side === "old" ? line.oldLineNumber : null,
+          newLineStart: side === "new" ? line.newLineNumber : null,
+          newLineEnd: side === "new" ? line.newLineNumber : null,
         },
-      };
+      },
     });
+    setDraftFocusToken((current) => current + 1);
   }
 
   function renderDiffPane(side: "old" | "new", line: ParsedDiffLine | null, rowKey: string) {
@@ -494,6 +519,7 @@ export function TaskDiffViewer({
             messageLabel={`Comment on ${draftState.side} line ${draftState.anchor.lineStart}`}
             mentionListDataRole="task-pr-comment-mention-list"
             mentionOptionDataRole="task-pr-comment-mention-option"
+            messageRef={draftMessageRef}
             onAuthorChange={(author) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, author } } : current)}
             onInterruptChange={(interruptAgent) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, interruptAgent } } : current)}
             onMessageChange={(message) => setDraftState((current) => current ? { ...current, anchor: { ...current.anchor, message } } : current)}

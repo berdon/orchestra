@@ -248,8 +248,10 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const selectionSyncFrameRef = useRef<number | null>(null);
   const selectionInteractionModeRef = useRef<"pointer" | "keyboard" | null>(null);
+  const floatingCommentMessageRef = useRef<HTMLTextAreaElement | null>(null);
   const [selectionAction, setSelectionAction] = useState<SelectionCommentAction | null>(null);
   const [floatingComment, setFloatingComment] = useState<FloatingCommentState | null>(null);
+  const [floatingCommentFocusToken, setFloatingCommentFocusToken] = useState(0);
   const [threadPopover, setThreadPopover] = useState<ThreadPopoverState | null>(null);
   const [replyTargetCommentId, setReplyTargetCommentId] = useState<string | null>(null);
   const [replyMessage, setReplyMessage] = useState("");
@@ -314,6 +316,28 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
     setEditingMessage("");
     cancelPendingSelectionSync();
   }, [cancelPendingSelectionSync, content, reference.absolutePath, reference.id, setSelectionInteractionMode]);
+
+  useEffect(() => {
+    if (!floatingComment || floatingCommentFocusToken === 0) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const messageField = floatingCommentMessageRef.current;
+      if (!messageField) {
+        return;
+      }
+      try {
+        messageField.focus({ preventScroll: true });
+      } catch {
+        messageField.focus();
+      }
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [Boolean(floatingComment), floatingCommentFocusToken]);
 
   useEffect(() => {
     const openSelectionComment = () => {
@@ -447,6 +471,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
       left: position.left,
       message: "",
     });
+    setFloatingCommentFocusToken((current) => current + 1);
     setSelectionAction(null);
     setReplyTargetCommentId(null);
     setReplyMessage("");
@@ -776,6 +801,7 @@ export const CommentableFileViewer = memo(function CommentableFileViewer({
               messageLabel="Comment"
               mentionListDataRole="default-file-comment-mention-list"
               mentionOptionDataRole="default-file-comment-mention-option"
+              messageRef={floatingCommentMessageRef}
               onInterruptChange={onCommentInterruptChange}
               onMessageChange={(message) => setFloatingComment((current) => current ? { ...current, message } : current)}
               onSubmit={() => void submitFloatingComment()}

@@ -139,6 +139,11 @@ describe("desktop default-file anchored task comments", () => {
         return true;
       `);
       await waitForText(sessionId, 'Line 3');
+      const focusedLineCommentMessage = await executeScript<string | null>(sessionId, `
+        const active = document.activeElement;
+        return active instanceof HTMLTextAreaElement ? active.getAttribute('data-role') : null;
+      `);
+      expect(focusedLineCommentMessage).toBe('default-file-comment-message');
       await setInputValue(sessionId, '[data-role="default-file-comment-message"]', 'Please revisit this line.');
       await clickSelector(sessionId, '[data-role="add-default-file-comment"]');
       await waitForText(sessionId, 'Please revisit this line.');
@@ -158,6 +163,35 @@ describe("desktop default-file anchored task comments", () => {
         }
         return true;
       `);
+      await executeScript(sessionId, `
+        const button = document.querySelector('[data-role="default-file-line-comment-button"][data-line-number="4"]');
+        if (!(button instanceof HTMLButtonElement)) {
+          throw new Error('Line 4 comment button was not available');
+        }
+        button.click();
+        return true;
+      `);
+      await waitForText(sessionId, 'Line 4');
+      const focusedLineFourMessage = await executeScript<string | null>(sessionId, `
+        const active = document.activeElement;
+        return active instanceof HTMLTextAreaElement ? active.getAttribute('data-role') : null;
+      `);
+      expect(focusedLineFourMessage).toBe('default-file-comment-message');
+      await executeScript(sessionId, `
+        const button = document.querySelector('[data-role="default-file-line-comment-button"][data-line-number="5"]');
+        if (!(button instanceof HTMLButtonElement)) {
+          throw new Error('Line 5 comment button was not available');
+        }
+        button.click();
+        return true;
+      `);
+      await waitForText(sessionId, 'Line 5');
+      const focusedLineFiveMessage = await executeScript<string | null>(sessionId, `
+        const active = document.activeElement;
+        return active instanceof HTMLTextAreaElement ? active.getAttribute('data-role') : null;
+      `);
+      expect(focusedLineFiveMessage).toBe('default-file-comment-message');
+      await clickSelector(sessionId, '[data-role="cancel-default-file-comment"]');
       await executeScript(sessionId, `
         const button = document.querySelector('[data-role="default-file-line-comment-button"][data-line-number="3"]');
         if (!(button instanceof HTMLButtonElement)) {
