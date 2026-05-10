@@ -5,7 +5,11 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 type AuthorizationContext = { actorType: string; actorId: string } | null;
-type OrchestraToolDefinition = { name: string; description: string; requiredPermission: string };
+type OrchestraToolDefinition = {
+  name: string;
+  description: string;
+  requiredPermission: string;
+};
 
 type TaskInputParams = {
   title: string;
@@ -37,6 +41,12 @@ type RepositoryInputParams = {
   defaultBranch?: string;
 };
 
+type PaginationParams = {
+  page?: number;
+  pageSize?: number;
+  countOnly?: boolean;
+};
+
 type BridgeConfig = {
   bridgeUrl: string;
   token: string;
@@ -60,9 +70,21 @@ export function getBridgeConfig() {
     return null;
   }
 
-  const allowedCommands = JSON.parse(allowedCommandsRaw) as OrchestraToolDefinition[];
-  const authorization = authorizationRaw ? (JSON.parse(authorizationRaw) as AuthorizationContext) : null;
-  return { bridgeUrl, token, bridgeInstanceId, clientId, sessionId, allowedCommands, authorization } satisfies BridgeConfig;
+  const allowedCommands = JSON.parse(
+    allowedCommandsRaw,
+  ) as OrchestraToolDefinition[];
+  const authorization = authorizationRaw
+    ? (JSON.parse(authorizationRaw) as AuthorizationContext)
+    : null;
+  return {
+    bridgeUrl,
+    token,
+    bridgeInstanceId,
+    clientId,
+    sessionId,
+    allowedCommands,
+    authorization,
+  } satisfies BridgeConfig;
 }
 
 function isTransientBridgeFetchError(error: unknown) {
@@ -71,7 +93,11 @@ function isTransientBridgeFetchError(error: unknown) {
   }
 
   const message = error.message.toLowerCase();
-  return message.includes("fetch failed") || message.includes("econnrefused") || message.includes("econnreset");
+  return (
+    message.includes("fetch failed") ||
+    message.includes("econnrefused") ||
+    message.includes("econnreset")
+  );
 }
 
 async function delay(ms: number) {
@@ -108,9 +134,15 @@ async function invokeBridge(command: string, payload: Record<string, unknown>) {
         }),
       });
 
-      const body = (await response.json()) as { success: boolean; data?: unknown; error?: string };
+      const body = (await response.json()) as {
+        success: boolean;
+        data?: unknown;
+        error?: string;
+      };
       if (!body.success) {
-        throw new Error(body.error ?? `Orchestra bridge command failed: ${command}`);
+        throw new Error(
+          body.error ?? `Orchestra bridge command failed: ${command}`,
+        );
       }
 
       return body.data;
@@ -123,7 +155,10 @@ async function invokeBridge(command: string, payload: Record<string, unknown>) {
     }
   }
 
-  const message = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown error");
+  const message =
+    lastError instanceof Error
+      ? lastError.message
+      : String(lastError ?? "unknown error");
   throw new Error(`Orchestra bridge request failed for ${command}: ${message}`);
 }
 
@@ -150,7 +185,9 @@ type RegisteredBridgeTool = {
 function summarizeParameterType(schema: HelpParameterSchema) {
   const variants = schema.anyOf ?? schema.oneOf;
   if (variants?.length) {
-    return variants.map((variant) => summarizeParameterType(variant)).join(" | ");
+    return variants
+      .map((variant) => summarizeParameterType(variant))
+      .join(" | ");
   }
   if (schema.type === "array") {
     return `array<${schema.items ? summarizeParameterType(schema.items) : "unknown"}>`;
@@ -158,7 +195,11 @@ function summarizeParameterType(schema: HelpParameterSchema) {
   return schema.type ?? "unknown";
 }
 
-function summarizeParameterSchema(name: string | null, schema: HelpParameterSchema, required: boolean) {
+function summarizeParameterSchema(
+  name: string | null,
+  schema: HelpParameterSchema,
+  required: boolean,
+) {
   const summary: Record<string, unknown> = {
     ...(name ? { name } : {}),
     type: summarizeParameterType(schema),
@@ -176,8 +217,13 @@ function summarizeParameterSchema(name: string | null, schema: HelpParameterSche
 
   if (schema.properties) {
     const nestedRequired = new Set(schema.required ?? []);
-    summary.properties = Object.entries(schema.properties).map(([childName, childSchema]) =>
-      summarizeParameterSchema(childName, childSchema, nestedRequired.has(childName)),
+    summary.properties = Object.entries(schema.properties).map(
+      ([childName, childSchema]) =>
+        summarizeParameterSchema(
+          childName,
+          childSchema,
+          nestedRequired.has(childName),
+        ),
     );
   }
 
@@ -191,12 +237,17 @@ function summarizeParameterSchema(name: string | null, schema: HelpParameterSche
 function summarizeToolParameters(tool?: { parameters?: HelpParameterSchema }) {
   const properties = tool?.parameters?.properties ?? {};
   const required = new Set(tool?.parameters?.required ?? []);
-  return Object.entries(properties).map(([name, schema]) => summarizeParameterSchema(name, schema, required.has(name)));
+  return Object.entries(properties).map(([name, schema]) =>
+    summarizeParameterSchema(name, schema, required.has(name)),
+  );
 }
 
 function buildAllowedCommandHelp(allowedCommands: OrchestraToolDefinition[]) {
   return allowedCommands
-    .map((tool) => `- ${tool.name} (${tool.requiredPermission}) — ${tool.description}`)
+    .map(
+      (tool) =>
+        `- ${tool.name} (${tool.requiredPermission}) — ${tool.description}`,
+    )
     .join("\n");
 }
 
@@ -217,7 +268,9 @@ function resolveHelpResult(
     throw new Error(`Command ${command} is not available in this session.`);
   }
 
-  const bridgeTool = registeredBridgeTools.find((tool) => tool.name === command);
+  const bridgeTool = registeredBridgeTools.find(
+    (tool) => tool.name === command,
+  );
   return {
     command: allowed.name,
     description: allowed.description,
@@ -238,19 +291,35 @@ export function parseInputJson(inputJson: unknown) {
 function buildTaskInput(params: TaskInputParams) {
   return {
     title: params.title,
-    ...(params.description !== undefined ? { description: params.description } : {}),
+    ...(params.description !== undefined
+      ? { description: params.description }
+      : {}),
     type: params.type ?? "task",
     status: params.status ?? "ready",
     priority: params.priority ?? "P2",
-    ...(params.workflowId !== undefined ? { workflowId: params.workflowId } : {}),
-    ...(params.currentLaneId !== undefined ? { currentLaneId: params.currentLaneId } : {}),
+    ...(params.workflowId !== undefined
+      ? { workflowId: params.workflowId }
+      : {}),
+    ...(params.currentLaneId !== undefined
+      ? { currentLaneId: params.currentLaneId }
+      : {}),
     assigneeType: params.assigneeType ?? "unassigned",
-    ...(params.assigneeId !== undefined ? { assigneeId: params.assigneeId } : {}),
-    ...(params.repositoryId !== undefined ? { repositoryId: params.repositoryId } : {}),
-    ...(params.repositoryIds !== undefined ? { repositoryIds: params.repositoryIds } : {}),
-    ...(params.parentTaskId !== undefined ? { parentTaskId: params.parentTaskId } : {}),
+    ...(params.assigneeId !== undefined
+      ? { assigneeId: params.assigneeId }
+      : {}),
+    ...(params.repositoryId !== undefined
+      ? { repositoryId: params.repositoryId }
+      : {}),
+    ...(params.repositoryIds !== undefined
+      ? { repositoryIds: params.repositoryIds }
+      : {}),
+    ...(params.parentTaskId !== undefined
+      ? { parentTaskId: params.parentTaskId }
+      : {}),
     ...(params.tags !== undefined ? { tags: params.tags } : {}),
-    ...(params.whipMaxAttempts !== undefined ? { whipMaxAttempts: params.whipMaxAttempts } : {}),
+    ...(params.whipMaxAttempts !== undefined
+      ? { whipMaxAttempts: params.whipMaxAttempts }
+      : {}),
     ...(params.archived !== undefined ? { archived: params.archived } : {}),
   };
 }
@@ -258,7 +327,9 @@ function buildTaskInput(params: TaskInputParams) {
 function buildProjectInput(params: ProjectInputParams) {
   return {
     name: params.name,
-    ...(params.description !== undefined ? { description: params.description } : {}),
+    ...(params.description !== undefined
+      ? { description: params.description }
+      : {}),
   };
 }
 
@@ -266,8 +337,12 @@ function buildRepositoryInput(params: RepositoryInputParams) {
   return {
     name: params.name,
     ...(params.mode !== undefined ? { mode: params.mode } : {}),
-    ...(params.repositoryPath !== undefined ? { repositoryPath: params.repositoryPath } : {}),
-    ...(params.defaultBranch !== undefined ? { defaultBranch: params.defaultBranch } : {}),
+    ...(params.repositoryPath !== undefined
+      ? { repositoryPath: params.repositoryPath }
+      : {}),
+    ...(params.defaultBranch !== undefined
+      ? { defaultBranch: params.defaultBranch }
+      : {}),
   };
 }
 
@@ -332,7 +407,9 @@ type TaskAttachmentFileParams = {
   base64Data?: never;
 };
 
-type TaskAttachmentParams = TaskAttachmentBase64Params | TaskAttachmentFileParams;
+type TaskAttachmentParams =
+  | TaskAttachmentBase64Params
+  | TaskAttachmentFileParams;
 
 type BridgeTaskAttachmentInput = {
   fileName: string;
@@ -356,32 +433,52 @@ type ResolvedTaskAttachmentInput = {
 function buildAgentInput(params: AgentInputParams) {
   return {
     name: params.name,
-    ...(params.description !== undefined ? { description: params.description } : {}),
-    ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
+    ...(params.description !== undefined
+      ? { description: params.description }
+      : {}),
+    ...(params.systemPrompt !== undefined
+      ? { systemPrompt: params.systemPrompt }
+      : {}),
     ...(params.provider !== undefined ? { provider: params.provider } : {}),
     ...(params.model !== undefined ? { model: params.model } : {}),
     ...(params.roleId !== undefined ? { roleId: params.roleId } : {}),
     ...(params.scope !== undefined ? { scope: params.scope } : {}),
     ...(params.projectId !== undefined ? { projectId: params.projectId } : {}),
-    ...(params.thinkingLevel !== undefined ? { thinkingLevel: params.thinkingLevel } : {}),
-    ...(params.compactionWindow !== undefined ? { compactionWindow: params.compactionWindow } : {}),
+    ...(params.thinkingLevel !== undefined
+      ? { thinkingLevel: params.thinkingLevel }
+      : {}),
+    ...(params.compactionWindow !== undefined
+      ? { compactionWindow: params.compactionWindow }
+      : {}),
     ...(params.policyIds !== undefined ? { policyIds: params.policyIds } : {}),
-    ...(params.directPermissions !== undefined ? { directPermissions: params.directPermissions } : {}),
+    ...(params.directPermissions !== undefined
+      ? { directPermissions: params.directPermissions }
+      : {}),
   };
 }
 
 function buildRoleInput(params: RoleInputParams) {
   return {
     name: params.name,
-    ...(params.description !== undefined ? { description: params.description } : {}),
-    ...(params.systemPrompt !== undefined ? { systemPrompt: params.systemPrompt } : {}),
+    ...(params.description !== undefined
+      ? { description: params.description }
+      : {}),
+    ...(params.systemPrompt !== undefined
+      ? { systemPrompt: params.systemPrompt }
+      : {}),
     ...(params.provider !== undefined ? { provider: params.provider } : {}),
     ...(params.model !== undefined ? { model: params.model } : {}),
-    ...(params.thinkingLevel !== undefined ? { thinkingLevel: params.thinkingLevel } : {}),
+    ...(params.thinkingLevel !== undefined
+      ? { thinkingLevel: params.thinkingLevel }
+      : {}),
     capacity: params.capacity,
-    ...(params.compactionWindow !== undefined ? { compactionWindow: params.compactionWindow } : {}),
+    ...(params.compactionWindow !== undefined
+      ? { compactionWindow: params.compactionWindow }
+      : {}),
     ...(params.policyIds !== undefined ? { policyIds: params.policyIds } : {}),
-    ...(params.directPermissions !== undefined ? { directPermissions: params.directPermissions } : {}),
+    ...(params.directPermissions !== undefined
+      ? { directPermissions: params.directPermissions }
+      : {}),
   };
 }
 
@@ -389,12 +486,20 @@ function buildRoleQueueEntryInput(params: RoleQueueEntryParams) {
   return {
     roleId: params.roleId,
     sourceType: params.sourceType,
-    ...(params.sourceTaskId !== undefined ? { sourceTaskId: params.sourceTaskId } : {}),
-    ...(params.sourceWorkflowId !== undefined ? { sourceWorkflowId: params.sourceWorkflowId } : {}),
-    ...(params.sourceLaneId !== undefined ? { sourceLaneId: params.sourceLaneId } : {}),
+    ...(params.sourceTaskId !== undefined
+      ? { sourceTaskId: params.sourceTaskId }
+      : {}),
+    ...(params.sourceWorkflowId !== undefined
+      ? { sourceWorkflowId: params.sourceWorkflowId }
+      : {}),
+    ...(params.sourceLaneId !== undefined
+      ? { sourceLaneId: params.sourceLaneId }
+      : {}),
     title: params.title,
     ...(params.summary !== undefined ? { summary: params.summary } : {}),
-    ...(params.entryPrompt !== undefined ? { entryPrompt: params.entryPrompt } : {}),
+    ...(params.entryPrompt !== undefined
+      ? { entryPrompt: params.entryPrompt }
+      : {}),
   };
 }
 
@@ -437,16 +542,24 @@ function inferAttachmentMediaType(fileName: string) {
   return ATTACHMENT_MEDIA_TYPES_BY_EXTENSION[extname(fileName).toLowerCase()];
 }
 
-async function buildTaskAttachmentInput(params: TaskAttachmentParams): Promise<ResolvedTaskAttachmentInput> {
-  const hasFilePath = typeof (params as { filePath?: unknown }).filePath === "string";
-  const hasBase64Data = typeof (params as { base64Data?: unknown }).base64Data === "string";
+async function buildTaskAttachmentInput(
+  params: TaskAttachmentParams,
+): Promise<ResolvedTaskAttachmentInput> {
+  const hasFilePath =
+    typeof (params as { filePath?: unknown }).filePath === "string";
+  const hasBase64Data =
+    typeof (params as { base64Data?: unknown }).base64Data === "string";
 
   if (hasFilePath && hasBase64Data) {
-    throw new Error("Attachment input must provide either input.filePath or input.base64Data, not both.");
+    throw new Error(
+      "Attachment input must provide either input.filePath or input.base64Data, not both.",
+    );
   }
 
   if (!hasFilePath && !hasBase64Data) {
-    throw new Error("Attachment input must provide either input.filePath for a readable local file or input.base64Data for an in-memory payload.");
+    throw new Error(
+      "Attachment input must provide either input.filePath for a readable local file or input.base64Data for an in-memory payload.",
+    );
   }
 
   if (hasFilePath) {
@@ -465,7 +578,9 @@ async function buildTaskAttachmentInput(params: TaskAttachmentParams): Promise<R
         throw new Error(`Attachment file was not found: ${absolutePath}`);
       }
       if (errorCode === "EACCES" || errorCode === "EPERM") {
-        throw new Error(`Attachment file is not readable from this session: ${absolutePath}`);
+        throw new Error(
+          `Attachment file is not readable from this session: ${absolutePath}`,
+        );
       }
       throw new Error(`Attachment file could not be resolved: ${absolutePath}`);
     }
@@ -477,21 +592,27 @@ async function buildTaskAttachmentInput(params: TaskAttachmentParams): Promise<R
     } catch (error) {
       const errorCode = getErrorCode(error);
       if (errorCode === "EACCES" || errorCode === "EPERM") {
-        throw new Error(`Attachment file is not readable from this session: ${resolvedPath}`);
+        throw new Error(
+          `Attachment file is not readable from this session: ${resolvedPath}`,
+        );
       }
       throw new Error(`Attachment file could not be read: ${resolvedPath}`);
     }
 
     if (!stat.isFile()) {
-      throw new Error(`Attachment file must be a regular readable file, not a directory: ${resolvedPath}`);
+      throw new Error(
+        `Attachment file must be a regular readable file, not a directory: ${resolvedPath}`,
+      );
     }
 
     const bytes = await fs.readFile(resolvedPath);
-    const fileName = normalizeOptionalString(params.fileName) ?? basename(resolvedPath);
-    const mediaType = normalizeOptionalString(params.mediaType)
-      ?? inferAttachmentMediaType(fileName)
-      ?? inferAttachmentMediaType(resolvedPath)
-      ?? "application/octet-stream";
+    const fileName =
+      normalizeOptionalString(params.fileName) ?? basename(resolvedPath);
+    const mediaType =
+      normalizeOptionalString(params.mediaType) ??
+      inferAttachmentMediaType(fileName) ??
+      inferAttachmentMediaType(resolvedPath) ??
+      "application/octet-stream";
 
     return {
       bridgeInput: {
@@ -511,12 +632,16 @@ async function buildTaskAttachmentInput(params: TaskAttachmentParams): Promise<R
     };
   }
 
-  const fileName = normalizeOptionalString((params as TaskAttachmentBase64Params).fileName);
+  const fileName = normalizeOptionalString(
+    (params as TaskAttachmentBase64Params).fileName,
+  );
   if (!fileName) {
     throw new Error("input.fileName is required when using input.base64Data.");
   }
 
-  const mediaType = normalizeOptionalString((params as TaskAttachmentBase64Params).mediaType);
+  const mediaType = normalizeOptionalString(
+    (params as TaskAttachmentBase64Params).mediaType,
+  );
   if (!mediaType) {
     throw new Error("input.mediaType is required when using input.base64Data.");
   }
@@ -540,8 +665,12 @@ async function buildTaskAttachmentInput(params: TaskAttachmentParams): Promise<R
 function buildReminderInput(params: ReminderParams) {
   return {
     message: params.message,
-    ...(params.delaySeconds !== undefined ? { delaySeconds: params.delaySeconds } : {}),
-    ...(params.delayMinutes !== undefined ? { delayMinutes: params.delayMinutes } : {}),
+    ...(params.delaySeconds !== undefined
+      ? { delaySeconds: params.delaySeconds }
+      : {}),
+    ...(params.delayMinutes !== undefined
+      ? { delayMinutes: params.delayMinutes }
+      : {}),
   };
 }
 
@@ -553,17 +682,67 @@ function agentInputSchema() {
   return Type.Object(
     {
       name: Type.String({ description: "Agent display name." }),
-      description: Type.Optional(Type.String({ description: "Optional agent description." })),
-      systemPrompt: Type.Optional(Type.String({ description: "Optional system prompt injected into the agent session." })),
-      provider: Type.Optional(Type.String({ description: "Optional provider id. If provided, model is also required." })),
-      model: Type.Optional(Type.String({ description: "Optional model id. If provided, provider is also required." })),
-      roleId: Type.Optional(Type.String({ description: "Optional role id associated with this agent." })),
-      scope: Type.Optional(Type.String({ description: "Optional scope: global or project. Defaults to global." })),
-      projectId: Type.Optional(Type.String({ description: "Required when scope is project. Omit for global agents." })),
-      thinkingLevel: Type.Optional(Type.String({ description: "Optional thinking level: off, minimal, low, medium, high, or xhigh." })),
-      compactionWindow: Type.Optional(Type.String({ description: "Optional compaction window spec such as 32k, 50%, or 200 messages." })),
-      policyIds: Type.Optional(Type.Array(Type.String({ description: "Policy id to attach to the agent." }))),
-      directPermissions: Type.Optional(Type.Array(Type.String({ description: "Direct permission grant, e.g. tasks.read." }))),
+      description: Type.Optional(
+        Type.String({ description: "Optional agent description." }),
+      ),
+      systemPrompt: Type.Optional(
+        Type.String({
+          description:
+            "Optional system prompt injected into the agent session.",
+        }),
+      ),
+      provider: Type.Optional(
+        Type.String({
+          description:
+            "Optional provider id. If provided, model is also required.",
+        }),
+      ),
+      model: Type.Optional(
+        Type.String({
+          description:
+            "Optional model id. If provided, provider is also required.",
+        }),
+      ),
+      roleId: Type.Optional(
+        Type.String({
+          description: "Optional role id associated with this agent.",
+        }),
+      ),
+      scope: Type.Optional(
+        Type.String({
+          description: "Optional scope: global or project. Defaults to global.",
+        }),
+      ),
+      projectId: Type.Optional(
+        Type.String({
+          description:
+            "Required when scope is project. Omit for global agents.",
+        }),
+      ),
+      thinkingLevel: Type.Optional(
+        Type.String({
+          description:
+            "Optional thinking level: off, minimal, low, medium, high, or xhigh.",
+        }),
+      ),
+      compactionWindow: Type.Optional(
+        Type.String({
+          description:
+            "Optional compaction window spec such as 32k, 50%, or 200 messages.",
+        }),
+      ),
+      policyIds: Type.Optional(
+        Type.Array(
+          Type.String({ description: "Policy id to attach to the agent." }),
+        ),
+      ),
+      directPermissions: Type.Optional(
+        Type.Array(
+          Type.String({
+            description: "Direct permission grant, e.g. tasks.read.",
+          }),
+        ),
+      ),
     },
     {
       description:
@@ -576,15 +755,55 @@ function roleInputSchema() {
   return Type.Object(
     {
       name: Type.String({ description: "Role display name." }),
-      description: Type.Optional(Type.String({ description: "Optional role description." })),
-      systemPrompt: Type.Optional(Type.String({ description: "Optional system prompt injected into sessions launched for this role." })),
-      provider: Type.Optional(Type.String({ description: "Optional provider id. If provided, model is also required." })),
-      model: Type.Optional(Type.String({ description: "Optional model id. If provided, provider is also required." })),
-      thinkingLevel: Type.Optional(Type.String({ description: "Optional thinking level: off, minimal, low, medium, high, or xhigh." })),
-      capacity: Type.Number({ description: "Maximum number of concurrent role instances. Must be at least 1." }),
-      compactionWindow: Type.Optional(Type.String({ description: "Optional compaction window spec such as 32k, 50%, or 200 messages." })),
-      policyIds: Type.Optional(Type.Array(Type.String({ description: "Policy id to attach to the role." }))),
-      directPermissions: Type.Optional(Type.Array(Type.String({ description: "Direct permission grant, e.g. tasks.read." }))),
+      description: Type.Optional(
+        Type.String({ description: "Optional role description." }),
+      ),
+      systemPrompt: Type.Optional(
+        Type.String({
+          description:
+            "Optional system prompt injected into sessions launched for this role.",
+        }),
+      ),
+      provider: Type.Optional(
+        Type.String({
+          description:
+            "Optional provider id. If provided, model is also required.",
+        }),
+      ),
+      model: Type.Optional(
+        Type.String({
+          description:
+            "Optional model id. If provided, provider is also required.",
+        }),
+      ),
+      thinkingLevel: Type.Optional(
+        Type.String({
+          description:
+            "Optional thinking level: off, minimal, low, medium, high, or xhigh.",
+        }),
+      ),
+      capacity: Type.Number({
+        description:
+          "Maximum number of concurrent role instances. Must be at least 1.",
+      }),
+      compactionWindow: Type.Optional(
+        Type.String({
+          description:
+            "Optional compaction window spec such as 32k, 50%, or 200 messages.",
+        }),
+      ),
+      policyIds: Type.Optional(
+        Type.Array(
+          Type.String({ description: "Policy id to attach to the role." }),
+        ),
+      ),
+      directPermissions: Type.Optional(
+        Type.Array(
+          Type.String({
+            description: "Direct permission grant, e.g. tasks.read.",
+          }),
+        ),
+      ),
     },
     {
       description:
@@ -596,14 +815,43 @@ function roleInputSchema() {
 function roleQueueEntrySchema() {
   return Type.Object(
     {
-      roleId: Type.String({ description: "Role id that should receive the queued work." }),
-      sourceType: Type.String({ description: "Source type for the queue entry, such as task or workflow." }),
-      sourceTaskId: Type.Optional(Type.String({ description: "Optional task id that produced this queued work item." })),
-      sourceWorkflowId: Type.Optional(Type.String({ description: "Optional workflow id that produced this queued work item." })),
-      sourceLaneId: Type.Optional(Type.String({ description: "Optional workflow lane id that produced this queued work item." })),
-      title: Type.String({ description: "Queue entry title shown to the role instance." }),
-      summary: Type.Optional(Type.String({ description: "Optional short summary for the queued work." })),
-      entryPrompt: Type.Optional(Type.String({ description: "Optional full prompt to hand to the role instance." })),
+      roleId: Type.String({
+        description: "Role id that should receive the queued work.",
+      }),
+      sourceType: Type.String({
+        description:
+          "Source type for the queue entry, such as task or workflow.",
+      }),
+      sourceTaskId: Type.Optional(
+        Type.String({
+          description: "Optional task id that produced this queued work item.",
+        }),
+      ),
+      sourceWorkflowId: Type.Optional(
+        Type.String({
+          description:
+            "Optional workflow id that produced this queued work item.",
+        }),
+      ),
+      sourceLaneId: Type.Optional(
+        Type.String({
+          description:
+            "Optional workflow lane id that produced this queued work item.",
+        }),
+      ),
+      title: Type.String({
+        description: "Queue entry title shown to the role instance.",
+      }),
+      summary: Type.Optional(
+        Type.String({
+          description: "Optional short summary for the queued work.",
+        }),
+      ),
+      entryPrompt: Type.Optional(
+        Type.String({
+          description: "Optional full prompt to hand to the role instance.",
+        }),
+      ),
     },
     {
       description:
@@ -617,25 +865,33 @@ function taskAttachmentSchema() {
     {
       filePath: Type.Optional(
         Type.String({
-          description: "Preferred mode for on-disk files. Absolute paths are allowed; relative paths resolve from the session cwd. The path must point to a readable regular file.",
+          description:
+            "Preferred mode for on-disk files. Absolute paths are allowed; relative paths resolve from the session cwd. The path must point to a readable regular file.",
         }),
       ),
       fileName: Type.Optional(
         Type.String({
-          description: "Optional stored file name override in filePath mode. Required when using base64Data.",
+          description:
+            "Optional stored file name override in filePath mode. Required when using base64Data.",
         }),
       ),
       mediaType: Type.Optional(
         Type.String({
-          description: "Optional media type override in filePath mode. Required when using base64Data. When omitted in filePath mode, Orchestra infers a type from the file name or path and falls back to application/octet-stream.",
+          description:
+            "Optional media type override in filePath mode. Required when using base64Data. When omitted in filePath mode, Orchestra infers a type from the file name or path and falls back to application/octet-stream.",
         }),
       ),
       base64Data: Type.Optional(
         Type.String({
-          description: "Compatibility mode for in-memory bytes. Use when the file is not available as a readable local path in this session.",
+          description:
+            "Compatibility mode for in-memory bytes. Use when the file is not available as a readable local path in this session.",
         }),
       ),
-      caption: Type.Optional(Type.String({ description: "Optional human-readable caption for the attachment." })),
+      caption: Type.Optional(
+        Type.String({
+          description: "Optional human-readable caption for the attachment.",
+        }),
+      ),
     },
     {
       description:
@@ -647,18 +903,37 @@ function taskAttachmentSchema() {
 function reminderInputSchema() {
   return Type.Object(
     {
-      message: Type.String({ description: "Reminder message that Orchestra should send back later." }),
-      delaySeconds: Type.Optional(Type.Number({ description: "Delay in seconds. Provide exactly one of delaySeconds or delayMinutes." })),
-      delayMinutes: Type.Optional(Type.Number({ description: "Delay in minutes. Provide exactly one of delaySeconds or delayMinutes." })),
+      message: Type.String({
+        description: "Reminder message that Orchestra should send back later.",
+      }),
+      delaySeconds: Type.Optional(
+        Type.Number({
+          description:
+            "Delay in seconds. Provide exactly one of delaySeconds or delayMinutes.",
+        }),
+      ),
+      delayMinutes: Type.Optional(
+        Type.Number({
+          description:
+            "Delay in minutes. Provide exactly one of delaySeconds or delayMinutes.",
+        }),
+      ),
     },
     {
-      description: "Reminder request. Provide exactly one of delaySeconds or delayMinutes.",
+      description:
+        "Reminder request. Provide exactly one of delaySeconds or delayMinutes.",
     },
   );
 }
 
 function completionTransitionExamples(taskId = "task-123") {
-  return [{ taskId, summary: "Implementation complete and ready to hand off.", notes: "Tests passed." }];
+  return [
+    {
+      taskId,
+      summary: "Implementation complete and ready to hand off.",
+      notes: "Tests passed.",
+    },
+  ];
 }
 
 function transitionExamples(taskId = "task-123") {
@@ -667,40 +942,126 @@ function transitionExamples(taskId = "task-123") {
 
 function workflowLaneSchema() {
   return Type.Object({
-    id: Type.Optional(Type.String({ description: "Optional lane id. Omit when adding a new lane and Orchestra will generate one." })),
+    id: Type.Optional(
+      Type.String({
+        description:
+          "Optional lane id. Omit when adding a new lane and Orchestra will generate one.",
+      }),
+    ),
     key: Type.String({ description: "Stable lane key/slug." }),
     name: Type.String({ description: "Human-readable lane name." }),
-    description: Type.Optional(Type.String({ description: "Optional lane description." })),
-    order: Type.Optional(Type.Number({ description: "Optional zero-based lane order." })),
-    assignedEntityType: Type.String({ description: "Lane owner type: user, agent, or role." }),
-    assignedEntityId: Type.Optional(Type.String({ description: "Required for agent/role lanes. Omit for user lanes." })),
-    entryPromptTemplate: Type.Optional(Type.String({ description: "Optional entry prompt template for the lane." })),
-    useSeparateWorktree: Type.Optional(Type.Boolean({ description: "Whether this lane should use a separate worktree when supported." })),
-    requireUserApprovalOnSuccess: Type.Optional(Type.Boolean({ description: "Whether lane completion should wait for user approval before advancing." })),
-    needsWorkTargetLaneId: Type.Optional(Type.String({ description: "Optional review-only return lane used when a user clicks Needs Work after success approval is required." })),
-    successTransitionType: Type.String({ description: "Success transition type: lane, user_intervention, or end." }),
-    successTargetLaneId: Type.Optional(Type.String({ description: "Required when successTransitionType is lane." })),
-    failureTransitionType: Type.String({ description: "Failure transition type: lane, user_intervention, or end." }),
-    failureTargetLaneId: Type.Optional(Type.String({ description: "Required when failureTransitionType is lane." })),
+    description: Type.Optional(
+      Type.String({ description: "Optional lane description." }),
+    ),
+    order: Type.Optional(
+      Type.Number({ description: "Optional zero-based lane order." }),
+    ),
+    assignedEntityType: Type.String({
+      description: "Lane owner type: user, agent, or role.",
+    }),
+    assignedEntityId: Type.Optional(
+      Type.String({
+        description: "Required for agent/role lanes. Omit for user lanes.",
+      }),
+    ),
+    entryPromptTemplate: Type.Optional(
+      Type.String({
+        description: "Optional entry prompt template for the lane.",
+      }),
+    ),
+    useSeparateWorktree: Type.Optional(
+      Type.Boolean({
+        description:
+          "Whether this lane should use a separate worktree when supported.",
+      }),
+    ),
+    requireUserApprovalOnSuccess: Type.Optional(
+      Type.Boolean({
+        description:
+          "Whether lane completion should wait for user approval before advancing.",
+      }),
+    ),
+    needsWorkTargetLaneId: Type.Optional(
+      Type.String({
+        description:
+          "Optional review-only return lane used when a user clicks Needs Work after success approval is required.",
+      }),
+    ),
+    successTransitionType: Type.String({
+      description: "Success transition type: lane, user_intervention, or end.",
+    }),
+    successTargetLaneId: Type.Optional(
+      Type.String({
+        description: "Required when successTransitionType is lane.",
+      }),
+    ),
+    failureTransitionType: Type.String({
+      description: "Failure transition type: lane, user_intervention, or end.",
+    }),
+    failureTargetLaneId: Type.Optional(
+      Type.String({
+        description: "Required when failureTransitionType is lane.",
+      }),
+    ),
   });
 }
 
 function workflowLanePatchSchema() {
   return Type.Object({
-    key: Type.Optional(Type.String({ description: "Optional updated lane key/slug." })),
-    name: Type.Optional(Type.String({ description: "Optional updated lane name." })),
-    description: Type.Optional(Type.String({ description: "Optional updated lane description." })),
-    order: Type.Optional(Type.Number({ description: "Optional updated zero-based order." })),
-    assignedEntityType: Type.Optional(Type.String({ description: "Optional updated lane owner type: user, agent, or role." })),
-    assignedEntityId: Type.Optional(Type.String({ description: "Optional updated lane owner id." })),
-    entryPromptTemplate: Type.Optional(Type.String({ description: "Optional updated entry prompt template." })),
-    useSeparateWorktree: Type.Optional(Type.Boolean({ description: "Optional updated separate-worktree flag." })),
-    requireUserApprovalOnSuccess: Type.Optional(Type.Boolean({ description: "Optional updated user-approval-on-success flag." })),
-    needsWorkTargetLaneId: Type.Optional(Type.String({ description: "Optional updated review-only Needs Work target lane id." })),
-    successTransitionType: Type.Optional(Type.String({ description: "Optional updated success transition type: lane, user_intervention, or end." })),
-    successTargetLaneId: Type.Optional(Type.String({ description: "Optional updated success target lane id." })),
-    failureTransitionType: Type.Optional(Type.String({ description: "Optional updated failure transition type: lane, user_intervention, or end." })),
-    failureTargetLaneId: Type.Optional(Type.String({ description: "Optional updated failure target lane id." })),
+    key: Type.Optional(
+      Type.String({ description: "Optional updated lane key/slug." }),
+    ),
+    name: Type.Optional(
+      Type.String({ description: "Optional updated lane name." }),
+    ),
+    description: Type.Optional(
+      Type.String({ description: "Optional updated lane description." }),
+    ),
+    order: Type.Optional(
+      Type.Number({ description: "Optional updated zero-based order." }),
+    ),
+    assignedEntityType: Type.Optional(
+      Type.String({
+        description: "Optional updated lane owner type: user, agent, or role.",
+      }),
+    ),
+    assignedEntityId: Type.Optional(
+      Type.String({ description: "Optional updated lane owner id." }),
+    ),
+    entryPromptTemplate: Type.Optional(
+      Type.String({ description: "Optional updated entry prompt template." }),
+    ),
+    useSeparateWorktree: Type.Optional(
+      Type.Boolean({ description: "Optional updated separate-worktree flag." }),
+    ),
+    requireUserApprovalOnSuccess: Type.Optional(
+      Type.Boolean({
+        description: "Optional updated user-approval-on-success flag.",
+      }),
+    ),
+    needsWorkTargetLaneId: Type.Optional(
+      Type.String({
+        description: "Optional updated review-only Needs Work target lane id.",
+      }),
+    ),
+    successTransitionType: Type.Optional(
+      Type.String({
+        description:
+          "Optional updated success transition type: lane, user_intervention, or end.",
+      }),
+    ),
+    successTargetLaneId: Type.Optional(
+      Type.String({ description: "Optional updated success target lane id." }),
+    ),
+    failureTransitionType: Type.Optional(
+      Type.String({
+        description:
+          "Optional updated failure transition type: lane, user_intervention, or end.",
+      }),
+    ),
+    failureTargetLaneId: Type.Optional(
+      Type.String({ description: "Optional updated failure target lane id." }),
+    ),
   });
 }
 
@@ -719,9 +1080,24 @@ const SAFE_PROJECT_SECRET_COMMANDS = new Set([
 
 function projectSecretScopeSchema() {
   return {
-    projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id. Defaults to the active task project when available." })),
-    projectSlug: Type.Optional(Type.String({ description: "Optional Orchestra project slug. Defaults to the active task project when available." })),
-    taskId: Type.Optional(Type.String({ description: "Optional task id to resolve the owning project explicitly." })),
+    projectId: Type.Optional(
+      Type.String({
+        description:
+          "Optional Orchestra project id. Defaults to the active task project when available.",
+      }),
+    ),
+    projectSlug: Type.Optional(
+      Type.String({
+        description:
+          "Optional Orchestra project slug. Defaults to the active task project when available.",
+      }),
+    ),
+    taskId: Type.Optional(
+      Type.String({
+        description:
+          "Optional task id to resolve the owning project explicitly.",
+      }),
+    ),
   };
 }
 
@@ -732,12 +1108,17 @@ function requireSourceEnvVar(sourceEnvVar: string) {
   }
   const value = process.env[normalized];
   if (!value) {
-    throw new Error(`Environment variable ${normalized} is not set in this session.`);
+    throw new Error(
+      `Environment variable ${normalized} is not set in this session.`,
+    );
   }
   return { normalized, value };
 }
 
-function rejectDirectProjectSecretValueField(command: string, input: Record<string, unknown>) {
+function rejectDirectProjectSecretValueField(
+  command: string,
+  input: Record<string, unknown>,
+) {
   if (Object.prototype.hasOwnProperty.call(input, "value")) {
     throw new Error(
       `${command} does not accept a raw value argument. Put the secret into an existing session env var and pass sourceEnvVar instead.`,
@@ -753,16 +1134,22 @@ async function executeProjectSecretList(params: {
   secretKey?: string;
   valueState?: string;
   hasDescription?: boolean;
+  page?: number;
+  pageSize?: number;
+  countOnly?: boolean;
 }) {
-  const payload = {
-    projectId: params.projectId,
-    projectSlug: params.projectSlug,
-    taskId: params.taskId,
-    query: params.query,
-    secretKey: params.secretKey,
-    valueState: params.valueState,
-    hasDescription: params.hasDescription,
-  };
+  const payload = withPaginationPayload(
+    {
+      projectId: params.projectId,
+      projectSlug: params.projectSlug,
+      taskId: params.taskId,
+      query: params.query,
+      secretKey: params.secretKey,
+      valueState: params.valueState,
+      hasDescription: params.hasDescription,
+    },
+    params,
+  );
   const result = await invokeBridge("list_project_secrets", payload);
   return { payload, result };
 }
@@ -775,31 +1162,51 @@ async function executeProjectSecretSearch(params: {
   secretKey?: string;
   valueState?: string;
   hasDescription?: boolean;
+  page?: number;
+  pageSize?: number;
+  countOnly?: boolean;
+}) {
+  const payload = withPaginationPayload(
+    {
+      projectId: params.projectId,
+      projectSlug: params.projectSlug,
+      taskId: params.taskId,
+      query: params.query,
+      secretKey: params.secretKey,
+      valueState: params.valueState,
+      hasDescription: params.hasDescription,
+    },
+    params,
+  );
+  const result = await invokeBridge("search_project_secrets", payload);
+  return { payload, result };
+}
+
+async function executeProjectSecretLoad(params: {
+  secretKey: string;
+  targetEnvVar?: string;
+  projectId?: string;
+  projectSlug?: string;
+  taskId?: string;
 }) {
   const payload = {
     projectId: params.projectId,
     projectSlug: params.projectSlug,
     taskId: params.taskId,
-    query: params.query,
-    secretKey: params.secretKey,
-    valueState: params.valueState,
-    hasDescription: params.hasDescription,
-  };
-  const result = await invokeBridge("search_project_secrets", payload);
-  return { payload, result };
-}
-
-async function executeProjectSecretLoad(params: { secretKey: string; targetEnvVar?: string; projectId?: string; projectSlug?: string; taskId?: string }) {
-  const payload = {
-    projectId: params.projectId,
-    projectSlug: params.projectSlug,
-    taskId: params.taskId,
     secretKey: params.secretKey,
   };
-  const result = await invokeBridge("get_project_secret", payload) as { projectSlug?: string | null; secretKey?: string | null; value?: string | null };
-  const targetEnvVar = (params.targetEnvVar?.trim() || params.secretKey.trim()).toUpperCase();
+  const result = (await invokeBridge("get_project_secret", payload)) as {
+    projectSlug?: string | null;
+    secretKey?: string | null;
+    value?: string | null;
+  };
+  const targetEnvVar = (
+    params.targetEnvVar?.trim() || params.secretKey.trim()
+  ).toUpperCase();
   if (!result?.value) {
-    throw new Error(`Project secret ${params.secretKey} did not return a value.`);
+    throw new Error(
+      `Project secret ${params.secretKey} did not return a value.`,
+    );
   }
   process.env[targetEnvVar] = result.value;
   return {
@@ -824,12 +1231,17 @@ async function executeProjectSecretWrite(
     taskId?: string;
   },
 ) {
-  rejectDirectProjectSecretValueField(command, params as Record<string, unknown>);
+  rejectDirectProjectSecretValueField(
+    command,
+    params as Record<string, unknown>,
+  );
 
   let normalizedSourceEnvVar: string | undefined;
   let value: string | undefined;
   if (params.sourceEnvVar?.trim()) {
-    ({ normalized: normalizedSourceEnvVar, value } = requireSourceEnvVar(params.sourceEnvVar));
+    ({ normalized: normalizedSourceEnvVar, value } = requireSourceEnvVar(
+      params.sourceEnvVar,
+    ));
   } else if (command === "add_project_secret") {
     throw new Error("sourceEnvVar is required.");
   }
@@ -850,13 +1262,20 @@ async function executeProjectSecretWrite(
       taskId: params.taskId,
       secretKey: params.secretKey,
       description: params.description,
-      ...(normalizedSourceEnvVar !== undefined ? { sourceEnvVar: normalizedSourceEnvVar } : {}),
+      ...(normalizedSourceEnvVar !== undefined
+        ? { sourceEnvVar: normalizedSourceEnvVar }
+        : {}),
     },
     result,
   };
 }
 
-async function executeProjectSecretDelete(params: { secretKey: string; projectId?: string; projectSlug?: string; taskId?: string }) {
+async function executeProjectSecretDelete(params: {
+  secretKey: string;
+  projectId?: string;
+  projectSlug?: string;
+  taskId?: string;
+}) {
   const payload = {
     projectId: params.projectId,
     projectSlug: params.projectSlug,
@@ -867,41 +1286,128 @@ async function executeProjectSecretDelete(params: { secretKey: string; projectId
   return { payload, result };
 }
 
-async function runSafeProjectSecretCommandForUi(command: string, payload: Record<string, unknown>) {
+async function runSafeProjectSecretCommandForUi(
+  command: string,
+  payload: Record<string, unknown>,
+) {
   if (command === "list_project_secrets") {
-    const { result } = await executeProjectSecretList(payload as { projectId?: string; projectSlug?: string; taskId?: string; query?: string; secretKey?: string; valueState?: string; hasDescription?: boolean });
+    const { result } = await executeProjectSecretList(
+      payload as {
+        projectId?: string;
+        projectSlug?: string;
+        taskId?: string;
+        query?: string;
+        secretKey?: string;
+        valueState?: string;
+        hasDescription?: boolean;
+      },
+    );
     return JSON.stringify(result, null, 2);
   }
   if (command === "search_project_secrets") {
-    const { result } = await executeProjectSecretSearch(payload as { projectId?: string; projectSlug?: string; taskId?: string; query?: string; secretKey?: string; valueState?: string; hasDescription?: boolean });
+    const { result } = await executeProjectSecretSearch(
+      payload as {
+        projectId?: string;
+        projectSlug?: string;
+        taskId?: string;
+        query?: string;
+        secretKey?: string;
+        valueState?: string;
+        hasDescription?: boolean;
+      },
+    );
     return JSON.stringify(result, null, 2);
   }
   if (command === "get_project_secret") {
-    const { response } = await executeProjectSecretLoad(payload as { secretKey: string; targetEnvVar?: string; projectId?: string; projectSlug?: string; taskId?: string });
+    const { response } = await executeProjectSecretLoad(
+      payload as {
+        secretKey: string;
+        targetEnvVar?: string;
+        projectId?: string;
+        projectSlug?: string;
+        taskId?: string;
+      },
+    );
     return `Loaded ${response.secretKey} into env var ${response.targetEnvVar} for this session.`;
   }
   if (command === "add_project_secret" || command === "update_project_secret") {
     const { payload: safePayload, result } = await executeProjectSecretWrite(
       command,
-      payload as { secretKey: string; sourceEnvVar?: string; description?: string; projectId?: string; projectSlug?: string; taskId?: string },
+      payload as {
+        secretKey: string;
+        sourceEnvVar?: string;
+        description?: string;
+        projectId?: string;
+        projectSlug?: string;
+        taskId?: string;
+      },
     );
-    return JSON.stringify({ ok: true, command, payload: safePayload, result }, null, 2);
+    return JSON.stringify(
+      { ok: true, command, payload: safePayload, result },
+      null,
+      2,
+    );
   }
   if (command === "delete_project_secret") {
-    const { result } = await executeProjectSecretDelete(payload as { secretKey: string; projectId?: string; projectSlug?: string; taskId?: string });
+    const { result } = await executeProjectSecretDelete(
+      payload as {
+        secretKey: string;
+        projectId?: string;
+        projectSlug?: string;
+        taskId?: string;
+      },
+    );
     return JSON.stringify(result, null, 2);
   }
   throw new Error(`Unsupported safe project secret command: ${command}`);
 }
 
 function noteLocationSchema(description: string, pathDescription: string) {
-  return Type.Object({
-    scope: Type.String({ description: 'Note scope: project or repository.' }),
-    repositoryId: Type.Optional(Type.String({ description: 'Required when scope is repository.' })),
-    path: Type.String({ description: pathDescription }),
-  }, {
-    description,
-  });
+  return Type.Object(
+    {
+      scope: Type.String({ description: "Note scope: project or repository." }),
+      repositoryId: Type.Optional(
+        Type.String({ description: "Required when scope is repository." }),
+      ),
+      path: Type.String({ description: pathDescription }),
+    },
+    {
+      description,
+    },
+  );
+}
+
+function paginationSchema() {
+  return {
+    page: Type.Optional(
+      Type.Number({
+        description: "Optional 1-based page number. Defaults to 1.",
+      }),
+    ),
+    pageSize: Type.Optional(
+      Type.Number({
+        description: "Optional page size. Defaults to 10 and caps at 10.",
+      }),
+    ),
+    countOnly: Type.Optional(
+      Type.Boolean({
+        description:
+          "When true, returns only paging metadata and totalCount with items omitted.",
+      }),
+    ),
+  };
+}
+
+function withPaginationPayload<T extends Record<string, unknown>>(
+  payload: T,
+  params: PaginationParams,
+) {
+  return {
+    ...payload,
+    ...(params.page !== undefined ? { page: params.page } : {}),
+    ...(params.pageSize !== undefined ? { pageSize: params.pageSize } : {}),
+    ...(params.countOnly !== undefined ? { countOnly: params.countOnly } : {}),
+  };
 }
 
 export function createBridgeTool(tool: OrchestraToolDefinition) {
@@ -909,13 +1415,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. No input is required.`,
-      parameters: Type.Object({}),
-      async execute() {
-        const payload = {};
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Optionally page through the project list or request count-only metadata.`,
+      parameters: Type.Object({
+        ...paginationSchema(),
+      }),
+      async execute(_toolCallId: string, params: PaginationParams) {
+        const payload = withPaginationPayload({}, params);
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -928,13 +1438,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId.`,
       parameters: Type.Object({
-        projectId: Type.String({ description: "Orchestra project id to load." }),
+        projectId: Type.String({
+          description: "Orchestra project id to load.",
+        }),
       }),
       async execute(_toolCallId: string, params: { projectId: string }) {
         const payload = { projectId: params.projectId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -948,13 +1462,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide the project name and optional description.`,
       parameters: Type.Object({
         name: Type.String({ description: "Project name." }),
-        description: Type.Optional(Type.String({ description: "Optional project description." })),
+        description: Type.Optional(
+          Type.String({ description: "Optional project description." }),
+        ),
       }),
       async execute(_toolCallId: string, params: ProjectInputParams) {
         const payload = { input: buildProjectInput(params) };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -969,16 +1487,23 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       parameters: Type.Object({
         projectId: Type.String({ description: "Project id to update." }),
         name: Type.String({ description: "Updated project name." }),
-        description: Type.Optional(Type.String({ description: "Optional updated project description." })),
+        description: Type.Optional(
+          Type.String({ description: "Optional updated project description." }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { projectId: string } & ProjectInputParams) {
+      async execute(
+        _toolCallId: string,
+        params: { projectId: string } & ProjectInputParams,
+      ) {
         const payload = {
           projectId: params.projectId,
           input: buildProjectInput(params),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -997,7 +1522,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         const payload = { projectId: params.projectId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1008,15 +1535,29 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional projectId to scope repositories to one project.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional projectId plus page/count controls to scope repositories to one project.`,
       parameters: Type.Object({
-        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope the repository list." })),
+        projectId: Type.Optional(
+          Type.String({
+            description:
+              "Optional Orchestra project id to scope the repository list.",
+          }),
+        ),
+        ...paginationSchema(),
       }),
-      async execute(_toolCallId: string, params: { projectId?: string }) {
-        const payload = params.projectId ? { projectId: params.projectId } : {};
+      async execute(
+        _toolCallId: string,
+        params: { projectId?: string } & PaginationParams,
+      ) {
+        const payload = withPaginationPayload(
+          params.projectId ? { projectId: params.projectId } : {},
+          params,
+        );
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1029,13 +1570,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide repositoryId.`,
       parameters: Type.Object({
-        repositoryId: Type.String({ description: "Orchestra repository id to load." }),
+        repositoryId: Type.String({
+          description: "Orchestra repository id to load.",
+        }),
       }),
       async execute(_toolCallId: string, params: { repositoryId: string }) {
         const payload = { repositoryId: params.repositoryId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1048,20 +1593,38 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId plus repository metadata.`,
       parameters: Type.Object({
-        projectId: Type.String({ description: "Project id that should own the repository." }),
+        projectId: Type.String({
+          description: "Project id that should own the repository.",
+        }),
         name: Type.String({ description: "Repository display name." }),
-        mode: Type.Optional(Type.String({ description: "Repository mode, such as existing or local_new." })),
-        repositoryPath: Type.Optional(Type.String({ description: "Optional source repository path when attaching an existing repository." })),
-        defaultBranch: Type.Optional(Type.String({ description: "Optional default branch." })),
+        mode: Type.Optional(
+          Type.String({
+            description: "Repository mode, such as existing or local_new.",
+          }),
+        ),
+        repositoryPath: Type.Optional(
+          Type.String({
+            description:
+              "Optional source repository path when attaching an existing repository.",
+          }),
+        ),
+        defaultBranch: Type.Optional(
+          Type.String({ description: "Optional default branch." }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { projectId: string } & RepositoryInputParams) {
+      async execute(
+        _toolCallId: string,
+        params: { projectId: string } & RepositoryInputParams,
+      ) {
         const payload = {
           projectId: params.projectId,
           input: buildRepositoryInput(params),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1076,18 +1639,34 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       parameters: Type.Object({
         repositoryId: Type.String({ description: "Repository id to update." }),
         name: Type.String({ description: "Updated repository display name." }),
-        mode: Type.Optional(Type.String({ description: "Repository mode, such as existing or local_new." })),
-        repositoryPath: Type.Optional(Type.String({ description: "Optional source repository path when updating an existing repository." })),
-        defaultBranch: Type.Optional(Type.String({ description: "Optional default branch." })),
+        mode: Type.Optional(
+          Type.String({
+            description: "Repository mode, such as existing or local_new.",
+          }),
+        ),
+        repositoryPath: Type.Optional(
+          Type.String({
+            description:
+              "Optional source repository path when updating an existing repository.",
+          }),
+        ),
+        defaultBranch: Type.Optional(
+          Type.String({ description: "Optional default branch." }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { repositoryId: string } & RepositoryInputParams) {
+      async execute(
+        _toolCallId: string,
+        params: { repositoryId: string } & RepositoryInputParams,
+      ) {
         const payload = {
           repositoryId: params.repositoryId,
           input: buildRepositoryInput(params),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1106,7 +1685,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         const payload = { repositoryId: params.repositoryId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1119,21 +1700,40 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide repositoryId plus the remote URL and optional remote name.`,
       parameters: Type.Object({
-        repositoryId: Type.String({ description: "Repository id whose remote should be attached or updated." }),
+        repositoryId: Type.String({
+          description:
+            "Repository id whose remote should be attached or updated.",
+        }),
         remoteUrl: Type.String({ description: "Remote URL to attach." }),
-        remoteName: Type.Optional(Type.String({ description: "Optional remote name. Defaults to the service default if omitted." })),
+        remoteName: Type.Optional(
+          Type.String({
+            description:
+              "Optional remote name. Defaults to the service default if omitted.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { repositoryId: string; remoteUrl: string; remoteName?: string }) {
+      async execute(
+        _toolCallId: string,
+        params: {
+          repositoryId: string;
+          remoteUrl: string;
+          remoteName?: string;
+        },
+      ) {
         const payload = {
           repositoryId: params.repositoryId,
           input: {
             remoteUrl: params.remoteUrl,
-            ...(params.remoteName !== undefined ? { remoteName: params.remoteName } : {}),
+            ...(params.remoteName !== undefined
+              ? { remoteName: params.remoteName }
+              : {}),
           },
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1146,17 +1746,31 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId and optionally repositoryId (omit it to clear the default).`,
       parameters: Type.Object({
-        projectId: Type.String({ description: "Project id whose default repository should be updated." }),
-        repositoryId: Type.Optional(Type.String({ description: "Optional repository id to make the default for the project." })),
+        projectId: Type.String({
+          description: "Project id whose default repository should be updated.",
+        }),
+        repositoryId: Type.Optional(
+          Type.String({
+            description:
+              "Optional repository id to make the default for the project.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { projectId: string; repositoryId?: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { projectId: string; repositoryId?: string },
+      ) {
         const payload = {
           projectId: params.projectId,
-          ...(params.repositoryId !== undefined ? { repositoryId: params.repositoryId } : {}),
+          ...(params.repositoryId !== undefined
+            ? { repositoryId: params.repositoryId }
+            : {}),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1167,28 +1781,59 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Returns metadata only; secret values are never included.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Returns metadata only; secret values are never included, and results are paged.`,
       helpNotes: [
-        'Metadata-only operation: results include secretKey, description, timestamps, and valueState, but never a raw secret value.',
+        "Metadata-only operation: results include secretKey, description, timestamps, and valueState, but never a raw secret value.",
       ],
       helpExamples: [
         {
-          projectSlug: 'secret-project',
-          valueState: 'ready',
+          projectSlug: "secret-project",
+          valueState: "ready",
           hasDescription: true,
+          pageSize: 5,
         },
       ],
       parameters: Type.Object({
         ...projectSecretScopeSchema(),
-        query: Type.Optional(Type.String({ description: "Optional substring query matched against metadata such as secretKey, description, and valueState." })),
-        secretKey: Type.Optional(Type.String({ description: "Optional exact secret key filter." })),
-        valueState: Type.Optional(Type.String({ description: "Optional exact value state filter such as ready, missing_value, store_locked, or store_error." })),
-        hasDescription: Type.Optional(Type.Boolean({ description: "Optional description-presence filter." })),
+        query: Type.Optional(
+          Type.String({
+            description:
+              "Optional substring query matched against metadata such as secretKey, description, and valueState.",
+          }),
+        ),
+        secretKey: Type.Optional(
+          Type.String({ description: "Optional exact secret key filter." }),
+        ),
+        valueState: Type.Optional(
+          Type.String({
+            description:
+              "Optional exact value state filter such as ready, missing_value, store_locked, or store_error.",
+          }),
+        ),
+        hasDescription: Type.Optional(
+          Type.Boolean({
+            description: "Optional description-presence filter.",
+          }),
+        ),
+        ...paginationSchema(),
       }),
-      async execute(_toolCallId: string, params: { projectId?: string; projectSlug?: string; taskId?: string; query?: string; secretKey?: string; valueState?: string; hasDescription?: boolean }) {
+      async execute(
+        _toolCallId: string,
+        params: {
+          projectId?: string;
+          projectSlug?: string;
+          taskId?: string;
+          query?: string;
+          secretKey?: string;
+          valueState?: string;
+          hasDescription?: boolean;
+        } & PaginationParams,
+      ) {
         const { payload, result } = await executeProjectSecretList(params);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1199,28 +1844,59 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Searches metadata only; secret values are never included.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Searches metadata only; secret values are never included, and results are paged.`,
       helpNotes: [
-        'Searches only project-secret metadata. Raw secret values are never returned from this command.',
+        "Searches only project-secret metadata. Raw secret values are never returned from this command.",
       ],
       helpExamples: [
         {
-          projectSlug: 'secret-project',
-          query: 'openai',
-          valueState: 'ready',
+          projectSlug: "secret-project",
+          query: "openai",
+          valueState: "ready",
+          page: 2,
         },
       ],
       parameters: Type.Object({
         ...projectSecretScopeSchema(),
-        query: Type.Optional(Type.String({ description: "Optional substring query matched against metadata such as secretKey, description, and valueState." })),
-        secretKey: Type.Optional(Type.String({ description: "Optional exact secret key filter." })),
-        valueState: Type.Optional(Type.String({ description: "Optional exact value state filter such as ready, missing_value, store_locked, or store_error." })),
-        hasDescription: Type.Optional(Type.Boolean({ description: "Optional description-presence filter." })),
+        query: Type.Optional(
+          Type.String({
+            description:
+              "Optional substring query matched against metadata such as secretKey, description, and valueState.",
+          }),
+        ),
+        secretKey: Type.Optional(
+          Type.String({ description: "Optional exact secret key filter." }),
+        ),
+        valueState: Type.Optional(
+          Type.String({
+            description:
+              "Optional exact value state filter such as ready, missing_value, store_locked, or store_error.",
+          }),
+        ),
+        hasDescription: Type.Optional(
+          Type.Boolean({
+            description: "Optional description-presence filter.",
+          }),
+        ),
+        ...paginationSchema(),
       }),
-      async execute(_toolCallId: string, params: { projectId?: string; projectSlug?: string; taskId?: string; query?: string; secretKey?: string; valueState?: string; hasDescription?: boolean }) {
+      async execute(
+        _toolCallId: string,
+        params: {
+          projectId?: string;
+          projectSlug?: string;
+          taskId?: string;
+          query?: string;
+          secretKey?: string;
+          valueState?: string;
+          hasDescription?: boolean;
+        } & PaginationParams,
+      ) {
         const { payload, result } = await executeProjectSecretSearch(params);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1233,25 +1909,44 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Loads the secret into this session's environment instead of returning the raw value.`,
       helpNotes: [
-        'This tool never returns the raw secret value in normal tool output.',
-        'The loaded value is materialized into the current session environment under targetEnvVar, or secretKey when targetEnvVar is omitted.',
+        "This tool never returns the raw secret value in normal tool output.",
+        "The loaded value is materialized into the current session environment under targetEnvVar, or secretKey when targetEnvVar is omitted.",
       ],
       helpExamples: [
         {
-          projectSlug: 'secret-project',
-          secretKey: 'OPENAI_API_KEY',
-          targetEnvVar: 'OPENAI_TOKEN',
+          projectSlug: "secret-project",
+          secretKey: "OPENAI_API_KEY",
+          targetEnvVar: "OPENAI_TOKEN",
         },
       ],
       parameters: Type.Object({
         ...projectSecretScopeSchema(),
         secretKey: Type.String({ description: "Project secret key to load." }),
-        targetEnvVar: Type.Optional(Type.String({ description: "Optional env var name to populate for this session. Defaults to secretKey." })),
+        targetEnvVar: Type.Optional(
+          Type.String({
+            description:
+              "Optional env var name to populate for this session. Defaults to secretKey.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { secretKey: string; targetEnvVar?: string; projectId?: string; projectSlug?: string; taskId?: string }) {
+      async execute(
+        _toolCallId: string,
+        params: {
+          secretKey: string;
+          targetEnvVar?: string;
+          projectId?: string;
+          projectSlug?: string;
+          taskId?: string;
+        },
+      ) {
         const { payload, response } = await executeProjectSecretLoad(params);
         return {
-          content: [{ type: "text" as const, text: `Loaded ${response.secretKey} into env var ${response.targetEnvVar} for this session.` }],
+          content: [
+            {
+              type: "text" as const,
+              text: `Loaded ${response.secretKey} into env var ${response.targetEnvVar} for this session.`,
+            },
+          ],
           details: { command: tool.name, payload, result: response },
         };
       },
@@ -1264,27 +1959,49 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Reads the secret value from an existing session env var so the raw value is not passed in tool arguments or output.`,
       helpNotes: [
-        'Put the raw secret value into an existing session env var first, then pass that env var name via sourceEnvVar.',
-        'Passing a raw value field is rejected so the normal tool and /orchestra-run paths do not encourage transcript-visible secret writes.',
+        "Put the raw secret value into an existing session env var first, then pass that env var name via sourceEnvVar.",
+        "Passing a raw value field is rejected so the normal tool and /orchestra-run paths do not encourage transcript-visible secret writes.",
       ],
       helpExamples: [
         {
-          projectSlug: 'secret-project',
-          secretKey: 'OPENAI_API_KEY',
-          description: 'Primary provider key',
-          sourceEnvVar: 'OPENAI_SOURCE',
+          projectSlug: "secret-project",
+          secretKey: "OPENAI_API_KEY",
+          description: "Primary provider key",
+          sourceEnvVar: "OPENAI_SOURCE",
         },
       ],
       parameters: Type.Object({
         ...projectSecretScopeSchema(),
-        secretKey: Type.String({ description: "Project secret key to create." }),
-        description: Type.Optional(Type.String({ description: "Optional human-readable description." })),
-        sourceEnvVar: Type.String({ description: "Existing env var name whose current value should be stored." }),
+        secretKey: Type.String({
+          description: "Project secret key to create.",
+        }),
+        description: Type.Optional(
+          Type.String({ description: "Optional human-readable description." }),
+        ),
+        sourceEnvVar: Type.String({
+          description:
+            "Existing env var name whose current value should be stored.",
+        }),
       }),
-      async execute(_toolCallId: string, params: { secretKey: string; description?: string; sourceEnvVar: string; projectId?: string; projectSlug?: string; taskId?: string }) {
-        const { payload, result } = await executeProjectSecretWrite(tool.name, params);
+      async execute(
+        _toolCallId: string,
+        params: {
+          secretKey: string;
+          description?: string;
+          sourceEnvVar: string;
+          projectId?: string;
+          projectSlug?: string;
+          taskId?: string;
+        },
+      ) {
+        const { payload, result } = await executeProjectSecretWrite(
+          tool.name,
+          params,
+        );
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1297,33 +2014,57 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Rotates the secret from an existing session env var when sourceEnvVar is provided, or updates metadata only when it is omitted.`,
       helpNotes: [
-        'Put the raw secret value into an existing session env var first, then pass that env var name via sourceEnvVar when you need to rotate the stored value.',
-        'You may omit sourceEnvVar for metadata-only updates such as changing description without loading or resupplying the current secret value.',
-        'Passing a raw value field is rejected so the normal tool and /orchestra-run paths do not encourage transcript-visible secret writes.',
+        "Put the raw secret value into an existing session env var first, then pass that env var name via sourceEnvVar when you need to rotate the stored value.",
+        "You may omit sourceEnvVar for metadata-only updates such as changing description without loading or resupplying the current secret value.",
+        "Passing a raw value field is rejected so the normal tool and /orchestra-run paths do not encourage transcript-visible secret writes.",
       ],
       helpExamples: [
         {
-          projectSlug: 'secret-project',
-          secretKey: 'OPENAI_API_KEY',
-          description: 'Primary provider key',
-          sourceEnvVar: 'OPENAI_SOURCE',
+          projectSlug: "secret-project",
+          secretKey: "OPENAI_API_KEY",
+          description: "Primary provider key",
+          sourceEnvVar: "OPENAI_SOURCE",
         },
         {
-          projectSlug: 'secret-project',
-          secretKey: 'OPENAI_API_KEY',
-          description: 'Primary provider key',
+          projectSlug: "secret-project",
+          secretKey: "OPENAI_API_KEY",
+          description: "Primary provider key",
         },
       ],
       parameters: Type.Object({
         ...projectSecretScopeSchema(),
-        secretKey: Type.String({ description: "Project secret key to update." }),
-        description: Type.Optional(Type.String({ description: "Optional human-readable description." })),
-        sourceEnvVar: Type.Optional(Type.String({ description: "Existing env var name whose current value should be stored. Omit for metadata-only updates." })),
+        secretKey: Type.String({
+          description: "Project secret key to update.",
+        }),
+        description: Type.Optional(
+          Type.String({ description: "Optional human-readable description." }),
+        ),
+        sourceEnvVar: Type.Optional(
+          Type.String({
+            description:
+              "Existing env var name whose current value should be stored. Omit for metadata-only updates.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { secretKey: string; description?: string; sourceEnvVar?: string; projectId?: string; projectSlug?: string; taskId?: string }) {
-        const { payload, result } = await executeProjectSecretWrite(tool.name, params);
+      async execute(
+        _toolCallId: string,
+        params: {
+          secretKey: string;
+          description?: string;
+          sourceEnvVar?: string;
+          projectId?: string;
+          projectSlug?: string;
+          taskId?: string;
+        },
+      ) {
+        const { payload, result } = await executeProjectSecretWrite(
+          tool.name,
+          params,
+        );
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1336,22 +2077,34 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Deletes the stored secret value and metadata for the target project secret.`,
       helpNotes: [
-        'Delete is a write operation because it removes both secure-store value material and metadata.',
+        "Delete is a write operation because it removes both secure-store value material and metadata.",
       ],
       helpExamples: [
         {
-          projectSlug: 'secret-project',
-          secretKey: 'OPENAI_API_KEY',
+          projectSlug: "secret-project",
+          secretKey: "OPENAI_API_KEY",
         },
       ],
       parameters: Type.Object({
         ...projectSecretScopeSchema(),
-        secretKey: Type.String({ description: "Project secret key to delete." }),
+        secretKey: Type.String({
+          description: "Project secret key to delete.",
+        }),
       }),
-      async execute(_toolCallId: string, params: { secretKey: string; projectId?: string; projectSlug?: string; taskId?: string }) {
+      async execute(
+        _toolCallId: string,
+        params: {
+          secretKey: string;
+          projectId?: string;
+          projectSlug?: string;
+          taskId?: string;
+        },
+      ) {
         const { payload, result } = await executeProjectSecretDelete(params);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1362,17 +2115,32 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Optionally include archived workflows.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Optionally include archived workflows and page through the results.`,
       parameters: Type.Object({
-        includeArchived: Type.Optional(Type.Boolean({ description: "Whether archived workflows should be included." })),
+        includeArchived: Type.Optional(
+          Type.Boolean({
+            description: "Whether archived workflows should be included.",
+          }),
+        ),
+        ...paginationSchema(),
       }),
-      async execute(_toolCallId: string, params: { includeArchived?: boolean }) {
-        const payload = {
-          ...(params.includeArchived !== undefined ? { includeArchived: params.includeArchived } : {}),
-        };
+      async execute(
+        _toolCallId: string,
+        params: { includeArchived?: boolean } & PaginationParams,
+      ) {
+        const payload = withPaginationPayload(
+          {
+            ...(params.includeArchived !== undefined
+              ? { includeArchived: params.includeArchived }
+              : {}),
+          },
+          params,
+        );
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1391,7 +2159,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         const payload = { workflowId: params.workflowId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1405,20 +2175,31 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide the workflow definition you want validated.`,
       parameters: Type.Object({
         name: Type.String({ description: "Workflow name." }),
-        description: Type.Optional(Type.String({ description: "Optional workflow description." })),
-        lanes: Type.Array(workflowLaneSchema(), { description: "Workflow lanes to validate." }),
+        description: Type.Optional(
+          Type.String({ description: "Optional workflow description." }),
+        ),
+        lanes: Type.Array(workflowLaneSchema(), {
+          description: "Workflow lanes to validate.",
+        }),
       }),
-      async execute(_toolCallId: string, params: { name: string; description?: string; lanes: unknown[] }) {
+      async execute(
+        _toolCallId: string,
+        params: { name: string; description?: string; lanes: unknown[] },
+      ) {
         const payload = {
           input: {
             name: params.name,
-            ...(params.description !== undefined ? { description: params.description } : {}),
+            ...(params.description !== undefined
+              ? { description: params.description }
+              : {}),
             lanes: params.lanes,
           },
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1429,23 +2210,36 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: workflowSchemaDescription(tool) + " Provide workflow metadata plus the full lane array.",
+      description:
+        workflowSchemaDescription(tool) +
+        " Provide workflow metadata plus the full lane array.",
       parameters: Type.Object({
         name: Type.String({ description: "Workflow name." }),
-        description: Type.Optional(Type.String({ description: "Optional workflow description." })),
-        lanes: Type.Array(workflowLaneSchema(), { description: "Workflow lanes to create." }),
+        description: Type.Optional(
+          Type.String({ description: "Optional workflow description." }),
+        ),
+        lanes: Type.Array(workflowLaneSchema(), {
+          description: "Workflow lanes to create.",
+        }),
       }),
-      async execute(_toolCallId: string, params: { name: string; description?: string; lanes: unknown[] }) {
+      async execute(
+        _toolCallId: string,
+        params: { name: string; description?: string; lanes: unknown[] },
+      ) {
         const payload = {
           input: {
             name: params.name,
-            ...(params.description !== undefined ? { description: params.description } : {}),
+            ...(params.description !== undefined
+              ? { description: params.description }
+              : {}),
             lanes: params.lanes,
           },
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1456,25 +2250,45 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: workflowSchemaDescription(tool) + " Provide workflowId plus the full updated lane array.",
+      description:
+        workflowSchemaDescription(tool) +
+        " Provide workflowId plus the full updated lane array.",
       parameters: Type.Object({
         workflowId: Type.String({ description: "Workflow id to update." }),
         name: Type.String({ description: "Updated workflow name." }),
-        description: Type.Optional(Type.String({ description: "Optional updated workflow description." })),
-        lanes: Type.Array(workflowLaneSchema(), { description: "Full updated workflow lanes array." }),
+        description: Type.Optional(
+          Type.String({
+            description: "Optional updated workflow description.",
+          }),
+        ),
+        lanes: Type.Array(workflowLaneSchema(), {
+          description: "Full updated workflow lanes array.",
+        }),
       }),
-      async execute(_toolCallId: string, params: { workflowId: string; name: string; description?: string; lanes: unknown[] }) {
+      async execute(
+        _toolCallId: string,
+        params: {
+          workflowId: string;
+          name: string;
+          description?: string;
+          lanes: unknown[];
+        },
+      ) {
         const payload = {
           workflowId: params.workflowId,
           input: {
             name: params.name,
-            ...(params.description !== undefined ? { description: params.description } : {}),
+            ...(params.description !== undefined
+              ? { description: params.description }
+              : {}),
             lanes: params.lanes,
           },
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1485,19 +2299,28 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: workflowSchemaDescription(tool) + " Provide workflowId plus the new lane definition.",
+      description:
+        workflowSchemaDescription(tool) +
+        " Provide workflowId plus the new lane definition.",
       parameters: Type.Object({
-        workflowId: Type.String({ description: "Workflow id that should receive the new lane." }),
+        workflowId: Type.String({
+          description: "Workflow id that should receive the new lane.",
+        }),
         input: workflowLaneSchema(),
       }),
-      async execute(_toolCallId: string, params: { workflowId: string; input: unknown }) {
+      async execute(
+        _toolCallId: string,
+        params: { workflowId: string; input: unknown },
+      ) {
         const payload = {
           workflowId: params.workflowId,
           input: params.input,
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1508,13 +2331,20 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: workflowSchemaDescription(tool) + " Provide workflowId, laneId, and the lane patch fields you want to change.",
+      description:
+        workflowSchemaDescription(tool) +
+        " Provide workflowId, laneId, and the lane patch fields you want to change.",
       parameters: Type.Object({
-        workflowId: Type.String({ description: "Workflow id that owns the lane." }),
+        workflowId: Type.String({
+          description: "Workflow id that owns the lane.",
+        }),
         laneId: Type.String({ description: "Workflow lane id to update." }),
         input: workflowLanePatchSchema(),
       }),
-      async execute(_toolCallId: string, params: { workflowId: string; laneId: string; input: unknown }) {
+      async execute(
+        _toolCallId: string,
+        params: { workflowId: string; laneId: string; input: unknown },
+      ) {
         const payload = {
           workflowId: params.workflowId,
           laneId: params.laneId,
@@ -1522,7 +2352,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1533,19 +2365,27 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: workflowSchemaDescription(tool) + " Provide workflowId and laneId.",
+      description:
+        workflowSchemaDescription(tool) + " Provide workflowId and laneId.",
       parameters: Type.Object({
-        workflowId: Type.String({ description: "Workflow id that owns the lane." }),
+        workflowId: Type.String({
+          description: "Workflow id that owns the lane.",
+        }),
         laneId: Type.String({ description: "Workflow lane id to delete." }),
       }),
-      async execute(_toolCallId: string, params: { workflowId: string; laneId: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { workflowId: string; laneId: string },
+      ) {
         const payload = {
           workflowId: params.workflowId,
           laneId: params.laneId,
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1556,12 +2396,21 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: workflowSchemaDescription(tool) + " Provide workflowId and the complete ordered laneIds array.",
+      description:
+        workflowSchemaDescription(tool) +
+        " Provide workflowId and the complete ordered laneIds array.",
       parameters: Type.Object({
-        workflowId: Type.String({ description: "Workflow id whose lanes should be reordered." }),
-        laneIds: Type.Array(Type.String({ description: "Lane id in the desired order." })),
+        workflowId: Type.String({
+          description: "Workflow id whose lanes should be reordered.",
+        }),
+        laneIds: Type.Array(
+          Type.String({ description: "Lane id in the desired order." }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { workflowId: string; laneIds: string[] }) {
+      async execute(
+        _toolCallId: string,
+        params: { workflowId: string; laneIds: string[] },
+      ) {
         const payload = {
           workflowId: params.workflowId,
           input: {
@@ -1570,7 +2419,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1581,19 +2432,30 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: workflowSchemaDescription(tool) + " Provide workflowId and optionally a newName.",
+      description:
+        workflowSchemaDescription(tool) +
+        " Provide workflowId and optionally a newName.",
       parameters: Type.Object({
         workflowId: Type.String({ description: "Workflow id to duplicate." }),
-        newName: Type.Optional(Type.String({ description: "Optional name for the duplicated workflow." })),
+        newName: Type.Optional(
+          Type.String({
+            description: "Optional name for the duplicated workflow.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { workflowId: string; newName?: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { workflowId: string; newName?: string },
+      ) {
         const payload = {
           workflowId: params.workflowId,
           ...(params.newName !== undefined ? { newName: params.newName } : {}),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1612,7 +2474,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         const payload = { workflowId: params.workflowId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1631,7 +2495,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         const payload = { workflowId: params.workflowId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1650,7 +2516,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         const payload = { workflowId: params.workflowId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1663,13 +2531,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId to list the Project root first and repository note roots after it.`,
       parameters: Type.Object({
-        projectId: Type.String({ description: "Canonical Orchestra project id, e.g. project-123." }),
+        projectId: Type.String({
+          description: "Canonical Orchestra project id, e.g. project-123.",
+        }),
       }),
       async execute(_toolCallId: string, params: { projectId: string }) {
         const payload = { projectId: params.projectId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1682,17 +2554,30 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId plus the note location inside docs/.`,
       parameters: Type.Object({
-        projectId: Type.String({ description: "Canonical Orchestra project id, e.g. project-123." }),
+        projectId: Type.String({
+          description: "Canonical Orchestra project id, e.g. project-123.",
+        }),
         location: noteLocationSchema(
-          'Note location relative to docs/.',
-          'Markdown file path relative to docs/, e.g. architecture/plan.md.',
+          "Note location relative to docs/.",
+          "Markdown file path relative to docs/, e.g. architecture/plan.md.",
         ),
       }),
-      async execute(_toolCallId: string, params: { projectId: string; location: { scope: string; repositoryId?: string; path: string } }) {
-        const payload = { projectId: params.projectId, location: params.location };
+      async execute(
+        _toolCallId: string,
+        params: {
+          projectId: string;
+          location: { scope: string; repositoryId?: string; path: string };
+        },
+      ) {
+        const payload = {
+          projectId: params.projectId,
+          location: params.location,
+        };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1705,18 +2590,35 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId, location, and markdown. This command creates the note if it does not exist yet.`,
       parameters: Type.Object({
-        projectId: Type.String({ description: "Canonical Orchestra project id, e.g. project-123." }),
+        projectId: Type.String({
+          description: "Canonical Orchestra project id, e.g. project-123.",
+        }),
         location: noteLocationSchema(
-          'Destination note location relative to docs/.',
-          'Markdown file path relative to docs/, e.g. architecture/plan.md.',
+          "Destination note location relative to docs/.",
+          "Markdown file path relative to docs/, e.g. architecture/plan.md.",
         ),
-        markdown: Type.String({ description: 'Full markdown body to write into the note.' }),
+        markdown: Type.String({
+          description: "Full markdown body to write into the note.",
+        }),
       }),
-      async execute(_toolCallId: string, params: { projectId: string; location: { scope: string; repositoryId?: string; path: string }; markdown: string }) {
-        const payload = { projectId: params.projectId, location: params.location, markdown: params.markdown };
+      async execute(
+        _toolCallId: string,
+        params: {
+          projectId: string;
+          location: { scope: string; repositoryId?: string; path: string };
+          markdown: string;
+        },
+      ) {
+        const payload = {
+          projectId: params.projectId,
+          location: params.location,
+          markdown: params.markdown,
+        };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1729,17 +2631,30 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId plus the note location to remove.`,
       parameters: Type.Object({
-        projectId: Type.String({ description: "Canonical Orchestra project id, e.g. project-123." }),
+        projectId: Type.String({
+          description: "Canonical Orchestra project id, e.g. project-123.",
+        }),
         location: noteLocationSchema(
-          'Note location to delete.',
-          'Markdown file path relative to docs/, e.g. architecture/plan.md.',
+          "Note location to delete.",
+          "Markdown file path relative to docs/, e.g. architecture/plan.md.",
         ),
       }),
-      async execute(_toolCallId: string, params: { projectId: string; location: { scope: string; repositoryId?: string; path: string } }) {
-        const payload = { projectId: params.projectId, location: params.location };
+      async execute(
+        _toolCallId: string,
+        params: {
+          projectId: string;
+          location: { scope: string; repositoryId?: string; path: string };
+        },
+      ) {
+        const payload = {
+          projectId: params.projectId,
+          location: params.location,
+        };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1752,17 +2667,26 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide projectId plus full source and destination note locations so cross-scope note operations work naturally.`,
       parameters: Type.Object({
-        projectId: Type.String({ description: "Canonical Orchestra project id, e.g. project-123." }),
+        projectId: Type.String({
+          description: "Canonical Orchestra project id, e.g. project-123.",
+        }),
         source: noteLocationSchema(
-          'Source note location relative to docs/.',
-          'Existing markdown file path relative to docs/, e.g. architecture/plan.md.',
+          "Source note location relative to docs/.",
+          "Existing markdown file path relative to docs/, e.g. architecture/plan.md.",
         ),
         destination: noteLocationSchema(
-          'Destination note location relative to docs/.',
-          'Target markdown file path relative to docs/, e.g. docs/archive/plan-copy.md.',
+          "Destination note location relative to docs/.",
+          "Target markdown file path relative to docs/, e.g. docs/archive/plan-copy.md.",
         ),
       }),
-      async execute(_toolCallId: string, params: { projectId: string; source: { scope: string; repositoryId?: string; path: string }; destination: { scope: string; repositoryId?: string; path: string } }) {
+      async execute(
+        _toolCallId: string,
+        params: {
+          projectId: string;
+          source: { scope: string; repositoryId?: string; path: string };
+          destination: { scope: string; repositoryId?: string; path: string };
+        },
+      ) {
         const payload = {
           projectId: params.projectId,
           source: params.source,
@@ -1770,7 +2694,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1781,14 +2707,40 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional projectId, includeArchived, tag filters, and sort controls to scope the task list.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional projectId, includeArchived, tag filters, sort controls, and page/count controls to scope the task list.`,
       parameters: Type.Object({
-        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope the task list." })),
-        includeArchived: Type.Optional(Type.Boolean({ description: "Whether archived tasks should be included." })),
-        tags: Type.Optional(Type.Array(Type.String({ description: "Exact task tag filter value." }))),
-        tagMatch: Type.Optional(Type.String({ description: "How multiple requested tags should match: all or any." })),
-        sortBy: Type.Optional(Type.String({ description: "Task sort field such as updatedAt, createdAt, priority, number, title, or tags." })),
-        sortDirection: Type.Optional(Type.String({ description: "Task sort direction: asc or desc." })),
+        projectId: Type.Optional(
+          Type.String({
+            description:
+              "Optional Orchestra project id to scope the task list.",
+          }),
+        ),
+        includeArchived: Type.Optional(
+          Type.Boolean({
+            description: "Whether archived tasks should be included.",
+          }),
+        ),
+        tags: Type.Optional(
+          Type.Array(
+            Type.String({ description: "Exact task tag filter value." }),
+          ),
+        ),
+        tagMatch: Type.Optional(
+          Type.String({
+            description:
+              "How multiple requested tags should match: all or any.",
+          }),
+        ),
+        sortBy: Type.Optional(
+          Type.String({
+            description:
+              "Task sort field such as updatedAt, createdAt, priority, number, title, or tags.",
+          }),
+        ),
+        sortDirection: Type.Optional(
+          Type.String({ description: "Task sort direction: asc or desc." }),
+        ),
+        ...paginationSchema(),
       }),
       async execute(
         _toolCallId: string,
@@ -1799,19 +2751,30 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
           tagMatch?: string;
           sortBy?: string;
           sortDirection?: string;
-        },
+        } & PaginationParams,
       ) {
-        const payload = {
-          ...(params.projectId ? { projectId: params.projectId } : {}),
-          ...(params.includeArchived !== undefined ? { includeArchived: params.includeArchived } : {}),
-          ...(params.tags !== undefined ? { tags: params.tags } : {}),
-          ...(params.tagMatch !== undefined ? { tagMatch: params.tagMatch } : {}),
-          ...(params.sortBy !== undefined ? { sortBy: params.sortBy } : {}),
-          ...(params.sortDirection !== undefined ? { sortDirection: params.sortDirection } : {}),
-        };
+        const payload = withPaginationPayload(
+          {
+            ...(params.projectId ? { projectId: params.projectId } : {}),
+            ...(params.includeArchived !== undefined
+              ? { includeArchived: params.includeArchived }
+              : {}),
+            ...(params.tags !== undefined ? { tags: params.tags } : {}),
+            ...(params.tagMatch !== undefined
+              ? { tagMatch: params.tagMatch }
+              : {}),
+            ...(params.sortBy !== undefined ? { sortBy: params.sortBy } : {}),
+            ...(params.sortDirection !== undefined
+              ? { sortDirection: params.sortDirection }
+              : {}),
+          },
+          params,
+        );
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1824,31 +2787,94 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide title and optionally projectId plus task metadata.`,
       parameters: Type.Object({
-        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id that should own the created task." })),
+        projectId: Type.Optional(
+          Type.String({
+            description:
+              "Optional Orchestra project id that should own the created task.",
+          }),
+        ),
         title: Type.String({ description: "Task title." }),
-        description: Type.Optional(Type.String({ description: "Optional task description." })),
-        type: Type.Optional(Type.String({ description: "Optional task type such as task, bug, feature, chore, or epic." })),
-        status: Type.Optional(Type.String({ description: "Optional task status such as draft, ready, in_progress, blocked, in_review, completed, or canceled." })),
-        priority: Type.Optional(Type.String({ description: "Optional priority such as P0 through P4." })),
-        workflowId: Type.Optional(Type.String({ description: "Optional workflow id to attach to the task." })),
-        currentLaneId: Type.Optional(Type.String({ description: "Optional current workflow lane id." })),
-        assigneeType: Type.Optional(Type.String({ description: "Optional assignee type such as unassigned, user, agent, or role." })),
-        assigneeId: Type.Optional(Type.String({ description: "Optional assignee id when the task is assigned." })),
-        repositoryId: Type.Optional(Type.String({ description: "Optional primary repository id for the task." })),
-        repositoryIds: Type.Optional(Type.Array(Type.String({ description: "Repository id linked to the task." }))),
-        parentTaskId: Type.Optional(Type.String({ description: "Optional parent task id for hierarchy." })),
-        tags: Type.Optional(Type.Array(Type.String({ description: "Canonical task tag value." }))),
-        whipMaxAttempts: Type.Optional(Type.Number({ description: "Optional maximum whip count for the task lane." })),
-        archived: Type.Optional(Type.Boolean({ description: "Whether the task should be created archived." })),
+        description: Type.Optional(
+          Type.String({ description: "Optional task description." }),
+        ),
+        type: Type.Optional(
+          Type.String({
+            description:
+              "Optional task type such as task, bug, feature, chore, or epic.",
+          }),
+        ),
+        status: Type.Optional(
+          Type.String({
+            description:
+              "Optional task status such as draft, ready, in_progress, blocked, in_review, completed, or canceled.",
+          }),
+        ),
+        priority: Type.Optional(
+          Type.String({
+            description: "Optional priority such as P0 through P4.",
+          }),
+        ),
+        workflowId: Type.Optional(
+          Type.String({
+            description: "Optional workflow id to attach to the task.",
+          }),
+        ),
+        currentLaneId: Type.Optional(
+          Type.String({ description: "Optional current workflow lane id." }),
+        ),
+        assigneeType: Type.Optional(
+          Type.String({
+            description:
+              "Optional assignee type such as unassigned, user, agent, or role.",
+          }),
+        ),
+        assigneeId: Type.Optional(
+          Type.String({
+            description: "Optional assignee id when the task is assigned.",
+          }),
+        ),
+        repositoryId: Type.Optional(
+          Type.String({
+            description: "Optional primary repository id for the task.",
+          }),
+        ),
+        repositoryIds: Type.Optional(
+          Type.Array(
+            Type.String({ description: "Repository id linked to the task." }),
+          ),
+        ),
+        parentTaskId: Type.Optional(
+          Type.String({
+            description: "Optional parent task id for hierarchy.",
+          }),
+        ),
+        tags: Type.Optional(
+          Type.Array(Type.String({ description: "Canonical task tag value." })),
+        ),
+        whipMaxAttempts: Type.Optional(
+          Type.Number({
+            description: "Optional maximum whip count for the task lane.",
+          }),
+        ),
+        archived: Type.Optional(
+          Type.Boolean({
+            description: "Whether the task should be created archived.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { projectId?: string } & TaskInputParams) {
+      async execute(
+        _toolCallId: string,
+        params: { projectId?: string } & TaskInputParams,
+      ) {
         const payload = {
           ...(params.projectId ? { projectId: params.projectId } : {}),
           input: buildTaskInput(params),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1861,31 +2887,89 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId plus task fields to update.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
         title: Type.String({ description: "Task title." }),
-        description: Type.Optional(Type.String({ description: "Optional task description." })),
-        type: Type.Optional(Type.String({ description: "Optional task type such as task, bug, feature, chore, or epic." })),
-        status: Type.Optional(Type.String({ description: "Optional task status such as draft, ready, in_progress, blocked, in_review, completed, or canceled." })),
-        priority: Type.Optional(Type.String({ description: "Optional priority such as P0 through P4." })),
-        workflowId: Type.Optional(Type.String({ description: "Optional workflow id to attach to the task." })),
-        currentLaneId: Type.Optional(Type.String({ description: "Optional current workflow lane id." })),
-        assigneeType: Type.Optional(Type.String({ description: "Optional assignee type such as unassigned, user, agent, or role." })),
-        assigneeId: Type.Optional(Type.String({ description: "Optional assignee id when the task is assigned." })),
-        repositoryId: Type.Optional(Type.String({ description: "Optional primary repository id for the task." })),
-        repositoryIds: Type.Optional(Type.Array(Type.String({ description: "Repository id linked to the task." }))),
-        parentTaskId: Type.Optional(Type.String({ description: "Optional parent task id for hierarchy." })),
-        tags: Type.Optional(Type.Array(Type.String({ description: "Canonical task tag value." }))),
-        whipMaxAttempts: Type.Optional(Type.Number({ description: "Optional maximum whip count for the task lane." })),
-        archived: Type.Optional(Type.Boolean({ description: "Whether the task should be archived." })),
+        description: Type.Optional(
+          Type.String({ description: "Optional task description." }),
+        ),
+        type: Type.Optional(
+          Type.String({
+            description:
+              "Optional task type such as task, bug, feature, chore, or epic.",
+          }),
+        ),
+        status: Type.Optional(
+          Type.String({
+            description:
+              "Optional task status such as draft, ready, in_progress, blocked, in_review, completed, or canceled.",
+          }),
+        ),
+        priority: Type.Optional(
+          Type.String({
+            description: "Optional priority such as P0 through P4.",
+          }),
+        ),
+        workflowId: Type.Optional(
+          Type.String({
+            description: "Optional workflow id to attach to the task.",
+          }),
+        ),
+        currentLaneId: Type.Optional(
+          Type.String({ description: "Optional current workflow lane id." }),
+        ),
+        assigneeType: Type.Optional(
+          Type.String({
+            description:
+              "Optional assignee type such as unassigned, user, agent, or role.",
+          }),
+        ),
+        assigneeId: Type.Optional(
+          Type.String({
+            description: "Optional assignee id when the task is assigned.",
+          }),
+        ),
+        repositoryId: Type.Optional(
+          Type.String({
+            description: "Optional primary repository id for the task.",
+          }),
+        ),
+        repositoryIds: Type.Optional(
+          Type.Array(
+            Type.String({ description: "Repository id linked to the task." }),
+          ),
+        ),
+        parentTaskId: Type.Optional(
+          Type.String({
+            description: "Optional parent task id for hierarchy.",
+          }),
+        ),
+        tags: Type.Optional(
+          Type.Array(Type.String({ description: "Canonical task tag value." })),
+        ),
+        whipMaxAttempts: Type.Optional(
+          Type.Number({
+            description: "Optional maximum whip count for the task lane.",
+          }),
+        ),
+        archived: Type.Optional(
+          Type.Boolean({ description: "Whether the task should be archived." }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { taskId: string } & TaskInputParams) {
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string } & TaskInputParams,
+      ) {
         const payload = {
           taskId: params.taskId,
           input: buildTaskInput(params),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1896,38 +2980,72 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional projectId and includeArchived to scope the agent list.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional projectId, includeArchived, and page/count controls to scope the agent list.`,
       parameters: Type.Object({
-        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id. Global agents are still included when they apply." })),
-        includeArchived: Type.Optional(Type.Boolean({ description: "Whether archived agents should be included." })),
+        projectId: Type.Optional(
+          Type.String({
+            description:
+              "Optional Orchestra project id. Global agents are still included when they apply.",
+          }),
+        ),
+        includeArchived: Type.Optional(
+          Type.Boolean({
+            description: "Whether archived agents should be included.",
+          }),
+        ),
+        ...paginationSchema(),
       }),
-      async execute(_toolCallId: string, params: { projectId?: string; includeArchived?: boolean }) {
-        const payload = {
-          ...(params.projectId ? { projectId: params.projectId } : {}),
-          ...(params.includeArchived !== undefined ? { includeArchived: params.includeArchived } : {}),
-        };
+      async execute(
+        _toolCallId: string,
+        params: {
+          projectId?: string;
+          includeArchived?: boolean;
+        } & PaginationParams,
+      ) {
+        const payload = withPaginationPayload(
+          {
+            ...(params.projectId ? { projectId: params.projectId } : {}),
+            ...(params.includeArchived !== undefined
+              ? { includeArchived: params.includeArchived }
+              : {}),
+          },
+          params,
+        );
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
     };
   }
 
-  if (["get_agent", "get_agent_memory_info", "archive_agent", "get_agent_permissions"].includes(tool.name)) {
+  if (
+    [
+      "get_agent",
+      "get_agent_memory_info",
+      "archive_agent",
+      "get_agent_permissions",
+    ].includes(tool.name)
+  ) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide agentId.`,
       parameters: Type.Object({
-        agentId: Type.String({ description: "Canonical Orchestra agent id, e.g. agent-123" }),
+        agentId: Type.String({
+          description: "Canonical Orchestra agent id, e.g. agent-123",
+        }),
       }),
       async execute(_toolCallId: string, params: { agentId: string }) {
         const payload = { agentId: params.agentId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1940,30 +3058,30 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide the agent definition inside a top-level input object.`,
       helpNotes: [
-        'The agent definition must be wrapped inside the top-level input property.',
-        camelCaseInputNote('agent'),
-        'If you pass name, systemPrompt, roleId, or other agent fields at the top level instead of inside input, the command will fail.',
+        "The agent definition must be wrapped inside the top-level input property.",
+        camelCaseInputNote("agent"),
+        "If you pass name, systemPrompt, roleId, or other agent fields at the top level instead of inside input, the command will fail.",
       ],
       helpExamples: [
         {
           input: {
-            name: 'Planner',
-            description: 'Creates implementation plans for new work.',
-            systemPrompt: 'You are a planning specialist.',
-            scope: 'global',
-            thinkingLevel: 'medium',
-            policyIds: ['policy-plan'],
-            directPermissions: ['tasks.read'],
+            name: "Planner",
+            description: "Creates implementation plans for new work.",
+            systemPrompt: "You are a planning specialist.",
+            scope: "global",
+            thinkingLevel: "medium",
+            policyIds: ["policy-plan"],
+            directPermissions: ["tasks.read"],
           },
         },
         {
           input: {
-            name: 'Project Developer',
-            scope: 'project',
-            projectId: 'project-123',
-            provider: 'openai',
-            model: 'gpt-5',
-            roleId: 'role-123',
+            name: "Project Developer",
+            scope: "project",
+            projectId: "project-123",
+            provider: "openai",
+            model: "gpt-5",
+            roleId: "role-123",
           },
         },
       ],
@@ -1974,7 +3092,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         const payload = { input: buildAgentInput(params.input) };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -1987,32 +3107,39 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide agentId plus the updated agent definition inside input.`,
       helpNotes: [
-        'The updated agent definition must be wrapped inside the top-level input property.',
-        camelCaseInputNote('agent'),
+        "The updated agent definition must be wrapped inside the top-level input property.",
+        camelCaseInputNote("agent"),
       ],
       helpExamples: [
         {
-          agentId: 'agent-123',
+          agentId: "agent-123",
           input: {
-            name: 'Planner',
-            scope: 'global',
-            thinkingLevel: 'high',
-            directPermissions: ['tasks.read', 'tasks.comment'],
+            name: "Planner",
+            scope: "global",
+            thinkingLevel: "high",
+            directPermissions: ["tasks.read", "tasks.comment"],
           },
         },
       ],
       parameters: Type.Object({
-        agentId: Type.String({ description: "Canonical Orchestra agent id, e.g. agent-123" }),
+        agentId: Type.String({
+          description: "Canonical Orchestra agent id, e.g. agent-123",
+        }),
         input: agentInputSchema(),
       }),
-      async execute(_toolCallId: string, params: { agentId: string; input: AgentInputParams }) {
+      async execute(
+        _toolCallId: string,
+        params: { agentId: string; input: AgentInputParams },
+      ) {
         const payload = {
           agentId: params.agentId,
           input: buildAgentInput(params.input),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2023,34 +3150,60 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional includeArchived to include archived roles.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional includeArchived plus page/count controls to include archived roles.`,
       parameters: Type.Object({
-        includeArchived: Type.Optional(Type.Boolean({ description: "Whether archived roles should be included." })),
+        includeArchived: Type.Optional(
+          Type.Boolean({
+            description: "Whether archived roles should be included.",
+          }),
+        ),
+        ...paginationSchema(),
       }),
-      async execute(_toolCallId: string, params: { includeArchived?: boolean }) {
-        const payload = params.includeArchived !== undefined ? { includeArchived: params.includeArchived } : {};
+      async execute(
+        _toolCallId: string,
+        params: { includeArchived?: boolean } & PaginationParams,
+      ) {
+        const payload = withPaginationPayload(
+          params.includeArchived !== undefined
+            ? { includeArchived: params.includeArchived }
+            : {},
+          params,
+        );
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
     };
   }
 
-  if (["get_role", "archive_role", "get_role_operations", "get_role_permissions"].includes(tool.name)) {
+  if (
+    [
+      "get_role",
+      "archive_role",
+      "get_role_operations",
+      "get_role_permissions",
+    ].includes(tool.name)
+  ) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide roleId.`,
       parameters: Type.Object({
-        roleId: Type.String({ description: "Canonical Orchestra role id, e.g. role-123" }),
+        roleId: Type.String({
+          description: "Canonical Orchestra role id, e.g. role-123",
+        }),
       }),
       async execute(_toolCallId: string, params: { roleId: string }) {
         const payload = { roleId: params.roleId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2061,15 +3214,30 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional includeArchived to include archived roles in the operational snapshot.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional includeArchived plus page/count controls for the operational snapshot.`,
       parameters: Type.Object({
-        includeArchived: Type.Optional(Type.Boolean({ description: "Whether archived roles should be included." })),
+        includeArchived: Type.Optional(
+          Type.Boolean({
+            description: "Whether archived roles should be included.",
+          }),
+        ),
+        ...paginationSchema(),
       }),
-      async execute(_toolCallId: string, params: { includeArchived?: boolean }) {
-        const payload = params.includeArchived !== undefined ? { includeArchived: params.includeArchived } : {};
+      async execute(
+        _toolCallId: string,
+        params: { includeArchived?: boolean } & PaginationParams,
+      ) {
+        const payload = withPaginationPayload(
+          params.includeArchived !== undefined
+            ? { includeArchived: params.includeArchived }
+            : {},
+          params,
+        );
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2082,18 +3250,18 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide the role definition inside a top-level input object.`,
       helpNotes: [
-        'The role definition must be wrapped inside the top-level input property.',
-        camelCaseInputNote('role'),
+        "The role definition must be wrapped inside the top-level input property.",
+        camelCaseInputNote("role"),
       ],
       helpExamples: [
         {
           input: {
-            name: 'Senior Developer',
-            description: 'Implements planned changes.',
+            name: "Senior Developer",
+            description: "Implements planned changes.",
             capacity: 2,
-            thinkingLevel: 'medium',
-            policyIds: ['policy-dev'],
-            directPermissions: ['tasks.read', 'tasks.update'],
+            thinkingLevel: "medium",
+            policyIds: ["policy-dev"],
+            directPermissions: ["tasks.read", "tasks.update"],
           },
         },
       ],
@@ -2104,7 +3272,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         const payload = { input: buildRoleInput(params.input) };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2117,31 +3287,38 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide roleId plus the updated role definition inside input.`,
       helpNotes: [
-        'The updated role definition must be wrapped inside the top-level input property.',
-        camelCaseInputNote('role'),
+        "The updated role definition must be wrapped inside the top-level input property.",
+        camelCaseInputNote("role"),
       ],
       helpExamples: [
         {
-          roleId: 'role-123',
+          roleId: "role-123",
           input: {
-            name: 'Senior Developer',
+            name: "Senior Developer",
             capacity: 3,
-            thinkingLevel: 'high',
+            thinkingLevel: "high",
           },
         },
       ],
       parameters: Type.Object({
-        roleId: Type.String({ description: "Canonical Orchestra role id, e.g. role-123" }),
+        roleId: Type.String({
+          description: "Canonical Orchestra role id, e.g. role-123",
+        }),
         input: roleInputSchema(),
       }),
-      async execute(_toolCallId: string, params: { roleId: string; input: RoleInputParams }) {
+      async execute(
+        _toolCallId: string,
+        params: { roleId: string; input: RoleInputParams },
+      ) {
         const payload = {
           roleId: params.roleId,
           input: buildRoleInput(params.input),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2153,70 +3330,135 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide the queued work definition inside a top-level input object.`,
-      helpNotes: [camelCaseInputNote('role queue entry')],
+      helpNotes: [camelCaseInputNote("role queue entry")],
       helpExamples: [
         {
           input: {
-            roleId: 'role-123',
-            sourceType: 'task',
-            sourceTaskId: 'task-123',
-            title: 'Investigate failing tests',
-            summary: 'Reproduce the failure and propose a fix.',
+            roleId: "role-123",
+            sourceType: "task",
+            sourceTaskId: "task-123",
+            title: "Investigate failing tests",
+            summary: "Reproduce the failure and propose a fix.",
           },
         },
       ],
       parameters: Type.Object({
         input: roleQueueEntrySchema(),
       }),
-      async execute(_toolCallId: string, params: { input: RoleQueueEntryParams }) {
+      async execute(
+        _toolCallId: string,
+        params: { input: RoleQueueEntryParams },
+      ) {
         const payload = { input: buildRoleQueueEntryInput(params.input) };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
     };
   }
 
-  if (["get_task", "get_task_context", "get_task_repositories", "list_task_comments", "list_task_attachments", "get_unread_task_comments", "list_task_file_references", "list_task_todos", "list_task_repositories"].includes(tool.name)) {
+  if (
+    ["get_task", "get_task_context", "get_task_repositories"].includes(
+      tool.name,
+    )
+  ) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
       }),
       async execute(_toolCallId: string, params: { taskId: string }) {
         const payload = { taskId: params.taskId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
     };
   }
 
-  if (["search_task_comments", "search_task_comment_file_mentions"].includes(tool.name)) {
+  if (
+    [
+      "list_task_comments",
+      "list_task_attachments",
+      "get_unread_task_comments",
+      "list_task_file_references",
+      "list_task_todos",
+      "list_task_repositories",
+    ].includes(tool.name)
+  ) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, query, and optionally limit.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId plus optional page/count controls.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
-        query: Type.String({ description: "Search query text." }),
-        limit: Type.Optional(Type.Number({ description: "Optional maximum result count." })),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        ...paginationSchema(),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; query: string; limit?: number }) {
-        const payload = {
-          taskId: params.taskId,
-          query: params.query,
-          ...(params.limit !== undefined ? { limit: params.limit } : {}),
-        };
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string } & PaginationParams,
+      ) {
+        const payload = withPaginationPayload(
+          { taskId: params.taskId },
+          params,
+        );
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (
+    ["search_task_comments", "search_task_comment_file_mentions"].includes(
+      tool.name,
+    )
+  ) {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, query, and optional page/count controls.`,
+      parameters: Type.Object({
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        query: Type.String({ description: "Search query text." }),
+        ...paginationSchema(),
+      }),
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string; query: string } & PaginationParams,
+      ) {
+        const payload = withPaginationPayload(
+          {
+            taskId: params.taskId,
+            query: params.query,
+          },
+          params,
+        );
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2228,13 +3470,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide a reminder message plus exactly one of delaySeconds or delayMinutes.`,
-      helpExamples: [{ message: 'Check the CI build status', delayMinutes: 10 }],
+      helpExamples: [
+        { message: "Check the CI build status", delayMinutes: 10 },
+      ],
       parameters: reminderInputSchema(),
       async execute(_toolCallId: string, params: ReminderParams) {
         const payload = buildReminderInput(params);
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2247,69 +3493,147 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide parentTaskId plus the new task definition inside input.`,
       helpNotes: [
-        'The child task definition must be wrapped inside the top-level input property.',
-        camelCaseInputNote('task'),
+        "The child task definition must be wrapped inside the top-level input property.",
+        camelCaseInputNote("task"),
       ],
       helpExamples: [
         {
-          parentTaskId: 'task-123',
+          parentTaskId: "task-123",
           input: {
-            title: 'Write regression coverage',
-            description: 'Add tests for the failing edge case.',
-            type: 'task',
-            priority: 'P2',
+            title: "Write regression coverage",
+            description: "Add tests for the failing edge case.",
+            type: "task",
+            priority: "P2",
           },
         },
       ],
       parameters: Type.Object({
-        parentTaskId: Type.String({ description: "Parent task id that should own the new subtask." }),
-        input: Type.Object({
-          title: Type.String({ description: "Task title." }),
-          description: Type.Optional(Type.String({ description: "Optional task description." })),
-          type: Type.Optional(Type.String({ description: "Optional task type such as task, bug, feature, chore, or epic." })),
-          status: Type.Optional(Type.String({ description: "Optional task status such as draft, ready, in_progress, blocked, in_review, completed, or canceled." })),
-          priority: Type.Optional(Type.String({ description: "Optional priority such as P0 through P4." })),
-          workflowId: Type.Optional(Type.String({ description: "Optional workflow id to attach to the task." })),
-          currentLaneId: Type.Optional(Type.String({ description: "Optional current workflow lane id." })),
-          assigneeType: Type.Optional(Type.String({ description: "Optional assignee type such as unassigned, user, agent, or role." })),
-          assigneeId: Type.Optional(Type.String({ description: "Optional assignee id when the task is assigned." })),
-          repositoryId: Type.Optional(Type.String({ description: "Optional primary repository id for the task." })),
-          repositoryIds: Type.Optional(Type.Array(Type.String({ description: "Repository id linked to the task." }))),
-          parentTaskId: Type.Optional(Type.String({ description: "Optional parent task id for hierarchy." })),
-          tags: Type.Optional(Type.Array(Type.String({ description: "Canonical task tag value." }))),
-          whipMaxAttempts: Type.Optional(Type.Number({ description: "Optional maximum whip count for the task lane." })),
-          archived: Type.Optional(Type.Boolean({ description: "Whether the task should be created archived." })),
-        }, {
-          description: 'Wrapped subtask definition. Put the child task fields inside top-level input, e.g. {"parentTaskId":"task-123","input":{...}}.',
+        parentTaskId: Type.String({
+          description: "Parent task id that should own the new subtask.",
         }),
+        input: Type.Object(
+          {
+            title: Type.String({ description: "Task title." }),
+            description: Type.Optional(
+              Type.String({ description: "Optional task description." }),
+            ),
+            type: Type.Optional(
+              Type.String({
+                description:
+                  "Optional task type such as task, bug, feature, chore, or epic.",
+              }),
+            ),
+            status: Type.Optional(
+              Type.String({
+                description:
+                  "Optional task status such as draft, ready, in_progress, blocked, in_review, completed, or canceled.",
+              }),
+            ),
+            priority: Type.Optional(
+              Type.String({
+                description: "Optional priority such as P0 through P4.",
+              }),
+            ),
+            workflowId: Type.Optional(
+              Type.String({
+                description: "Optional workflow id to attach to the task.",
+              }),
+            ),
+            currentLaneId: Type.Optional(
+              Type.String({
+                description: "Optional current workflow lane id.",
+              }),
+            ),
+            assigneeType: Type.Optional(
+              Type.String({
+                description:
+                  "Optional assignee type such as unassigned, user, agent, or role.",
+              }),
+            ),
+            assigneeId: Type.Optional(
+              Type.String({
+                description: "Optional assignee id when the task is assigned.",
+              }),
+            ),
+            repositoryId: Type.Optional(
+              Type.String({
+                description: "Optional primary repository id for the task.",
+              }),
+            ),
+            repositoryIds: Type.Optional(
+              Type.Array(
+                Type.String({
+                  description: "Repository id linked to the task.",
+                }),
+              ),
+            ),
+            parentTaskId: Type.Optional(
+              Type.String({
+                description: "Optional parent task id for hierarchy.",
+              }),
+            ),
+            tags: Type.Optional(
+              Type.Array(
+                Type.String({ description: "Canonical task tag value." }),
+              ),
+            ),
+            whipMaxAttempts: Type.Optional(
+              Type.Number({
+                description: "Optional maximum whip count for the task lane.",
+              }),
+            ),
+            archived: Type.Optional(
+              Type.Boolean({
+                description: "Whether the task should be created archived.",
+              }),
+            ),
+          },
+          {
+            description:
+              'Wrapped subtask definition. Put the child task fields inside top-level input, e.g. {"parentTaskId":"task-123","input":{...}}.',
+          },
+        ),
       }),
-      async execute(_toolCallId: string, params: { parentTaskId: string; input: TaskInputParams }) {
+      async execute(
+        _toolCallId: string,
+        params: { parentTaskId: string; input: TaskInputParams },
+      ) {
         const payload = {
           parentTaskId: params.parentTaskId,
           input: buildTaskInput(params.input),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
     };
   }
 
-  if (["get_task_comment_delete_impact", "delete_task_comment"].includes(tool.name)) {
+  if (
+    ["get_task_comment_delete_impact", "delete_task_comment"].includes(
+      tool.name,
+    )
+  ) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide commentId.`,
       parameters: Type.Object({
-        commentId: Type.String({ description: "Task comment id to inspect or delete." }),
+        commentId: Type.String({
+          description: "Task comment id to inspect or delete.",
+        }),
       }),
       async execute(_toolCallId: string, params: { commentId: string }) {
         const payload = { commentId: params.commentId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2322,31 +3646,54 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
       }),
       async execute(_toolCallId: string, params: { taskId: string }) {
         const payload = { taskId: params.taskId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
     };
   }
 
-  if (["complete_lane_as_success", "complete_lane_as_failure", "request_user_intervention"].includes(tool.name)) {
+  if (
+    [
+      "complete_lane_as_success",
+      "complete_lane_as_failure",
+      "request_user_intervention",
+    ].includes(tool.name)
+  ) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, required summary, and optionally notes.`,
       helpExamples: completionTransitionExamples(),
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
-        summary: Type.String({ description: "Required concise lane summary describing what happened in this lane." }),
-        notes: Type.Optional(Type.String({ description: "Optional notes describing the outcome, status, or reason for the transition." })),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        summary: Type.String({
+          description:
+            "Required concise lane summary describing what happened in this lane.",
+        }),
+        notes: Type.Optional(
+          Type.String({
+            description:
+              "Optional notes describing the outcome, status, or reason for the transition.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; summary: string; notes?: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string; summary: string; notes?: string },
+      ) {
         const payload = {
           taskId: params.taskId,
           summary: params.summary,
@@ -2354,31 +3701,52 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
     };
   }
 
-  if (["mark_task_needs_work", "resume_task_lane", "pause_task_lane", "stop_task_activity"].includes(tool.name)) {
+  if (
+    [
+      "mark_task_needs_work",
+      "resume_task_lane",
+      "pause_task_lane",
+      "stop_task_activity",
+    ].includes(tool.name)
+  ) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId and optionally notes.`,
       helpExamples: transitionExamples(),
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
-        notes: Type.Optional(Type.String({ description: "Optional notes describing the outcome, status, or reason for the transition." })),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        notes: Type.Optional(
+          Type.String({
+            description:
+              "Optional notes describing the outcome, status, or reason for the transition.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; notes?: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string; notes?: string },
+      ) {
         const payload = {
           taskId: params.taskId,
           ...(params.notes !== undefined ? { notes: params.notes } : {}),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2392,16 +3760,25 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide sessionId and optionally notes.`,
       parameters: Type.Object({
         sessionId: Type.String({ description: "Session id to stop." }),
-        notes: Type.Optional(Type.String({ description: "Optional reason for stopping the session runtime." })),
+        notes: Type.Optional(
+          Type.String({
+            description: "Optional reason for stopping the session runtime.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { sessionId: string; notes?: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { sessionId: string; notes?: string },
+      ) {
         const payload = {
           sessionId: params.sessionId,
           ...(params.notes !== undefined ? { notes: params.notes } : {}),
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2413,19 +3790,28 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide blockerTaskId and blockedTaskId.`,
-      helpExamples: [{ blockerTaskId: 'task-1', blockedTaskId: 'task-2' }],
+      helpExamples: [{ blockerTaskId: "task-1", blockedTaskId: "task-2" }],
       parameters: Type.Object({
-        blockerTaskId: Type.String({ description: "Task id that must be completed first." }),
-        blockedTaskId: Type.String({ description: "Task id that is blocked by blockerTaskId." }),
+        blockerTaskId: Type.String({
+          description: "Task id that must be completed first.",
+        }),
+        blockedTaskId: Type.String({
+          description: "Task id that is blocked by blockerTaskId.",
+        }),
       }),
-      async execute(_toolCallId: string, params: { blockerTaskId: string; blockedTaskId: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { blockerTaskId: string; blockedTaskId: string },
+      ) {
         const payload = {
           blockerTaskId: params.blockerTaskId,
           blockedTaskId: params.blockedTaskId,
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2438,13 +3824,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide dependencyId.`,
       parameters: Type.Object({
-        dependencyId: Type.String({ description: "Task dependency id to remove." }),
+        dependencyId: Type.String({
+          description: "Task dependency id to remove.",
+        }),
       }),
       async execute(_toolCallId: string, params: { dependencyId: string }) {
         const payload = { dependencyId: params.dependencyId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2457,34 +3847,39 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId plus the attachment definition inside input.`,
       helpNotes: [
-        'The attachment payload must be wrapped inside the top-level input property.',
-        camelCaseInputNote('task attachment'),
-        'Prefer input.filePath for readable files that already exist on disk in this session. Relative filePath values resolve from the current session working directory.',
-        'Use input.base64Data only when the bytes are already in memory or generated outside the local filesystem. In base64Data mode, input.fileName and input.mediaType are required.',
+        "The attachment payload must be wrapped inside the top-level input property.",
+        camelCaseInputNote("task attachment"),
+        "Prefer input.filePath for readable files that already exist on disk in this session. Relative filePath values resolve from the current session working directory.",
+        "Use input.base64Data only when the bytes are already in memory or generated outside the local filesystem. In base64Data mode, input.fileName and input.mediaType are required.",
       ],
       helpExamples: [
         {
-          taskId: 'task-123',
+          taskId: "task-123",
           input: {
-            filePath: './artifacts/ci-output.log',
-            caption: 'CI failure excerpt',
+            filePath: "./artifacts/ci-output.log",
+            caption: "CI failure excerpt",
           },
         },
         {
-          taskId: 'task-123',
+          taskId: "task-123",
           input: {
-            fileName: 'error.log',
-            mediaType: 'text/plain',
-            base64Data: 'ZXhhbXBsZSBsb2c=',
-            caption: 'CI failure excerpt',
+            fileName: "error.log",
+            mediaType: "text/plain",
+            base64Data: "ZXhhbXBsZSBsb2c=",
+            caption: "CI failure excerpt",
           },
         },
       ],
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
         input: taskAttachmentSchema(),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; input: TaskAttachmentParams }) {
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string; input: TaskAttachmentParams },
+      ) {
         const attachmentInput = await buildTaskAttachmentInput(params.input);
         const payload = {
           taskId: params.taskId,
@@ -2492,8 +3887,15 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
-          details: { command: tool.name, payload, attachmentInput: attachmentInput.auditInput, result },
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
+          details: {
+            command: tool.name,
+            payload,
+            attachmentInput: attachmentInput.auditInput,
+            result,
+          },
         };
       },
     };
@@ -2505,13 +3907,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide attachmentId.`,
       parameters: Type.Object({
-        attachmentId: Type.String({ description: "Task attachment id to remove." }),
+        attachmentId: Type.String({
+          description: "Task attachment id to remove.",
+        }),
       }),
       async execute(_toolCallId: string, params: { attachmentId: string }) {
         const payload = { attachmentId: params.attachmentId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2522,13 +3928,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. No input is required.`,
-      parameters: Type.Object({}),
-      async execute() {
-        const payload = {};
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Optionally page through the policy list or request count-only metadata.`,
+      parameters: Type.Object({
+        ...paginationSchema(),
+      }),
+      async execute(_toolCallId: string, params: PaginationParams) {
+        const payload = withPaginationPayload({}, params);
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2541,13 +3951,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide policyId.`,
       parameters: Type.Object({
-        policyId: Type.String({ description: "Canonical Orchestra policy id, e.g. policy-123" }),
+        policyId: Type.String({
+          description: "Canonical Orchestra policy id, e.g. policy-123",
+        }),
       }),
       async execute(_toolCallId: string, params: { policyId: string }) {
         const payload = { policyId: params.policyId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2560,13 +3974,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide roleInstanceId.`,
       parameters: Type.Object({
-        roleInstanceId: Type.String({ description: "Role instance id to inspect." }),
+        roleInstanceId: Type.String({
+          description: "Role instance id to inspect.",
+        }),
       }),
       async execute(_toolCallId: string, params: { roleInstanceId: string }) {
         const payload = { roleInstanceId: params.roleInstanceId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2579,11 +3997,24 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide workerType, workerSlug, and optionally projectSlug.`,
       parameters: Type.Object({
-        workerType: Type.String({ description: "Worker type, usually agent or role." }),
+        workerType: Type.String({
+          description: "Worker type, usually agent or role.",
+        }),
         workerSlug: Type.String({ description: "Worker slug to inspect." }),
-        projectSlug: Type.Optional(Type.String({ description: "Optional Orchestra project slug to read from." })),
+        projectSlug: Type.Optional(
+          Type.String({
+            description: "Optional Orchestra project slug to read from.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { workerType: string; workerSlug: string; projectSlug?: string }) {
+      async execute(
+        _toolCallId: string,
+        params: {
+          workerType: string;
+          workerSlug: string;
+          projectSlug?: string;
+        },
+      ) {
         const payload = {
           workerType: params.workerType,
           workerSlug: params.workerSlug,
@@ -2591,7 +4022,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2604,12 +4037,31 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide workerType, workerSlug, prompt, and optionally projectSlug.`,
       parameters: Type.Object({
-        workerType: Type.String({ description: "Worker type, usually agent or role." }),
+        workerType: Type.String({
+          description: "Worker type, usually agent or role.",
+        }),
         workerSlug: Type.String({ description: "Worker slug to update." }),
-        prompt: Type.Optional(Type.String({ description: "Optional overlay prompt. Omit or pass an empty string to clear it." })),
-        projectSlug: Type.Optional(Type.String({ description: "Optional Orchestra project slug to update." })),
+        prompt: Type.Optional(
+          Type.String({
+            description:
+              "Optional overlay prompt. Omit or pass an empty string to clear it.",
+          }),
+        ),
+        projectSlug: Type.Optional(
+          Type.String({
+            description: "Optional Orchestra project slug to update.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { workerType: string; workerSlug: string; prompt?: string; projectSlug?: string }) {
+      async execute(
+        _toolCallId: string,
+        params: {
+          workerType: string;
+          workerSlug: string;
+          prompt?: string;
+          projectSlug?: string;
+        },
+      ) {
         const payload = {
           workerType: params.workerType,
           workerSlug: params.workerSlug,
@@ -2618,7 +4070,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2631,14 +4085,45 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, author, message, and optionally interruptAgent, parentCommentId, and anchor.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
-        author: Type.String({ description: "Comment author name to record on the task." }),
-        message: Type.String({ description: "Durable task comment text describing what happened and why." }),
-        interruptAgent: Type.Optional(Type.Boolean({ description: "Whether this comment should interrupt an active worker immediately." })),
-        parentCommentId: Type.Optional(Type.String({ description: "Existing top-level task comment id to reply to." })),
-        anchor: Type.Optional(Type.Any({ description: "Optional file or DOM anchor payload for the task comment." })),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        author: Type.String({
+          description: "Comment author name to record on the task.",
+        }),
+        message: Type.String({
+          description:
+            "Durable task comment text describing what happened and why.",
+        }),
+        interruptAgent: Type.Optional(
+          Type.Boolean({
+            description:
+              "Whether this comment should interrupt an active worker immediately.",
+          }),
+        ),
+        parentCommentId: Type.Optional(
+          Type.String({
+            description: "Existing top-level task comment id to reply to.",
+          }),
+        ),
+        anchor: Type.Optional(
+          Type.Any({
+            description:
+              "Optional file or DOM anchor payload for the task comment.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; author: string; message: string; interruptAgent?: boolean; parentCommentId?: string; anchor?: Record<string, unknown> }) {
+      async execute(
+        _toolCallId: string,
+        params: {
+          taskId: string;
+          author: string;
+          message: string;
+          interruptAgent?: boolean;
+          parentCommentId?: string;
+          anchor?: Record<string, unknown>;
+        },
+      ) {
         const payload = {
           taskId: params.taskId,
           input: {
@@ -2651,26 +4136,32 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
     };
   }
 
-  if (["get_task_context", "get_task_repositories", "list_task_comments", "list_task_attachments", "get_unread_task_comments", "list_task_file_references", "list_task_todos", "show_task_browser", "get_task_browser_state"].includes(tool.name)) {
+  if (["show_task_browser", "get_task_browser_state"].includes(tool.name)) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
       }),
       async execute(_toolCallId: string, params: { taskId: string }) {
         const payload = { taskId: params.taskId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2683,14 +4174,23 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId and url.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
-        url: Type.String({ description: "Target http(s) URL for the task browser surface." }),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        url: Type.String({
+          description: "Target http(s) URL for the task browser surface.",
+        }),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; url: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string; url: string },
+      ) {
         const payload = { taskId: params.taskId, url: params.url };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2703,14 +4203,23 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId and enabled.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
-        enabled: Type.Boolean({ description: "Whether inspect mode should be enabled." }),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        enabled: Type.Boolean({
+          description: "Whether inspect mode should be enabled.",
+        }),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; enabled: boolean }) {
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string; enabled: boolean },
+      ) {
         const payload = { taskId: params.taskId, enabled: params.enabled };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2723,39 +4232,94 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId and anchor.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
         anchor: Type.Object({
-          browserSessionId: Type.String({ description: "Task browser session id." }),
-          url: Type.String({ description: "Page URL captured for the DOM anchor." }),
-          pageTitle: Type.Optional(Type.String({ description: "Optional page title captured for the DOM anchor." })),
-          domRevision: Type.Number({ description: "DOM revision captured when the anchor was selected." }),
+          browserSessionId: Type.String({
+            description: "Task browser session id.",
+          }),
+          url: Type.String({
+            description: "Page URL captured for the DOM anchor.",
+          }),
+          pageTitle: Type.Optional(
+            Type.String({
+              description: "Optional page title captured for the DOM anchor.",
+            }),
+          ),
+          domRevision: Type.Number({
+            description: "DOM revision captured when the anchor was selected.",
+          }),
           locator: Type.Object({
-            cssPath: Type.Optional(Type.String({ description: "Optional CSS locator path." })),
-            xpath: Type.Optional(Type.String({ description: "Optional XPath locator." })),
-            role: Type.Optional(Type.String({ description: "Optional ARIA role value." })),
-            accessibleName: Type.Optional(Type.String({ description: "Optional accessible-name hint." })),
-            textSnippet: Type.Optional(Type.String({ description: "Optional text snippet hint." })),
-            testId: Type.Optional(Type.String({ description: "Optional data-testid hint." })),
-            ordinalPath: Type.Optional(Type.Array(Type.Object({
-              tag: Type.String({ description: "Tag name segment." }),
-              index: Type.Number({ description: "Zero-based sibling index for the tag segment." }),
-            }))),
+            cssPath: Type.Optional(
+              Type.String({ description: "Optional CSS locator path." }),
+            ),
+            xpath: Type.Optional(
+              Type.String({ description: "Optional XPath locator." }),
+            ),
+            role: Type.Optional(
+              Type.String({ description: "Optional ARIA role value." }),
+            ),
+            accessibleName: Type.Optional(
+              Type.String({ description: "Optional accessible-name hint." }),
+            ),
+            textSnippet: Type.Optional(
+              Type.String({ description: "Optional text snippet hint." }),
+            ),
+            testId: Type.Optional(
+              Type.String({ description: "Optional data-testid hint." }),
+            ),
+            ordinalPath: Type.Optional(
+              Type.Array(
+                Type.Object({
+                  tag: Type.String({ description: "Tag name segment." }),
+                  index: Type.Number({
+                    description:
+                      "Zero-based sibling index for the tag segment.",
+                  }),
+                }),
+              ),
+            ),
           }),
           snapshot: Type.Object({
-            tagName: Type.String({ description: "Selected DOM element tag name." }),
-            id: Type.Optional(Type.String({ description: "Optional element id." })),
-            classList: Type.Optional(Type.Array(Type.String({ description: "Captured element classes." }))),
-            textPreview: Type.Optional(Type.String({ description: "Optional text preview." })),
-            attributes: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Captured DOM attribute map." })),
-            outerHtmlSnippet: Type.Optional(Type.String({ description: "Optional outerHTML snippet." })),
+            tagName: Type.String({
+              description: "Selected DOM element tag name.",
+            }),
+            id: Type.Optional(
+              Type.String({ description: "Optional element id." }),
+            ),
+            classList: Type.Optional(
+              Type.Array(
+                Type.String({ description: "Captured element classes." }),
+              ),
+            ),
+            textPreview: Type.Optional(
+              Type.String({ description: "Optional text preview." }),
+            ),
+            attributes: Type.Optional(
+              Type.Record(Type.String(), Type.String(), {
+                description: "Captured DOM attribute map.",
+              }),
+            ),
+            outerHtmlSnippet: Type.Optional(
+              Type.String({ description: "Optional outerHTML snippet." }),
+            ),
           }),
         }),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; anchor: Record<string, unknown> }) {
-        const payload = { taskId: params.taskId, anchor: { kind: "dom", ...params.anchor } };
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string; anchor: Record<string, unknown> },
+      ) {
+        const payload = {
+          taskId: params.taskId,
+          anchor: { kind: "dom", ...params.anchor },
+        };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2766,19 +4330,34 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId and optionally laneId to scope unfinished todos to one lane.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, optionally laneId, and optional page/count controls to scope unfinished todos to one lane.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
-        laneId: Type.Optional(Type.String({ description: "Optional workflow lane id to scope unfinished todos." })),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        laneId: Type.Optional(
+          Type.String({
+            description: "Optional workflow lane id to scope unfinished todos.",
+          }),
+        ),
+        ...paginationSchema(),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; laneId?: string }) {
-        const payload = {
-          taskId: params.taskId,
-          ...(params.laneId ? { laneId: params.laneId } : {}),
-        };
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string; laneId?: string } & PaginationParams,
+      ) {
+        const payload = withPaginationPayload(
+          {
+            taskId: params.taskId,
+            ...(params.laneId ? { laneId: params.laneId } : {}),
+          },
+          params,
+        );
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2791,11 +4370,21 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, repositoryId, and relativePath.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
-        repositoryId: Type.String({ description: "Repository id that owns the tracked file." }),
-        relativePath: Type.String({ description: "Repository-relative file path to track, e.g. docs/design.md." }),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        repositoryId: Type.String({
+          description: "Repository id that owns the tracked file.",
+        }),
+        relativePath: Type.String({
+          description:
+            "Repository-relative file path to track, e.g. docs/design.md.",
+        }),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; repositoryId: string; relativePath: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string; repositoryId: string; relativePath: string },
+      ) {
         const payload = {
           taskId: params.taskId,
           input: {
@@ -2805,7 +4394,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2818,11 +4409,23 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide description and the target laneId; taskId remains optional in an active worker session. Worker-owned sessions may target their current lane or directly connected workflow handoff lanes only.`,
       parameters: Type.Object({
-        taskId: Type.Optional(Type.String({ description: "Optional canonical Orchestra task id. Omit in an active worker session to use the current task." })),
-        laneId: Type.String({ description: "Required workflow lane id that should own the todo." }),
-        description: Type.String({ description: "Todo description to track on the task." }),
+        taskId: Type.Optional(
+          Type.String({
+            description:
+              "Optional canonical Orchestra task id. Omit in an active worker session to use the current task.",
+          }),
+        ),
+        laneId: Type.String({
+          description: "Required workflow lane id that should own the todo.",
+        }),
+        description: Type.String({
+          description: "Todo description to track on the task.",
+        }),
       }),
-      async execute(_toolCallId: string, params: { taskId?: string; laneId: string; description: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { taskId?: string; laneId: string; description: string },
+      ) {
         const payload = {
           ...(params.taskId ? { taskId: params.taskId } : {}),
           input: {
@@ -2832,14 +4435,22 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
     };
   }
 
-  if (["mark_task_todo_finished", "mark_task_todo_unfinished", "delete_task_todo"].includes(tool.name)) {
+  if (
+    [
+      "mark_task_todo_finished",
+      "mark_task_todo_unfinished",
+      "delete_task_todo",
+    ].includes(tool.name)
+  ) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
@@ -2851,7 +4462,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         const payload = { todoId: params.todoId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2864,13 +4477,17 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide referenceId.`,
       parameters: Type.Object({
-        referenceId: Type.String({ description: "Task file reference id to remove." }),
+        referenceId: Type.String({
+          description: "Task file reference id to remove.",
+        }),
       }),
       async execute(_toolCallId: string, params: { referenceId: string }) {
         const payload = { referenceId: params.referenceId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2883,10 +4500,21 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId and optionally commentIds.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
-        commentIds: Type.Optional(Type.Array(Type.String({ description: "Task comment id to acknowledge as read." }))),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        commentIds: Type.Optional(
+          Type.Array(
+            Type.String({
+              description: "Task comment id to acknowledge as read.",
+            }),
+          ),
+        ),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; commentIds?: string[] }) {
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string; commentIds?: string[] },
+      ) {
         const payload = {
           taskId: params.taskId,
           input: {
@@ -2895,7 +4523,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2908,11 +4538,23 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, laneId, and optionally notes describing why the task is being moved.`,
       parameters: Type.Object({
-        taskId: Type.String({ description: "Canonical Orchestra task id, e.g. task-123" }),
-        laneId: Type.String({ description: "Workflow lane id that should own the task next." }),
-        notes: Type.Optional(Type.String({ description: "Optional re-lane notes describing the failure or redirect." })),
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        laneId: Type.String({
+          description: "Workflow lane id that should own the task next.",
+        }),
+        notes: Type.Optional(
+          Type.String({
+            description:
+              "Optional re-lane notes describing the failure or redirect.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { taskId: string; laneId: string; notes?: string }) {
+      async execute(
+        _toolCallId: string,
+        params: { taskId: string; laneId: string; notes?: string },
+      ) {
         const payload = {
           taskId: params.taskId,
           laneId: params.laneId,
@@ -2920,7 +4562,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2931,15 +4575,28 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional taskId to include the active assignment mailbox.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional taskId to include the active assignment mailbox, plus optional page/count controls.`,
       parameters: Type.Object({
-        taskId: Type.Optional(Type.String({ description: "Optional canonical Orchestra task id, e.g. task-123" })),
+        taskId: Type.Optional(
+          Type.String({
+            description: "Optional canonical Orchestra task id, e.g. task-123",
+          }),
+        ),
+        ...paginationSchema(),
       }),
-      async execute(_toolCallId: string, params: { taskId?: string }) {
-        const payload = params.taskId ? { taskId: params.taskId } : {};
+      async execute(
+        _toolCallId: string,
+        params: { taskId?: string } & PaginationParams,
+      ) {
+        const payload = withPaginationPayload(
+          params.taskId ? { taskId: params.taskId } : {},
+          params,
+        );
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2952,10 +4609,23 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional taskId and deliveryIds.`,
       parameters: Type.Object({
-        taskId: Type.Optional(Type.String({ description: "Optional canonical Orchestra task id, e.g. task-123" })),
-        deliveryIds: Type.Optional(Type.Array(Type.String({ description: "Mailbox delivery id to acknowledge as read." }))),
+        taskId: Type.Optional(
+          Type.String({
+            description: "Optional canonical Orchestra task id, e.g. task-123",
+          }),
+        ),
+        deliveryIds: Type.Optional(
+          Type.Array(
+            Type.String({
+              description: "Mailbox delivery id to acknowledge as read.",
+            }),
+          ),
+        ),
       }),
-      async execute(_toolCallId: string, params: { taskId?: string; deliveryIds?: string[] }) {
+      async execute(
+        _toolCallId: string,
+        params: { taskId?: string; deliveryIds?: string[] },
+      ) {
         const payload = {
           ...(params.taskId ? { taskId: params.taskId } : {}),
           input: {
@@ -2964,7 +4634,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -2977,14 +4649,45 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide recipientType, body, and optionally projectId, taskId, recipientId, and priority.`,
       parameters: Type.Object({
-        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id for general agent mail without a task context." })),
-        taskId: Type.Optional(Type.String({ description: "Optional canonical Orchestra task id, e.g. task-123" })),
-        recipientType: Type.String({ description: "Mailbox recipient type: user, agent, or active_assignment." }),
-        recipientId: Type.Optional(Type.String({ description: "Recipient id for agent or assignment delivery targets." })),
+        projectId: Type.Optional(
+          Type.String({
+            description:
+              "Optional Orchestra project id for general agent mail without a task context.",
+          }),
+        ),
+        taskId: Type.Optional(
+          Type.String({
+            description: "Optional canonical Orchestra task id, e.g. task-123",
+          }),
+        ),
+        recipientType: Type.String({
+          description:
+            "Mailbox recipient type: user, agent, or active_assignment.",
+        }),
+        recipientId: Type.Optional(
+          Type.String({
+            description:
+              "Recipient id for agent or assignment delivery targets.",
+          }),
+        ),
         body: Type.String({ description: "Mailbox message body." }),
-        priority: Type.Optional(Type.String({ description: "Optional priority: normal or interrupt." })),
+        priority: Type.Optional(
+          Type.String({
+            description: "Optional priority: normal or interrupt.",
+          }),
+        ),
       }),
-      async execute(_toolCallId: string, params: { projectId?: string; taskId?: string; recipientType: string; recipientId?: string; body: string; priority?: string }) {
+      async execute(
+        _toolCallId: string,
+        params: {
+          projectId?: string;
+          taskId?: string;
+          recipientType: string;
+          recipientId?: string;
+          body: string;
+          priority?: string;
+        },
+      ) {
         const payload = {
           ...(params.projectId ? { projectId: params.projectId } : {}),
           ...(params.taskId ? { taskId: params.taskId } : {}),
@@ -2995,7 +4698,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -3006,30 +4711,96 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
-      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional project/session/query/task/worker filters plus hidden, dismissed, legacy-diagnostic catalog/list-entry state, file state, and limit controls.`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional project/session/query/task/worker filters plus hidden, dismissed, legacy-diagnostic catalog/list-entry state, file state, and page/count controls.`,
       parameters: Type.Object({
-        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope the session inventory." })),
-        projectSlug: Type.Optional(Type.String({ description: "Optional project slug to scope the session inventory." })),
-        sessionIds: Type.Optional(Type.Array(Type.String({ description: "Exact session id to include." }))),
-        query: Type.Optional(Type.String({ description: "Optional title/id/task/worker substring query." })),
-        status: Type.Optional(Type.String({ description: "Optional session status filter such as active, idle, closed, or unknown." })),
-        taskId: Type.Optional(Type.String({ description: "Optional linked task id filter." })),
-        taskNumber: Type.Optional(Type.String({ description: "Optional linked task number filter, e.g. ORC-176." })),
-        workerType: Type.Optional(Type.String({ description: "Optional worker type filter such as role or agent." })),
-        workerName: Type.Optional(Type.String({ description: "Optional exact worker name filter." })),
-        hidden: Type.Optional(Type.Boolean({ description: "Whether to include only hidden or only visible sessions." })),
-        dismissed: Type.Optional(Type.Boolean({ description: "Whether to include only canonically user-dismissed or non-dismissed sessions." })),
-        catalogPresent: Type.Optional(Type.Boolean({ description: "Compatibility alias for legacyCatalogPresent. Filters on whether a legacy session_catalog row exists." })),
-        legacyCatalogPresent: Type.Optional(Type.Boolean({ description: "Admin-only drift filter for whether a legacy session_catalog row exists." })),
-        legacyListEntryPresent: Type.Optional(Type.Boolean({ description: "Admin-only drift filter for whether a legacy session_list_entries row exists." })),
-        fileExists: Type.Optional(Type.Boolean({ description: "Filter on whether the transcript file exists." })),
-        limit: Type.Optional(Type.Number({ description: "Optional maximum number of sessions to return." })),
+        projectId: Type.Optional(
+          Type.String({
+            description:
+              "Optional Orchestra project id to scope the session inventory.",
+          }),
+        ),
+        projectSlug: Type.Optional(
+          Type.String({
+            description:
+              "Optional project slug to scope the session inventory.",
+          }),
+        ),
+        sessionIds: Type.Optional(
+          Type.Array(
+            Type.String({ description: "Exact session id to include." }),
+          ),
+        ),
+        query: Type.Optional(
+          Type.String({
+            description: "Optional title/id/task/worker substring query.",
+          }),
+        ),
+        status: Type.Optional(
+          Type.String({
+            description:
+              "Optional session status filter such as active, idle, closed, or unknown.",
+          }),
+        ),
+        taskId: Type.Optional(
+          Type.String({ description: "Optional linked task id filter." }),
+        ),
+        taskNumber: Type.Optional(
+          Type.String({
+            description: "Optional linked task number filter, e.g. ORC-176.",
+          }),
+        ),
+        workerType: Type.Optional(
+          Type.String({
+            description: "Optional worker type filter such as role or agent.",
+          }),
+        ),
+        workerName: Type.Optional(
+          Type.String({ description: "Optional exact worker name filter." }),
+        ),
+        hidden: Type.Optional(
+          Type.Boolean({
+            description:
+              "Whether to include only hidden or only visible sessions.",
+          }),
+        ),
+        dismissed: Type.Optional(
+          Type.Boolean({
+            description:
+              "Whether to include only canonically user-dismissed or non-dismissed sessions.",
+          }),
+        ),
+        catalogPresent: Type.Optional(
+          Type.Boolean({
+            description:
+              "Compatibility alias for legacyCatalogPresent. Filters on whether a legacy session_catalog row exists.",
+          }),
+        ),
+        legacyCatalogPresent: Type.Optional(
+          Type.Boolean({
+            description:
+              "Admin-only drift filter for whether a legacy session_catalog row exists.",
+          }),
+        ),
+        legacyListEntryPresent: Type.Optional(
+          Type.Boolean({
+            description:
+              "Admin-only drift filter for whether a legacy session_list_entries row exists.",
+          }),
+        ),
+        fileExists: Type.Optional(
+          Type.Boolean({
+            description: "Filter on whether the transcript file exists.",
+          }),
+        ),
+        ...paginationSchema(),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const payload = { ...params };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -3042,51 +4813,131 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide sessionId to inspect canonical, transcript, legacy catalog/list-entry, run-origin, and runtime diagnostics.`,
       parameters: Type.Object({
-        sessionId: Type.String({ description: "Canonical Orchestra session id to inspect." }),
+        sessionId: Type.String({
+          description: "Canonical Orchestra session id to inspect.",
+        }),
       }),
       async execute(_toolCallId: string, params: { sessionId: string }) {
         const payload = { sessionId: params.sessionId };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
     };
   }
 
-  if (["hide_sessions", "restore_sessions", "delete_sessions"].includes(tool.name)) {
+  if (
+    ["hide_sessions", "restore_sessions", "delete_sessions"].includes(tool.name)
+  ) {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide explicit session filters. Legacy catalog/list-entry filters are admin-only diagnostics. Destructive execution defaults to dryRun=true and requires confirm=true when dryRun=false. delete_sessions also supports stopActiveRuntimes and may additionally require sessions.stop.`,
       parameters: Type.Object({
-        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope the target sessions." })),
-        projectSlug: Type.Optional(Type.String({ description: "Optional project slug to scope the target sessions." })),
-        sessionIds: Type.Optional(Type.Array(Type.String({ description: "Exact session id to target." }))),
-        query: Type.Optional(Type.String({ description: "Optional title/id/task/worker substring query." })),
-        status: Type.Optional(Type.String({ description: "Optional session status filter." })),
-        taskId: Type.Optional(Type.String({ description: "Optional linked task id filter." })),
-        taskNumber: Type.Optional(Type.String({ description: "Optional linked task number filter." })),
-        workerType: Type.Optional(Type.String({ description: "Optional worker type filter." })),
-        workerName: Type.Optional(Type.String({ description: "Optional exact worker name filter." })),
-        hidden: Type.Optional(Type.Boolean({ description: "Optional hidden-state filter." })),
-        dismissed: Type.Optional(Type.Boolean({ description: "Optional canonical user-dismissed-state filter." })),
-        catalogPresent: Type.Optional(Type.Boolean({ description: "Compatibility alias for legacyCatalogPresent." })),
-        legacyCatalogPresent: Type.Optional(Type.Boolean({ description: "Optional admin-only legacy session_catalog presence filter." })),
-        legacyListEntryPresent: Type.Optional(Type.Boolean({ description: "Optional admin-only legacy session_list_entries presence filter." })),
-        fileExists: Type.Optional(Type.Boolean({ description: "Optional transcript file existence filter." })),
-        limit: Type.Optional(Type.Number({ description: "Optional maximum number of sessions to match." })),
-        reason: Type.Optional(Type.String({ description: "Optional hide reason. hide_sessions defaults to user_dismissed when omitted." })),
-        dryRun: Type.Optional(Type.Boolean({ description: "Whether to preview the change without executing it. Defaults to true." })),
-        confirm: Type.Optional(Type.Boolean({ description: "Must be true when dryRun is false." })),
-        stopActiveRuntimes: Type.Optional(Type.Boolean({ description: "For delete_sessions only: stop active runtimes before deleting them. Requires sessions.stop when true." })),
+        projectId: Type.Optional(
+          Type.String({
+            description:
+              "Optional Orchestra project id to scope the target sessions.",
+          }),
+        ),
+        projectSlug: Type.Optional(
+          Type.String({
+            description: "Optional project slug to scope the target sessions.",
+          }),
+        ),
+        sessionIds: Type.Optional(
+          Type.Array(
+            Type.String({ description: "Exact session id to target." }),
+          ),
+        ),
+        query: Type.Optional(
+          Type.String({
+            description: "Optional title/id/task/worker substring query.",
+          }),
+        ),
+        status: Type.Optional(
+          Type.String({ description: "Optional session status filter." }),
+        ),
+        taskId: Type.Optional(
+          Type.String({ description: "Optional linked task id filter." }),
+        ),
+        taskNumber: Type.Optional(
+          Type.String({ description: "Optional linked task number filter." }),
+        ),
+        workerType: Type.Optional(
+          Type.String({ description: "Optional worker type filter." }),
+        ),
+        workerName: Type.Optional(
+          Type.String({ description: "Optional exact worker name filter." }),
+        ),
+        hidden: Type.Optional(
+          Type.Boolean({ description: "Optional hidden-state filter." }),
+        ),
+        dismissed: Type.Optional(
+          Type.Boolean({
+            description: "Optional canonical user-dismissed-state filter.",
+          }),
+        ),
+        catalogPresent: Type.Optional(
+          Type.Boolean({
+            description: "Compatibility alias for legacyCatalogPresent.",
+          }),
+        ),
+        legacyCatalogPresent: Type.Optional(
+          Type.Boolean({
+            description:
+              "Optional admin-only legacy session_catalog presence filter.",
+          }),
+        ),
+        legacyListEntryPresent: Type.Optional(
+          Type.Boolean({
+            description:
+              "Optional admin-only legacy session_list_entries presence filter.",
+          }),
+        ),
+        fileExists: Type.Optional(
+          Type.Boolean({
+            description: "Optional transcript file existence filter.",
+          }),
+        ),
+        limit: Type.Optional(
+          Type.Number({
+            description: "Optional maximum number of sessions to match.",
+          }),
+        ),
+        reason: Type.Optional(
+          Type.String({
+            description:
+              "Optional hide reason. hide_sessions defaults to user_dismissed when omitted.",
+          }),
+        ),
+        dryRun: Type.Optional(
+          Type.Boolean({
+            description:
+              "Whether to preview the change without executing it. Defaults to true.",
+          }),
+        ),
+        confirm: Type.Optional(
+          Type.Boolean({ description: "Must be true when dryRun is false." }),
+        ),
+        stopActiveRuntimes: Type.Optional(
+          Type.Boolean({
+            description:
+              "For delete_sessions only: stop active runtimes before deleting them. Requires sessions.stop when true.",
+          }),
+        ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const payload = { ...params };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -3099,30 +4950,96 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       label: `Orchestra · ${tool.name}`,
       description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide optional project/session/query filters to inspect or repair canonical/transcript/legacy drift. Legacy catalog/list-entry filters are admin-only diagnostics. Execution defaults to dryRun=true and requires confirm=true when dryRun=false.`,
       parameters: Type.Object({
-        projectId: Type.Optional(Type.String({ description: "Optional Orchestra project id to scope reconciliation." })),
-        projectSlug: Type.Optional(Type.String({ description: "Optional project slug to scope reconciliation." })),
-        sessionIds: Type.Optional(Type.Array(Type.String({ description: "Optional exact session ids to reconcile." }))),
-        query: Type.Optional(Type.String({ description: "Optional title/id/task/worker substring query." })),
-        status: Type.Optional(Type.String({ description: "Optional session status filter." })),
-        taskId: Type.Optional(Type.String({ description: "Optional linked task id filter." })),
-        taskNumber: Type.Optional(Type.String({ description: "Optional linked task number filter." })),
-        workerType: Type.Optional(Type.String({ description: "Optional worker type filter." })),
-        workerName: Type.Optional(Type.String({ description: "Optional exact worker name filter." })),
-        hidden: Type.Optional(Type.Boolean({ description: "Optional hidden-state filter." })),
-        dismissed: Type.Optional(Type.Boolean({ description: "Optional canonical user-dismissed-state filter." })),
-        catalogPresent: Type.Optional(Type.Boolean({ description: "Compatibility alias for legacyCatalogPresent." })),
-        legacyCatalogPresent: Type.Optional(Type.Boolean({ description: "Optional admin-only legacy session_catalog presence filter." })),
-        legacyListEntryPresent: Type.Optional(Type.Boolean({ description: "Optional admin-only legacy session_list_entries presence filter." })),
-        fileExists: Type.Optional(Type.Boolean({ description: "Optional transcript file existence filter." })),
-        limit: Type.Optional(Type.Number({ description: "Optional maximum number of sessions to inspect." })),
-        dryRun: Type.Optional(Type.Boolean({ description: "Whether to preview the reconciliation without executing it. Defaults to true." })),
-        confirm: Type.Optional(Type.Boolean({ description: "Must be true when dryRun is false." })),
+        projectId: Type.Optional(
+          Type.String({
+            description:
+              "Optional Orchestra project id to scope reconciliation.",
+          }),
+        ),
+        projectSlug: Type.Optional(
+          Type.String({
+            description: "Optional project slug to scope reconciliation.",
+          }),
+        ),
+        sessionIds: Type.Optional(
+          Type.Array(
+            Type.String({
+              description: "Optional exact session ids to reconcile.",
+            }),
+          ),
+        ),
+        query: Type.Optional(
+          Type.String({
+            description: "Optional title/id/task/worker substring query.",
+          }),
+        ),
+        status: Type.Optional(
+          Type.String({ description: "Optional session status filter." }),
+        ),
+        taskId: Type.Optional(
+          Type.String({ description: "Optional linked task id filter." }),
+        ),
+        taskNumber: Type.Optional(
+          Type.String({ description: "Optional linked task number filter." }),
+        ),
+        workerType: Type.Optional(
+          Type.String({ description: "Optional worker type filter." }),
+        ),
+        workerName: Type.Optional(
+          Type.String({ description: "Optional exact worker name filter." }),
+        ),
+        hidden: Type.Optional(
+          Type.Boolean({ description: "Optional hidden-state filter." }),
+        ),
+        dismissed: Type.Optional(
+          Type.Boolean({
+            description: "Optional canonical user-dismissed-state filter.",
+          }),
+        ),
+        catalogPresent: Type.Optional(
+          Type.Boolean({
+            description: "Compatibility alias for legacyCatalogPresent.",
+          }),
+        ),
+        legacyCatalogPresent: Type.Optional(
+          Type.Boolean({
+            description:
+              "Optional admin-only legacy session_catalog presence filter.",
+          }),
+        ),
+        legacyListEntryPresent: Type.Optional(
+          Type.Boolean({
+            description:
+              "Optional admin-only legacy session_list_entries presence filter.",
+          }),
+        ),
+        fileExists: Type.Optional(
+          Type.Boolean({
+            description: "Optional transcript file existence filter.",
+          }),
+        ),
+        limit: Type.Optional(
+          Type.Number({
+            description: "Optional maximum number of sessions to inspect.",
+          }),
+        ),
+        dryRun: Type.Optional(
+          Type.Boolean({
+            description:
+              "Whether to preview the reconciliation without executing it. Defaults to true.",
+          }),
+        ),
+        confirm: Type.Optional(
+          Type.Boolean({ description: "Must be true when dryRun is false." }),
+        ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const payload = { ...params };
         const result = await invokeBridge(tool.name, payload);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
           details: { command: tool.name, payload, result },
         };
       },
@@ -3136,7 +5053,8 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     parameters: Type.Object({
       inputJson: Type.Optional(
         Type.String({
-          description: "Optional JSON object string for the command input payload, e.g. {\"taskId\":\"task-1\",\"notes\":\"Done\"}",
+          description:
+            'Optional JSON object string for the command input payload, e.g. {"taskId":"task-1","notes":"Done"}',
         }),
       ),
     }),
@@ -3144,7 +5062,9 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
       const payload = parseInputJson(params.inputJson);
       const result = await invokeBridge(tool.name, payload);
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+        content: [
+          { type: "text" as const, text: JSON.stringify(result, null, 2) },
+        ],
         details: { command: tool.name, payload, result },
       };
     },
@@ -3157,18 +5077,24 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
     return;
   }
 
-  const bridgeTools = config.allowedCommands.map((tool) => createBridgeTool(tool));
+  const bridgeTools = config.allowedCommands.map((tool) =>
+    createBridgeTool(tool),
+  );
   const allowedCommandHelp = buildAllowedCommandHelp(config.allowedCommands);
 
   pi.registerCommand("orchestra-tools", {
     description: "List Orchestra commands available to this session",
     handler: async (_args, ctx) => {
-      ctx.ui.notify(`Available Orchestra commands:\n${allowedCommandHelp}`, "info");
+      ctx.ui.notify(
+        `Available Orchestra commands:\n${allowedCommandHelp}`,
+        "info",
+      );
     },
   });
 
   pi.registerCommand("orchestra-run", {
-    description: "Run an Orchestra bridge command: /orchestra-run <command> [json]",
+    description:
+      "Run an Orchestra bridge command: /orchestra-run <command> [json]",
     handler: async (args, ctx) => {
       const [command, ...jsonParts] = args.trim().split(/\s+/);
       if (!command) {
@@ -3178,29 +5104,48 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
       if (command === "help") {
         try {
           const requestedCommand = jsonParts.join(" ").trim() || undefined;
-          const result = resolveHelpResult(config.allowedCommands, bridgeTools, requestedCommand);
+          const result = resolveHelpResult(
+            config.allowedCommands,
+            bridgeTools,
+            requestedCommand,
+          );
           if (!requestedCommand) {
-            ctx.ui.notify(`Available Orchestra commands:\n${result.helpText}`, "info");
+            ctx.ui.notify(
+              `Available Orchestra commands:\n${result.helpText}`,
+              "info",
+            );
           } else {
             ctx.ui.notify(JSON.stringify(result, null, 2), "info");
           }
         } catch (error) {
-          ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
+          ctx.ui.notify(
+            error instanceof Error ? error.message : String(error),
+            "warning",
+          );
         }
         return;
       }
       if (!config.allowedCommands.some((tool) => tool.name === command)) {
-        ctx.ui.notify(`Command ${command} is not available in this session.`, "warning");
+        ctx.ui.notify(
+          `Command ${command} is not available in this session.`,
+          "warning",
+        );
         return;
       }
       const payloadText = jsonParts.join(" ").trim();
       const payload = payloadText ? JSON.parse(payloadText) : {};
       if (SAFE_PROJECT_SECRET_COMMANDS.has(command)) {
-        const message = await runSafeProjectSecretCommandForUi(command, payload as Record<string, unknown>);
+        const message = await runSafeProjectSecretCommandForUi(
+          command,
+          payload as Record<string, unknown>,
+        );
         ctx.ui.notify(message, "info");
         return;
       }
-      const result = await invokeBridge(command, payload as Record<string, unknown>);
+      const result = await invokeBridge(
+        command,
+        payload as Record<string, unknown>,
+      );
       ctx.ui.notify(JSON.stringify(result, null, 2), "info");
     },
   });
@@ -3208,15 +5153,30 @@ export default function orchestraToolsExtension(pi: ExtensionAPI) {
   const helpTool = {
     name: "orchestra_help",
     label: "Orchestra Help",
-    description: "List Orchestra backend commands available to this session or inspect a specific command's parameters.",
+    description:
+      "List Orchestra backend commands available to this session or inspect a specific command's parameters.",
     parameters: Type.Object({
-      command: Type.Optional(Type.String({ description: "Optional Orchestra command name to inspect in detail." })),
+      command: Type.Optional(
+        Type.String({
+          description: "Optional Orchestra command name to inspect in detail.",
+        }),
+      ),
     }),
     async execute(_toolCallId: string, params: { command?: string }) {
-      const result = resolveHelpResult(config.allowedCommands, bridgeTools, params.command);
+      const result = resolveHelpResult(
+        config.allowedCommands,
+        bridgeTools,
+        params.command,
+      );
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
-        details: { command: "help", requestedCommand: params.command ?? null, result },
+        content: [
+          { type: "text" as const, text: JSON.stringify(result, null, 2) },
+        ],
+        details: {
+          command: "help",
+          requestedCommand: params.command ?? null,
+          result,
+        },
       };
     },
   };

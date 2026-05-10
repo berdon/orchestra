@@ -64,6 +64,28 @@ pub fn search_task_comment_file_mentions(
     query: &str,
     limit: Option<usize>,
 ) -> Result<Vec<TaskCommentFileMentionCandidate>, String> {
+    search_task_comment_file_mentions_with_limit(
+        connection,
+        task_id,
+        query,
+        limit.unwrap_or(MAX_RESULTS).min(MAX_RESULTS.max(1)),
+    )
+}
+
+pub(crate) fn search_task_comment_file_mentions_unbounded(
+    connection: &Connection,
+    task_id: &str,
+    query: &str,
+) -> Result<Vec<TaskCommentFileMentionCandidate>, String> {
+    search_task_comment_file_mentions_with_limit(connection, task_id, query, usize::MAX)
+}
+
+fn search_task_comment_file_mentions_with_limit(
+    connection: &Connection,
+    task_id: &str,
+    query: &str,
+    result_limit: usize,
+) -> Result<Vec<TaskCommentFileMentionCandidate>, String> {
     let repositories = mention_search_repositories(connection, task_id)?;
     let repository_count = repositories.len();
     if repository_count == 0 {
@@ -73,7 +95,6 @@ pub fn search_task_comment_file_mentions(
     let (repository_slug_filter, needle) = parse_query(query);
     let normalized_needle = normalize_relative_query(&needle);
 
-    let result_limit = limit.unwrap_or(MAX_RESULTS).min(MAX_RESULTS.max(1));
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
 

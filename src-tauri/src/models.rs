@@ -2535,6 +2535,27 @@ pub struct TaskAttachmentManifest {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolPagedResult<T> {
+    pub items: Vec<T>,
+    pub total_count: i64,
+    pub page: i64,
+    pub page_size: i64,
+    pub returned_count: i64,
+    pub has_more: bool,
+    pub next_page: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSecretMetadataPagedResult {
+    pub project_slug: String,
+    pub availability: ProjectSecretsAvailability,
+    #[serde(flatten)]
+    pub page: ToolPagedResult<ProjectSecretMetadata>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BoundedCollectionInfo {

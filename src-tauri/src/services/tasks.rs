@@ -13,12 +13,11 @@ use uuid::Uuid;
 
 use crate::{
     models::{
-        AgentTaskContext, AgentTaskContextBounds, AuthorizationContext,
-        BoundedCollectionInfo, TaskAttachmentManifest, TaskComment, TaskCommentAnchor,
-        TaskCommentDeleteImpact, TaskCommentDomAnchor, TaskCommentFileAnchor,
-        TaskCommentInput, TaskCommentReceipt, TaskDependency, TaskDetail,
-        TaskDiffCommentAnchor, TaskLaneAssignment, TaskLaneRun, TaskLaneSummary,
-        TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
+        AgentTaskContext, AgentTaskContextBounds, AuthorizationContext, BoundedCollectionInfo,
+        TaskAttachmentManifest, TaskComment, TaskCommentAnchor, TaskCommentDeleteImpact,
+        TaskCommentDomAnchor, TaskCommentFileAnchor, TaskCommentInput, TaskCommentReceipt,
+        TaskDependency, TaskDetail, TaskDiffCommentAnchor, TaskLaneAssignment, TaskLaneRun,
+        TaskLaneSummary, TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
     },
     services::{
         orchestra_paths::{default_orchestra_root, task_attachments_dir},
@@ -498,7 +497,8 @@ pub fn get_agent_task_context(
         task.active_lane_assignment.as_ref(),
         &lane_runs,
     )?;
-    let file_reference_count = task_file_references::count_task_file_references(connection, task_id)?;
+    let file_reference_count =
+        task_file_references::count_task_file_references(connection, task_id)?;
     let todo_count = count_task_todos(connection, task_id)?;
 
     Ok(AgentTaskContext {
@@ -695,6 +695,28 @@ pub fn search_task_comments(
     query: &str,
     limit: Option<usize>,
 ) -> Result<Vec<TaskComment>, String> {
+    search_task_comments_with_limit(
+        connection,
+        task_id,
+        query,
+        limit.map(|value| value.clamp(1, 25)),
+    )
+}
+
+pub(crate) fn search_task_comments_unbounded(
+    connection: &Connection,
+    task_id: &str,
+    query: &str,
+) -> Result<Vec<TaskComment>, String> {
+    search_task_comments_with_limit(connection, task_id, query, None)
+}
+
+fn search_task_comments_with_limit(
+    connection: &Connection,
+    task_id: &str,
+    query: &str,
+    limit: Option<usize>,
+) -> Result<Vec<TaskComment>, String> {
     if !task_exists(connection, task_id)? {
         return Err(format!("Task {task_id} was not found"));
     }
@@ -704,32 +726,55 @@ pub fn search_task_comments(
         return Ok(Vec::new());
     }
 
-    let limit = limit.unwrap_or(10).clamp(1, 25) as i64;
     let like_query = format!("%{}%", trimmed_query.to_lowercase());
-    let mut statement = connection
-        .prepare(
-            r#"
-            SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, diff_anchor_json, created_at, updated_at
-            FROM task_comments
-            WHERE task_id = ?1
-              AND (
-                    LOWER(message) LIKE ?2
-                 OR LOWER(author) LIKE ?2
-                 OR LOWER(COALESCE(relative_path, '')) LIKE ?2
-                 OR LOWER(COALESCE(selected_text, '')) LIKE ?2
-              )
-            ORDER BY created_at DESC, id DESC
-            LIMIT ?3
-            "#,
-        )
-        .map_err(|error| format!("Unable to prepare task comment search query: {error}"))?;
+    let mut statement = match limit {
+        Some(limit) => connection
+            .prepare(
+                r#"
+                SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, diff_anchor_json, created_at, updated_at
+                FROM task_comments
+                WHERE task_id = ?1
+                  AND (
+                        LOWER(message) LIKE ?2
+                     OR LOWER(author) LIKE ?2
+                     OR LOWER(COALESCE(relative_path, '')) LIKE ?2
+                     OR LOWER(COALESCE(selected_text, '')) LIKE ?2
+                  )
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?3
+                "#,
+            )
+            .map_err(|error| format!("Unable to prepare task comment search query: {error}"))?,
+        None => connection
+            .prepare(
+                r#"
+                SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, diff_anchor_json, created_at, updated_at
+                FROM task_comments
+                WHERE task_id = ?1
+                  AND (
+                        LOWER(message) LIKE ?2
+                     OR LOWER(author) LIKE ?2
+                     OR LOWER(COALESCE(relative_path, '')) LIKE ?2
+                     OR LOWER(COALESCE(selected_text, '')) LIKE ?2
+                  )
+                ORDER BY created_at DESC, id DESC
+                "#,
+            )
+            .map_err(|error| format!("Unable to prepare task comment search query: {error}"))?,
+    };
 
-    let rows = statement
-        .query_map(params![task_id, like_query, limit], read_task_comment_from_row)
-        .map_err(|error| format!("Unable to search task comments for {task_id}: {error}"))?;
+    let rows = match limit {
+        Some(limit) => statement.query_map(
+            params![task_id, like_query, limit as i64],
+            read_task_comment_from_row,
+        ),
+        None => statement.query_map(params![task_id, like_query], read_task_comment_from_row),
+    }
+    .map_err(|error| format!("Unable to search task comments for {task_id}: {error}"))?;
 
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Unable to collect task comment search results for {task_id}: {error}"))
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
+        format!("Unable to collect task comment search results for {task_id}: {error}")
+    })
 }
 
 pub fn list_task_todos(connection: &Connection, task_id: &str) -> Result<Vec<TaskTodo>, String> {
@@ -2998,17 +3043,20 @@ fn load_task_todos_limited(
 
     let completed_filter = completed.map(|value| if value { 1 } else { 0 });
     let rows = statement
-        .query_map(params![task_id, lane_id, completed_filter, limit as i64], |row| {
-            Ok(TaskTodo {
-                id: row.get(0)?,
-                task_id: row.get(1)?,
-                lane_id: row.get(2)?,
-                description: row.get(3)?,
-                completed: row.get::<_, i64>(4)? != 0,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-            })
-        })
+        .query_map(
+            params![task_id, lane_id, completed_filter, limit as i64],
+            |row| {
+                Ok(TaskTodo {
+                    id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    lane_id: row.get(2)?,
+                    description: row.get(3)?,
+                    completed: row.get::<_, i64>(4)? != 0,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            },
+        )
         .map_err(|error| format!("Unable to read limited task todos for {task_id}: {error}"))?;
 
     let mut todos = rows
@@ -3343,7 +3391,9 @@ fn load_blocked_by_dependencies_limited(
             LIMIT ?2
             "#,
         )
-        .map_err(|error| format!("Unable to prepare limited blocked-by dependency query: {error}"))?;
+        .map_err(|error| {
+            format!("Unable to prepare limited blocked-by dependency query: {error}")
+        })?;
 
     let rows = statement
         .query_map(params![task_id, limit as i64], |row| {
@@ -3904,7 +3954,8 @@ fn bounded_collection_info(
 }
 
 fn truncate_comment_for_agent_context(mut comment: TaskComment) -> TaskComment {
-    comment.message = truncate_string_chars(comment.message, AGENT_CONTEXT_COMMENT_MESSAGE_MAX_CHARS);
+    comment.message =
+        truncate_string_chars(comment.message, AGENT_CONTEXT_COMMENT_MESSAGE_MAX_CHARS);
     comment.selected_text = comment
         .selected_text
         .map(|value| truncate_string_chars(value, AGENT_CONTEXT_COMMENT_SELECTED_TEXT_MAX_CHARS));
@@ -6830,7 +6881,16 @@ mod tests {
         assert!(context.bounds.comments.truncated);
         assert_eq!(context.bounds.comments.total_count, 9);
         assert_eq!(context.bounds.comments.omitted_count, 1);
-        assert!(context.comments.last().expect("recent comment").message.chars().count() <= 501);
+        assert!(
+            context
+                .comments
+                .last()
+                .expect("recent comment")
+                .message
+                .chars()
+                .count()
+                <= 501
+        );
         assert_eq!(context.attachments.len(), 10);
         assert!(context.bounds.attachments.truncated);
         assert_eq!(context.bounds.attachments.total_count, 11);

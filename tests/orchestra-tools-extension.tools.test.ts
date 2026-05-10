@@ -161,7 +161,8 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
       {
         name: "reconcile_sessions",
-        description: "Reconcile orphaned or stale session catalog/list/origin state",
+        description:
+          "Reconcile orphaned or stale session catalog/list/origin state",
         requiredPermission: "sessions.delete",
       },
       {
@@ -320,7 +321,10 @@ describe("orchestra tools extension bridge tool setup", () => {
         requiredPermission: "workflows.delete",
       },
     ]);
-    process.env.ORCHESTRA_AUTH_CONTEXT_JSON = JSON.stringify({ actorType: "user", actorId: "tester" });
+    process.env.ORCHESTRA_AUTH_CONTEXT_JSON = JSON.stringify({
+      actorType: "user",
+      actorId: "tester",
+    });
   });
 
   afterEach(() => {
@@ -355,7 +359,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     } as any);
 
-    expect(registeredCommands).toEqual(expect.arrayContaining(["orchestra-tools", "orchestra-run"]));
+    expect(registeredCommands).toEqual(
+      expect.arrayContaining(["orchestra-tools", "orchestra-run"]),
+    );
     expect(registeredTools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([
         "orchestra_help",
@@ -411,9 +417,13 @@ describe("orchestra tools extension bridge tool setup", () => {
         "delete_workflow",
       ]),
     );
-    expect(registeredTools.map((tool) => tool.name)).not.toContain("orchestra_command");
+    expect(registeredTools.map((tool) => tool.name)).not.toContain(
+      "orchestra_command",
+    );
 
-    const completionTool = registeredTools.find((tool) => tool.name === "complete_lane_as_success");
+    const completionTool = registeredTools.find(
+      (tool) => tool.name === "complete_lane_as_success",
+    );
     expect(completionTool.parameters.properties.taskId).toBeTruthy();
     expect(completionTool.parameters.properties.summary).toBeTruthy();
     expect(completionTool.parameters.required).toContain("summary");
@@ -424,7 +434,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       notes: "Ship it",
     });
 
-    const relaneTool = registeredTools.find((tool) => tool.name === "reassign_task_to_lane");
+    const relaneTool = registeredTools.find(
+      (tool) => tool.name === "reassign_task_to_lane",
+    );
     expect(relaneTool.parameters.properties.taskId).toBeTruthy();
     expect(relaneTool.parameters.properties.laneId).toBeTruthy();
     const relaneResult = await relaneTool.execute("tool-call-2", {
@@ -433,14 +445,18 @@ describe("orchestra tools extension bridge tool setup", () => {
       notes: "Return this task to planning",
     });
 
-    const taskContextTool = registeredTools.find((tool) => tool.name === "get_task_context");
+    const taskContextTool = registeredTools.find(
+      (tool) => tool.name === "get_task_context",
+    );
     expect(taskContextTool.parameters.properties.taskId).toBeTruthy();
     expect(taskContextTool.parameters.properties.inputJson).toBeUndefined();
     const taskContextResult = await taskContextTool.execute("tool-call-3", {
       taskId: "task-1",
     });
 
-    const repoFileTool = registeredTools.find((tool) => tool.name === "add_task_file_reference");
+    const repoFileTool = registeredTools.find(
+      (tool) => tool.name === "add_task_file_reference",
+    );
     expect(repoFileTool.parameters.properties.taskId).toBeTruthy();
     expect(repoFileTool.parameters.properties.repositoryId).toBeTruthy();
     expect(repoFileTool.parameters.properties.relativePath).toBeTruthy();
@@ -451,7 +467,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       relativePath: "docs/design.md",
     });
 
-    const commentTool = registeredTools.find((tool) => tool.name === "comment_on_task");
+    const commentTool = registeredTools.find(
+      (tool) => tool.name === "comment_on_task",
+    );
     const commentResult = await commentTool.execute("tool-call-5", {
       taskId: "task-1",
       author: "Worker",
@@ -459,21 +477,32 @@ describe("orchestra tools extension bridge tool setup", () => {
       interruptAgent: false,
     });
 
-    const listTaskTodosTool = registeredTools.find((tool) => tool.name === "list_task_todos");
+    const listTaskTodosTool = registeredTools.find(
+      (tool) => tool.name === "list_task_todos",
+    );
     expect(listTaskTodosTool.parameters.properties.taskId).toBeTruthy();
+    expect(listTaskTodosTool.parameters.properties.page).toBeTruthy();
     const listTaskTodosResult = await listTaskTodosTool.execute("tool-call-6", {
       taskId: "task-1",
     });
 
-    const listUnfinishedTodosTool = registeredTools.find((tool) => tool.name === "list_unfinished_task_todos");
+    const listUnfinishedTodosTool = registeredTools.find(
+      (tool) => tool.name === "list_unfinished_task_todos",
+    );
     expect(listUnfinishedTodosTool.parameters.properties.taskId).toBeTruthy();
     expect(listUnfinishedTodosTool.parameters.properties.laneId).toBeTruthy();
-    const listUnfinishedTodosResult = await listUnfinishedTodosTool.execute("tool-call-7", {
-      taskId: "task-1",
-      laneId: "lane-implement",
-    });
+    expect(listUnfinishedTodosTool.parameters.properties.pageSize).toBeTruthy();
+    const listUnfinishedTodosResult = await listUnfinishedTodosTool.execute(
+      "tool-call-7",
+      {
+        taskId: "task-1",
+        laneId: "lane-implement",
+      },
+    );
 
-    const addTaskTodoTool = registeredTools.find((tool) => tool.name === "add_task_todo");
+    const addTaskTodoTool = registeredTools.find(
+      (tool) => tool.name === "add_task_todo",
+    );
     expect(addTaskTodoTool.parameters.properties.description).toBeTruthy();
     expect(addTaskTodoTool.parameters.properties.laneId).toBeTruthy();
     expect(addTaskTodoTool.parameters.required).toContain("laneId");
@@ -483,95 +512,163 @@ describe("orchestra tools extension bridge tool setup", () => {
       description: "Write regression coverage",
     });
 
-    const markTaskTodoFinishedTool = registeredTools.find((tool) => tool.name === "mark_task_todo_finished");
+    const markTaskTodoFinishedTool = registeredTools.find(
+      (tool) => tool.name === "mark_task_todo_finished",
+    );
     expect(markTaskTodoFinishedTool.parameters.properties.todoId).toBeTruthy();
-    const markTaskTodoFinishedResult = await markTaskTodoFinishedTool.execute("tool-call-9", {
-      todoId: "todo-1",
-    });
+    const markTaskTodoFinishedResult = await markTaskTodoFinishedTool.execute(
+      "tool-call-9",
+      {
+        todoId: "todo-1",
+      },
+    );
 
-    const listProjectsTool = registeredTools.find((tool) => tool.name === "list_projects");
+    const listProjectsTool = registeredTools.find(
+      (tool) => tool.name === "list_projects",
+    );
     expect(listProjectsTool.parameters.properties.inputJson).toBeUndefined();
-    const listProjectsResult = await listProjectsTool.execute("tool-call-10", {});
+    expect(listProjectsTool.parameters.properties.page).toBeTruthy();
+    const listProjectsResult = await listProjectsTool.execute(
+      "tool-call-10",
+      {},
+    );
 
-    const getProjectTool = registeredTools.find((tool) => tool.name === "get_project");
+    const getProjectTool = registeredTools.find(
+      (tool) => tool.name === "get_project",
+    );
     expect(getProjectTool.parameters.properties.projectId).toBeTruthy();
     const getProjectResult = await getProjectTool.execute("tool-call-11", {
       projectId: "project-1",
     });
 
-    const createProjectTool = registeredTools.find((tool) => tool.name === "create_project");
+    const createProjectTool = registeredTools.find(
+      (tool) => tool.name === "create_project",
+    );
     expect(createProjectTool.parameters.properties.name).toBeTruthy();
-    const createProjectResult = await createProjectTool.execute("tool-call-12", {
-      name: "Bridge project",
-      description: "Created through the bridge tool",
-    });
+    const createProjectResult = await createProjectTool.execute(
+      "tool-call-12",
+      {
+        name: "Bridge project",
+        description: "Created through the bridge tool",
+      },
+    );
 
-    const updateProjectTool = registeredTools.find((tool) => tool.name === "update_project");
+    const updateProjectTool = registeredTools.find(
+      (tool) => tool.name === "update_project",
+    );
     expect(updateProjectTool.parameters.properties.projectId).toBeTruthy();
-    const updateProjectResult = await updateProjectTool.execute("tool-call-13", {
-      projectId: "project-1",
-      name: "Updated bridge project",
-      description: "Updated through the bridge tool",
-    });
+    const updateProjectResult = await updateProjectTool.execute(
+      "tool-call-13",
+      {
+        projectId: "project-1",
+        name: "Updated bridge project",
+        description: "Updated through the bridge tool",
+      },
+    );
 
-    const deleteProjectTool = registeredTools.find((tool) => tool.name === "delete_project");
+    const deleteProjectTool = registeredTools.find(
+      (tool) => tool.name === "delete_project",
+    );
     expect(deleteProjectTool.parameters.properties.projectId).toBeTruthy();
-    const deleteProjectResult = await deleteProjectTool.execute("tool-call-14", {
-      projectId: "project-2",
-    });
+    const deleteProjectResult = await deleteProjectTool.execute(
+      "tool-call-14",
+      {
+        projectId: "project-2",
+      },
+    );
 
-    const listRepositoriesTool = registeredTools.find((tool) => tool.name === "list_repositories");
+    const listRepositoriesTool = registeredTools.find(
+      (tool) => tool.name === "list_repositories",
+    );
     expect(listRepositoriesTool.parameters.properties.projectId).toBeTruthy();
-    const listRepositoriesResult = await listRepositoriesTool.execute("tool-call-15", {
-      projectId: "project-1",
-    });
+    expect(listRepositoriesTool.parameters.properties.pageSize).toBeTruthy();
+    const listRepositoriesResult = await listRepositoriesTool.execute(
+      "tool-call-15",
+      {
+        projectId: "project-1",
+      },
+    );
 
-    const getRepositoryTool = registeredTools.find((tool) => tool.name === "get_repository");
+    const getRepositoryTool = registeredTools.find(
+      (tool) => tool.name === "get_repository",
+    );
     expect(getRepositoryTool.parameters.properties.repositoryId).toBeTruthy();
-    const getRepositoryResult = await getRepositoryTool.execute("tool-call-16", {
-      repositoryId: "repo-1",
-    });
+    const getRepositoryResult = await getRepositoryTool.execute(
+      "tool-call-16",
+      {
+        repositoryId: "repo-1",
+      },
+    );
 
-    const createRepositoryTool = registeredTools.find((tool) => tool.name === "create_repository");
+    const createRepositoryTool = registeredTools.find(
+      (tool) => tool.name === "create_repository",
+    );
     expect(createRepositoryTool.parameters.properties.projectId).toBeTruthy();
-    const createRepositoryResult = await createRepositoryTool.execute("tool-call-17", {
-      projectId: "project-1",
-      name: "New repo",
-      mode: "existing",
-      repositoryPath: "/tmp/new-repo",
-      defaultBranch: "main",
-    });
+    const createRepositoryResult = await createRepositoryTool.execute(
+      "tool-call-17",
+      {
+        projectId: "project-1",
+        name: "New repo",
+        mode: "existing",
+        repositoryPath: "/tmp/new-repo",
+        defaultBranch: "main",
+      },
+    );
 
-    const updateRepositoryTool = registeredTools.find((tool) => tool.name === "update_repository");
-    expect(updateRepositoryTool.parameters.properties.repositoryId).toBeTruthy();
-    const updateRepositoryResult = await updateRepositoryTool.execute("tool-call-18", {
-      repositoryId: "repo-1",
-      name: "Updated repo",
-      mode: "existing",
-      repositoryPath: "/tmp/updated-repo",
-      defaultBranch: "develop",
-    });
+    const updateRepositoryTool = registeredTools.find(
+      (tool) => tool.name === "update_repository",
+    );
+    expect(
+      updateRepositoryTool.parameters.properties.repositoryId,
+    ).toBeTruthy();
+    const updateRepositoryResult = await updateRepositoryTool.execute(
+      "tool-call-18",
+      {
+        repositoryId: "repo-1",
+        name: "Updated repo",
+        mode: "existing",
+        repositoryPath: "/tmp/updated-repo",
+        defaultBranch: "develop",
+      },
+    );
 
-    const deleteRepositoryTool = registeredTools.find((tool) => tool.name === "delete_repository");
-    expect(deleteRepositoryTool.parameters.properties.repositoryId).toBeTruthy();
-    const deleteRepositoryResult = await deleteRepositoryTool.execute("tool-call-19", {
-      repositoryId: "repo-2",
-    });
+    const deleteRepositoryTool = registeredTools.find(
+      (tool) => tool.name === "delete_repository",
+    );
+    expect(
+      deleteRepositoryTool.parameters.properties.repositoryId,
+    ).toBeTruthy();
+    const deleteRepositoryResult = await deleteRepositoryTool.execute(
+      "tool-call-19",
+      {
+        repositoryId: "repo-2",
+      },
+    );
 
-    const attachRepositoryRemoteTool = registeredTools.find((tool) => tool.name === "attach_repository_remote");
-    expect(attachRepositoryRemoteTool.parameters.properties.remoteUrl).toBeTruthy();
-    const attachRepositoryRemoteResult = await attachRepositoryRemoteTool.execute("tool-call-20", {
-      repositoryId: "repo-1",
-      remoteUrl: "git@example.com:org/repo.git",
-      remoteName: "origin",
-    });
+    const attachRepositoryRemoteTool = registeredTools.find(
+      (tool) => tool.name === "attach_repository_remote",
+    );
+    expect(
+      attachRepositoryRemoteTool.parameters.properties.remoteUrl,
+    ).toBeTruthy();
+    const attachRepositoryRemoteResult =
+      await attachRepositoryRemoteTool.execute("tool-call-20", {
+        repositoryId: "repo-1",
+        remoteUrl: "git@example.com:org/repo.git",
+        remoteName: "origin",
+      });
 
-    const setProjectDefaultRepositoryTool = registeredTools.find((tool) => tool.name === "set_project_default_repository");
-    expect(setProjectDefaultRepositoryTool.parameters.properties.projectId).toBeTruthy();
-    const setProjectDefaultRepositoryResult = await setProjectDefaultRepositoryTool.execute("tool-call-21", {
-      projectId: "project-1",
-      repositoryId: "repo-1",
-    });
+    const setProjectDefaultRepositoryTool = registeredTools.find(
+      (tool) => tool.name === "set_project_default_repository",
+    );
+    expect(
+      setProjectDefaultRepositoryTool.parameters.properties.projectId,
+    ).toBeTruthy();
+    const setProjectDefaultRepositoryResult =
+      await setProjectDefaultRepositoryTool.execute("tool-call-21", {
+        projectId: "project-1",
+        repositoryId: "repo-1",
+      });
 
     expect(fetchMock).toHaveBeenCalledTimes(21);
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
@@ -581,17 +678,23 @@ describe("orchestra tools extension bridge tool setup", () => {
       summary: "Implementation complete and ready to hand off.",
       notes: "Ship it",
     });
-    const relaneRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    const relaneRequest = JSON.parse(
+      String(fetchMock.mock.calls[1]?.[1]?.body),
+    );
     expect(relaneRequest.command).toBe("reassign_task_to_lane");
     expect(relaneRequest.payload).toEqual({
       taskId: "task-1",
       laneId: "lane-plan",
       notes: "Return this task to planning",
     });
-    const taskContextRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    const taskContextRequest = JSON.parse(
+      String(fetchMock.mock.calls[2]?.[1]?.body),
+    );
     expect(taskContextRequest.command).toBe("get_task_context");
     expect(taskContextRequest.payload).toEqual({ taskId: "task-1" });
-    const repoFileRequest = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));
+    const repoFileRequest = JSON.parse(
+      String(fetchMock.mock.calls[3]?.[1]?.body),
+    );
     expect(repoFileRequest.command).toBe("add_task_file_reference");
     expect(repoFileRequest.payload).toEqual({
       taskId: "task-1",
@@ -600,7 +703,9 @@ describe("orchestra tools extension bridge tool setup", () => {
         relativePath: "docs/design.md",
       },
     });
-    const commentRequest = JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body));
+    const commentRequest = JSON.parse(
+      String(fetchMock.mock.calls[4]?.[1]?.body),
+    );
     expect(commentRequest.command).toBe("comment_on_task");
     expect(commentRequest.payload).toEqual({
       taskId: "task-1",
@@ -611,13 +716,24 @@ describe("orchestra tools extension bridge tool setup", () => {
         parentCommentId: null,
       },
     });
-    const listTaskTodosRequest = JSON.parse(String(fetchMock.mock.calls[5]?.[1]?.body));
+    const listTaskTodosRequest = JSON.parse(
+      String(fetchMock.mock.calls[5]?.[1]?.body),
+    );
     expect(listTaskTodosRequest.command).toBe("list_task_todos");
     expect(listTaskTodosRequest.payload).toEqual({ taskId: "task-1" });
-    const listUnfinishedTodosRequest = JSON.parse(String(fetchMock.mock.calls[6]?.[1]?.body));
-    expect(listUnfinishedTodosRequest.command).toBe("list_unfinished_task_todos");
-    expect(listUnfinishedTodosRequest.payload).toEqual({ taskId: "task-1", laneId: "lane-implement" });
-    const addTaskTodoRequest = JSON.parse(String(fetchMock.mock.calls[7]?.[1]?.body));
+    const listUnfinishedTodosRequest = JSON.parse(
+      String(fetchMock.mock.calls[6]?.[1]?.body),
+    );
+    expect(listUnfinishedTodosRequest.command).toBe(
+      "list_unfinished_task_todos",
+    );
+    expect(listUnfinishedTodosRequest.payload).toEqual({
+      taskId: "task-1",
+      laneId: "lane-implement",
+    });
+    const addTaskTodoRequest = JSON.parse(
+      String(fetchMock.mock.calls[7]?.[1]?.body),
+    );
     expect(addTaskTodoRequest.command).toBe("add_task_todo");
     expect(addTaskTodoRequest.payload).toEqual({
       taskId: "task-1",
@@ -626,16 +742,24 @@ describe("orchestra tools extension bridge tool setup", () => {
         description: "Write regression coverage",
       },
     });
-    const markTaskTodoFinishedRequest = JSON.parse(String(fetchMock.mock.calls[8]?.[1]?.body));
+    const markTaskTodoFinishedRequest = JSON.parse(
+      String(fetchMock.mock.calls[8]?.[1]?.body),
+    );
     expect(markTaskTodoFinishedRequest.command).toBe("mark_task_todo_finished");
     expect(markTaskTodoFinishedRequest.payload).toEqual({ todoId: "todo-1" });
-    const listProjectsRequest = JSON.parse(String(fetchMock.mock.calls[9]?.[1]?.body));
+    const listProjectsRequest = JSON.parse(
+      String(fetchMock.mock.calls[9]?.[1]?.body),
+    );
     expect(listProjectsRequest.command).toBe("list_projects");
     expect(listProjectsRequest.payload).toEqual({});
-    const getProjectRequest = JSON.parse(String(fetchMock.mock.calls[10]?.[1]?.body));
+    const getProjectRequest = JSON.parse(
+      String(fetchMock.mock.calls[10]?.[1]?.body),
+    );
     expect(getProjectRequest.command).toBe("get_project");
     expect(getProjectRequest.payload).toEqual({ projectId: "project-1" });
-    const createProjectRequest = JSON.parse(String(fetchMock.mock.calls[11]?.[1]?.body));
+    const createProjectRequest = JSON.parse(
+      String(fetchMock.mock.calls[11]?.[1]?.body),
+    );
     expect(createProjectRequest.command).toBe("create_project");
     expect(createProjectRequest.payload).toEqual({
       input: {
@@ -643,7 +767,9 @@ describe("orchestra tools extension bridge tool setup", () => {
         description: "Created through the bridge tool",
       },
     });
-    const updateProjectRequest = JSON.parse(String(fetchMock.mock.calls[12]?.[1]?.body));
+    const updateProjectRequest = JSON.parse(
+      String(fetchMock.mock.calls[12]?.[1]?.body),
+    );
     expect(updateProjectRequest.command).toBe("update_project");
     expect(updateProjectRequest.payload).toEqual({
       projectId: "project-1",
@@ -652,16 +778,24 @@ describe("orchestra tools extension bridge tool setup", () => {
         description: "Updated through the bridge tool",
       },
     });
-    const deleteProjectRequest = JSON.parse(String(fetchMock.mock.calls[13]?.[1]?.body));
+    const deleteProjectRequest = JSON.parse(
+      String(fetchMock.mock.calls[13]?.[1]?.body),
+    );
     expect(deleteProjectRequest.command).toBe("delete_project");
     expect(deleteProjectRequest.payload).toEqual({ projectId: "project-2" });
-    const listRepositoriesRequest = JSON.parse(String(fetchMock.mock.calls[14]?.[1]?.body));
+    const listRepositoriesRequest = JSON.parse(
+      String(fetchMock.mock.calls[14]?.[1]?.body),
+    );
     expect(listRepositoriesRequest.command).toBe("list_repositories");
     expect(listRepositoriesRequest.payload).toEqual({ projectId: "project-1" });
-    const getRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[15]?.[1]?.body));
+    const getRepositoryRequest = JSON.parse(
+      String(fetchMock.mock.calls[15]?.[1]?.body),
+    );
     expect(getRepositoryRequest.command).toBe("get_repository");
     expect(getRepositoryRequest.payload).toEqual({ repositoryId: "repo-1" });
-    const createRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[16]?.[1]?.body));
+    const createRepositoryRequest = JSON.parse(
+      String(fetchMock.mock.calls[16]?.[1]?.body),
+    );
     expect(createRepositoryRequest.command).toBe("create_repository");
     expect(createRepositoryRequest.payload).toEqual({
       projectId: "project-1",
@@ -672,7 +806,9 @@ describe("orchestra tools extension bridge tool setup", () => {
         defaultBranch: "main",
       },
     });
-    const updateRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[17]?.[1]?.body));
+    const updateRepositoryRequest = JSON.parse(
+      String(fetchMock.mock.calls[17]?.[1]?.body),
+    );
     expect(updateRepositoryRequest.command).toBe("update_repository");
     expect(updateRepositoryRequest.payload).toEqual({
       repositoryId: "repo-1",
@@ -683,11 +819,17 @@ describe("orchestra tools extension bridge tool setup", () => {
         defaultBranch: "develop",
       },
     });
-    const deleteRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[18]?.[1]?.body));
+    const deleteRepositoryRequest = JSON.parse(
+      String(fetchMock.mock.calls[18]?.[1]?.body),
+    );
     expect(deleteRepositoryRequest.command).toBe("delete_repository");
     expect(deleteRepositoryRequest.payload).toEqual({ repositoryId: "repo-2" });
-    const attachRepositoryRemoteRequest = JSON.parse(String(fetchMock.mock.calls[19]?.[1]?.body));
-    expect(attachRepositoryRemoteRequest.command).toBe("attach_repository_remote");
+    const attachRepositoryRemoteRequest = JSON.parse(
+      String(fetchMock.mock.calls[19]?.[1]?.body),
+    );
+    expect(attachRepositoryRemoteRequest.command).toBe(
+      "attach_repository_remote",
+    );
     expect(attachRepositoryRemoteRequest.payload).toEqual({
       repositoryId: "repo-1",
       input: {
@@ -695,8 +837,12 @@ describe("orchestra tools extension bridge tool setup", () => {
         remoteName: "origin",
       },
     });
-    const setProjectDefaultRepositoryRequest = JSON.parse(String(fetchMock.mock.calls[20]?.[1]?.body));
-    expect(setProjectDefaultRepositoryRequest.command).toBe("set_project_default_repository");
+    const setProjectDefaultRepositoryRequest = JSON.parse(
+      String(fetchMock.mock.calls[20]?.[1]?.body),
+    );
+    expect(setProjectDefaultRepositoryRequest.command).toBe(
+      "set_project_default_repository",
+    );
     expect(setProjectDefaultRepositoryRequest.payload).toEqual({
       projectId: "project-1",
       repositoryId: "repo-1",
@@ -708,17 +854,27 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(taskContextResult.details.command).toBe("get_task_context");
     expect(taskContextResult.content[0]?.text).toContain("get_task_context");
     expect(repoFileResult.details.command).toBe("add_task_file_reference");
-    expect(repoFileResult.content[0]?.text).toContain("add_task_file_reference");
+    expect(repoFileResult.content[0]?.text).toContain(
+      "add_task_file_reference",
+    );
     expect(commentResult.details.command).toBe("comment_on_task");
     expect(commentResult.content[0]?.text).toContain("comment_on_task");
     expect(listTaskTodosResult.details.command).toBe("list_task_todos");
     expect(listTaskTodosResult.content[0]?.text).toContain("list_task_todos");
-    expect(listUnfinishedTodosResult.details.command).toBe("list_unfinished_task_todos");
-    expect(listUnfinishedTodosResult.content[0]?.text).toContain("list_unfinished_task_todos");
+    expect(listUnfinishedTodosResult.details.command).toBe(
+      "list_unfinished_task_todos",
+    );
+    expect(listUnfinishedTodosResult.content[0]?.text).toContain(
+      "list_unfinished_task_todos",
+    );
     expect(addTaskTodoResult.details.command).toBe("add_task_todo");
     expect(addTaskTodoResult.content[0]?.text).toContain("add_task_todo");
-    expect(markTaskTodoFinishedResult.details.command).toBe("mark_task_todo_finished");
-    expect(markTaskTodoFinishedResult.content[0]?.text).toContain("mark_task_todo_finished");
+    expect(markTaskTodoFinishedResult.details.command).toBe(
+      "mark_task_todo_finished",
+    );
+    expect(markTaskTodoFinishedResult.content[0]?.text).toContain(
+      "mark_task_todo_finished",
+    );
     expect(listProjectsResult.details.command).toBe("list_projects");
     expect(listProjectsResult.content[0]?.text).toContain("list_projects");
     expect(getProjectResult.details.command).toBe("get_project");
@@ -730,28 +886,50 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(deleteProjectResult.details.command).toBe("delete_project");
     expect(deleteProjectResult.content[0]?.text).toContain("delete_project");
     expect(listRepositoriesResult.details.command).toBe("list_repositories");
-    expect(listRepositoriesResult.content[0]?.text).toContain("list_repositories");
+    expect(listRepositoriesResult.content[0]?.text).toContain(
+      "list_repositories",
+    );
     expect(getRepositoryResult.details.command).toBe("get_repository");
     expect(getRepositoryResult.content[0]?.text).toContain("get_repository");
     expect(createRepositoryResult.details.command).toBe("create_repository");
-    expect(createRepositoryResult.content[0]?.text).toContain("create_repository");
+    expect(createRepositoryResult.content[0]?.text).toContain(
+      "create_repository",
+    );
     expect(updateRepositoryResult.details.command).toBe("update_repository");
-    expect(updateRepositoryResult.content[0]?.text).toContain("update_repository");
+    expect(updateRepositoryResult.content[0]?.text).toContain(
+      "update_repository",
+    );
     expect(deleteRepositoryResult.details.command).toBe("delete_repository");
-    expect(deleteRepositoryResult.content[0]?.text).toContain("delete_repository");
-    expect(attachRepositoryRemoteResult.details.command).toBe("attach_repository_remote");
-    expect(attachRepositoryRemoteResult.content[0]?.text).toContain("attach_repository_remote");
-    expect(setProjectDefaultRepositoryResult.details.command).toBe("set_project_default_repository");
-    expect(setProjectDefaultRepositoryResult.content[0]?.text).toContain("set_project_default_repository");
+    expect(deleteRepositoryResult.content[0]?.text).toContain(
+      "delete_repository",
+    );
+    expect(attachRepositoryRemoteResult.details.command).toBe(
+      "attach_repository_remote",
+    );
+    expect(attachRepositoryRemoteResult.content[0]?.text).toContain(
+      "attach_repository_remote",
+    );
+    expect(setProjectDefaultRepositoryResult.details.command).toBe(
+      "set_project_default_repository",
+    );
+    expect(setProjectDefaultRepositoryResult.content[0]?.text).toContain(
+      "set_project_default_repository",
+    );
   });
 
   test("supports attaching a readable session-local file via filePath with inferred metadata", async () => {
-    const tempDir = await fs.mkdtemp(join(tmpdir(), "orchestra-attachment-tool-"));
+    const tempDir = await fs.mkdtemp(
+      join(tmpdir(), "orchestra-attachment-tool-"),
+    );
     try {
       const artifactsDir = join(tempDir, "artifacts");
       const attachmentPath = join(artifactsDir, "ci-output.log");
       await fs.mkdir(artifactsDir, { recursive: true });
-      await fs.writeFile(attachmentPath, "failure output\nsecond line\n", "utf8");
+      await fs.writeFile(
+        attachmentPath,
+        "failure output\nsecond line\n",
+        "utf8",
+      );
       const resolvedAttachmentPath = await fs.realpath(attachmentPath);
       process.chdir(tempDir);
 
@@ -777,9 +955,15 @@ describe("orchestra tools extension bridge tool setup", () => {
         registerCommand() {},
       } as any);
 
-      const attachmentTool = registeredTools.find((tool) => tool.name === "add_task_attachment");
-      expect(attachmentTool.parameters.properties.input.properties.filePath).toBeTruthy();
-      expect(attachmentTool.parameters.properties.input.properties.base64Data).toBeTruthy();
+      const attachmentTool = registeredTools.find(
+        (tool) => tool.name === "add_task_attachment",
+      );
+      expect(
+        attachmentTool.parameters.properties.input.properties.filePath,
+      ).toBeTruthy();
+      expect(
+        attachmentTool.parameters.properties.input.properties.base64Data,
+      ).toBeTruthy();
       expect(attachmentTool.helpNotes).toEqual(
         expect.arrayContaining([
           expect.stringContaining("Prefer input.filePath"),
@@ -789,7 +973,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       expect(attachmentTool.helpExamples).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            input: expect.objectContaining({ filePath: "./artifacts/ci-output.log" }),
+            input: expect.objectContaining({
+              filePath: "./artifacts/ci-output.log",
+            }),
           }),
         ]),
       );
@@ -810,7 +996,9 @@ describe("orchestra tools extension bridge tool setup", () => {
         input: {
           fileName: "ci-output.log",
           mediaType: "text/plain",
-          base64Data: Buffer.from("failure output\nsecond line\n").toString("base64"),
+          base64Data: Buffer.from("failure output\nsecond line\n").toString(
+            "base64",
+          ),
           caption: "CI failure excerpt",
         },
       });
@@ -830,7 +1018,9 @@ describe("orchestra tools extension bridge tool setup", () => {
   });
 
   test("supports filePath overrides and preserves base64 attachment compatibility", async () => {
-    const tempDir = await fs.mkdtemp(join(tmpdir(), "orchestra-attachment-tool-"));
+    const tempDir = await fs.mkdtemp(
+      join(tmpdir(), "orchestra-attachment-tool-"),
+    );
     try {
       const attachmentPath = join(tempDir, "raw.bin");
       await fs.writeFile(attachmentPath, Buffer.from([0, 1, 2, 3]));
@@ -858,27 +1048,37 @@ describe("orchestra tools extension bridge tool setup", () => {
         registerCommand() {},
       } as any);
 
-      const attachmentTool = registeredTools.find((tool) => tool.name === "add_task_attachment");
-      const filePathResult = await attachmentTool.execute("tool-call-file-attachment-overrides", {
-        taskId: "task-1",
-        input: {
-          filePath: attachmentPath,
-          fileName: "artifact.txt",
-          mediaType: "text/custom",
+      const attachmentTool = registeredTools.find(
+        (tool) => tool.name === "add_task_attachment",
+      );
+      const filePathResult = await attachmentTool.execute(
+        "tool-call-file-attachment-overrides",
+        {
+          taskId: "task-1",
+          input: {
+            filePath: attachmentPath,
+            fileName: "artifact.txt",
+            mediaType: "text/custom",
+          },
         },
-      });
-      const base64Result = await attachmentTool.execute("tool-call-base64-attachment", {
-        taskId: "task-2",
-        input: {
-          fileName: "error.log",
-          mediaType: "text/plain",
-          base64Data: "ZXhhbXBsZSBsb2c=",
-          caption: "Existing flow",
+      );
+      const base64Result = await attachmentTool.execute(
+        "tool-call-base64-attachment",
+        {
+          taskId: "task-2",
+          input: {
+            fileName: "error.log",
+            mediaType: "text/plain",
+            base64Data: "ZXhhbXBsZSBsb2c=",
+            caption: "Existing flow",
+          },
         },
-      });
+      );
 
       expect(fetchMock).toHaveBeenCalledTimes(2);
-      const filePathRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      const filePathRequest = JSON.parse(
+        String(fetchMock.mock.calls[0]?.[1]?.body),
+      );
       expect(filePathRequest.payload).toEqual({
         taskId: "task-1",
         input: {
@@ -887,7 +1087,9 @@ describe("orchestra tools extension bridge tool setup", () => {
           base64Data: Buffer.from([0, 1, 2, 3]).toString("base64"),
         },
       });
-      const base64Request = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+      const base64Request = JSON.parse(
+        String(fetchMock.mock.calls[1]?.[1]?.body),
+      );
       expect(base64Request.payload).toEqual({
         taskId: "task-2",
         input: {
@@ -916,7 +1118,9 @@ describe("orchestra tools extension bridge tool setup", () => {
   });
 
   test("rejects missing, non-file, and unreadable attachment paths before invoking the bridge", async () => {
-    const tempDir = await fs.mkdtemp(join(tmpdir(), "orchestra-attachment-tool-"));
+    const tempDir = await fs.mkdtemp(
+      join(tmpdir(), "orchestra-attachment-tool-"),
+    );
     try {
       const attachmentPath = join(tempDir, "secret.log");
       const directoryPath = join(tempDir, "logs");
@@ -936,29 +1140,39 @@ describe("orchestra tools extension bridge tool setup", () => {
         registerCommand() {},
       } as any);
 
-      const attachmentTool = registeredTools.find((tool) => tool.name === "add_task_attachment");
+      const attachmentTool = registeredTools.find(
+        (tool) => tool.name === "add_task_attachment",
+      );
 
       await expect(
         attachmentTool.execute("tool-call-missing-attachment", {
           taskId: "task-1",
           input: { filePath: join(tempDir, "missing.log") },
         }),
-      ).rejects.toThrow(`Attachment file was not found: ${join(tempDir, "missing.log")}`);
+      ).rejects.toThrow(
+        `Attachment file was not found: ${join(tempDir, "missing.log")}`,
+      );
 
       await expect(
         attachmentTool.execute("tool-call-directory-attachment", {
           taskId: "task-1",
           input: { filePath: directoryPath },
         }),
-      ).rejects.toThrow(`Attachment file must be a regular readable file, not a directory: ${resolvedDirectoryPath}`);
+      ).rejects.toThrow(
+        `Attachment file must be a regular readable file, not a directory: ${resolvedDirectoryPath}`,
+      );
 
-      vi.spyOn(fs, "access").mockRejectedValueOnce(Object.assign(new Error("permission denied"), { code: "EACCES" }));
+      vi.spyOn(fs, "access").mockRejectedValueOnce(
+        Object.assign(new Error("permission denied"), { code: "EACCES" }),
+      );
       await expect(
         attachmentTool.execute("tool-call-unreadable-attachment", {
           taskId: "task-1",
           input: { filePath: attachmentPath },
         }),
-      ).rejects.toThrow(`Attachment file is not readable from this session: ${resolvedAttachmentPath}`);
+      ).rejects.toThrow(
+        `Attachment file is not readable from this session: ${resolvedAttachmentPath}`,
+      );
 
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
@@ -989,30 +1203,41 @@ describe("orchestra tools extension bridge tool setup", () => {
       registerCommand() {},
     } as any);
 
-    const listSessionsTool = registeredTools.find((tool) => tool.name === "list_sessions");
+    const listSessionsTool = registeredTools.find(
+      (tool) => tool.name === "list_sessions",
+    );
     expect(listSessionsTool.parameters.properties.projectId).toBeTruthy();
     expect(listSessionsTool.parameters.properties.query).toBeTruthy();
     expect(listSessionsTool.parameters.properties.catalogPresent).toBeTruthy();
+    expect(listSessionsTool.parameters.properties.pageSize).toBeTruthy();
+    expect(listSessionsTool.parameters.properties.limit).toBeUndefined();
     expect(listSessionsTool.parameters.properties.inputJson).toBeUndefined();
 
-    const deleteSessionsTool = registeredTools.find((tool) => tool.name === "delete_sessions");
+    const deleteSessionsTool = registeredTools.find(
+      (tool) => tool.name === "delete_sessions",
+    );
     expect(deleteSessionsTool.parameters.properties.sessionIds).toBeTruthy();
     expect(deleteSessionsTool.parameters.properties.dryRun).toBeTruthy();
-    expect(deleteSessionsTool.parameters.properties.stopActiveRuntimes).toBeTruthy();
+    expect(
+      deleteSessionsTool.parameters.properties.stopActiveRuntimes,
+    ).toBeTruthy();
 
     await listSessionsTool.execute("tool-call-list-sessions", {
       projectId: "project-1",
       query: "Larry main session",
       hidden: true,
-      limit: 5,
+      pageSize: 5,
     });
-    const deleteResult = await deleteSessionsTool.execute("tool-call-delete-sessions", {
-      query: "Larry main session",
-      hidden: true,
-      dryRun: false,
-      confirm: true,
-      stopActiveRuntimes: true,
-    });
+    const deleteResult = await deleteSessionsTool.execute(
+      "tool-call-delete-sessions",
+      {
+        query: "Larry main session",
+        hidden: true,
+        dryRun: false,
+        confirm: true,
+        stopActiveRuntimes: true,
+      },
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const listRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
@@ -1021,9 +1246,11 @@ describe("orchestra tools extension bridge tool setup", () => {
       projectId: "project-1",
       query: "Larry main session",
       hidden: true,
-      limit: 5,
+      pageSize: 5,
     });
-    const deleteRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    const deleteRequest = JSON.parse(
+      String(fetchMock.mock.calls[1]?.[1]?.body),
+    );
     expect(deleteRequest.command).toBe("delete_sessions");
     expect(deleteRequest.payload).toEqual({
       query: "Larry main session",
@@ -1058,16 +1285,24 @@ describe("orchestra tools extension bridge tool setup", () => {
       registerCommand() {},
     } as any);
 
-    const listNotesTool = registeredTools.find((tool) => tool.name === "list_notes");
+    const listNotesTool = registeredTools.find(
+      (tool) => tool.name === "list_notes",
+    );
     expect(listNotesTool.parameters.properties.projectId).toBeTruthy();
 
-    const getNoteTool = registeredTools.find((tool) => tool.name === "get_note");
+    const getNoteTool = registeredTools.find(
+      (tool) => tool.name === "get_note",
+    );
     expect(getNoteTool.parameters.properties.location).toBeTruthy();
 
-    const updateNoteTool = registeredTools.find((tool) => tool.name === "update_note");
+    const updateNoteTool = registeredTools.find(
+      (tool) => tool.name === "update_note",
+    );
     expect(updateNoteTool.parameters.properties.markdown).toBeTruthy();
 
-    const copyNoteTool = registeredTools.find((tool) => tool.name === "copy_note");
+    const copyNoteTool = registeredTools.find(
+      (tool) => tool.name === "copy_note",
+    );
     expect(copyNoteTool.parameters.properties.source).toBeTruthy();
     expect(copyNoteTool.parameters.properties.destination).toBeTruthy();
 
@@ -1110,7 +1345,9 @@ describe("orchestra tools extension bridge tool setup", () => {
     const getRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(getRequest.command).toBe("get_note");
     expect(getRequest.payload.location.path).toBe("plans/roadmap.md");
-    const updateRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    const updateRequest = JSON.parse(
+      String(fetchMock.mock.calls[2]?.[1]?.body),
+    );
     expect(updateRequest.command).toBe("update_note");
     expect(updateRequest.payload.markdown).toBe("# Guide\n");
     const copyRequest = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));
@@ -1141,7 +1378,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       registerCommand() {},
     } as any);
 
-    const validateWorkflowTool = registeredTools.find((tool) => tool.name === "validate_workflow");
+    const validateWorkflowTool = registeredTools.find(
+      (tool) => tool.name === "validate_workflow",
+    );
     expect(validateWorkflowTool.parameters.properties.lanes).toBeTruthy();
     await validateWorkflowTool.execute("tool-call-1", {
       name: "Validation workflow",
@@ -1158,7 +1397,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       ],
     });
 
-    const addWorkflowLaneTool = registeredTools.find((tool) => tool.name === "add_workflow_lane");
+    const addWorkflowLaneTool = registeredTools.find(
+      (tool) => tool.name === "add_workflow_lane",
+    );
     expect(addWorkflowLaneTool.parameters.properties.workflowId).toBeTruthy();
     await addWorkflowLaneTool.execute("tool-call-2", {
       workflowId: "workflow-1",
@@ -1173,7 +1414,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     });
 
-    const updateWorkflowLaneTool = registeredTools.find((tool) => tool.name === "update_workflow_lane");
+    const updateWorkflowLaneTool = registeredTools.find(
+      (tool) => tool.name === "update_workflow_lane",
+    );
     expect(updateWorkflowLaneTool.parameters.properties.laneId).toBeTruthy();
     await updateWorkflowLaneTool.execute("tool-call-3", {
       workflowId: "workflow-1",
@@ -1185,19 +1428,25 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     });
 
-    const deleteWorkflowLaneTool = registeredTools.find((tool) => tool.name === "delete_workflow_lane");
+    const deleteWorkflowLaneTool = registeredTools.find(
+      (tool) => tool.name === "delete_workflow_lane",
+    );
     await deleteWorkflowLaneTool.execute("tool-call-4", {
       workflowId: "workflow-1",
       laneId: "lane-old",
     });
 
-    const reorderWorkflowLanesTool = registeredTools.find((tool) => tool.name === "reorder_workflow_lanes");
+    const reorderWorkflowLanesTool = registeredTools.find(
+      (tool) => tool.name === "reorder_workflow_lanes",
+    );
     await reorderWorkflowLanesTool.execute("tool-call-5", {
       workflowId: "workflow-1",
       laneIds: ["lane-plan", "lane-review", "lane-done"],
     });
 
-    const createWorkflowTool = registeredTools.find((tool) => tool.name === "create_workflow");
+    const createWorkflowTool = registeredTools.find(
+      (tool) => tool.name === "create_workflow",
+    );
     await createWorkflowTool.execute("tool-call-6", {
       name: "Delivery workflow",
       lanes: [
@@ -1212,31 +1461,43 @@ describe("orchestra tools extension bridge tool setup", () => {
       ],
     });
 
-    const duplicateWorkflowTool = registeredTools.find((tool) => tool.name === "duplicate_workflow");
+    const duplicateWorkflowTool = registeredTools.find(
+      (tool) => tool.name === "duplicate_workflow",
+    );
     await duplicateWorkflowTool.execute("tool-call-7", {
       workflowId: "workflow-1",
       newName: "Delivery workflow copy",
     });
 
-    const workflowDeleteImpactTool = registeredTools.find((tool) => tool.name === "get_workflow_delete_impact");
+    const workflowDeleteImpactTool = registeredTools.find(
+      (tool) => tool.name === "get_workflow_delete_impact",
+    );
     await workflowDeleteImpactTool.execute("tool-call-8", {
       workflowId: "workflow-1",
     });
 
-    const deleteWorkflowTool = registeredTools.find((tool) => tool.name === "delete_workflow");
+    const deleteWorkflowTool = registeredTools.find(
+      (tool) => tool.name === "delete_workflow",
+    );
     await deleteWorkflowTool.execute("tool-call-9", {
       workflowId: "workflow-1",
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(9);
-    const validateRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const validateRequest = JSON.parse(
+      String(fetchMock.mock.calls[0]?.[1]?.body),
+    );
     expect(validateRequest.command).toBe("validate_workflow");
     expect(validateRequest.payload.input.name).toBe("Validation workflow");
-    const addLaneRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    const addLaneRequest = JSON.parse(
+      String(fetchMock.mock.calls[1]?.[1]?.body),
+    );
     expect(addLaneRequest.command).toBe("add_workflow_lane");
     expect(addLaneRequest.payload.workflowId).toBe("workflow-1");
     expect(addLaneRequest.payload.input.name).toBe("Review");
-    const updateLaneRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    const updateLaneRequest = JSON.parse(
+      String(fetchMock.mock.calls[2]?.[1]?.body),
+    );
     expect(updateLaneRequest.command).toBe("update_workflow_lane");
     expect(updateLaneRequest.payload).toEqual({
       workflowId: "workflow-1",
@@ -1247,28 +1508,43 @@ describe("orchestra tools extension bridge tool setup", () => {
         needsWorkTargetLaneId: null,
       },
     });
-    const deleteLaneRequest = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));
+    const deleteLaneRequest = JSON.parse(
+      String(fetchMock.mock.calls[3]?.[1]?.body),
+    );
     expect(deleteLaneRequest.command).toBe("delete_workflow_lane");
-    expect(deleteLaneRequest.payload).toEqual({ workflowId: "workflow-1", laneId: "lane-old" });
-    const reorderRequest = JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body));
+    expect(deleteLaneRequest.payload).toEqual({
+      workflowId: "workflow-1",
+      laneId: "lane-old",
+    });
+    const reorderRequest = JSON.parse(
+      String(fetchMock.mock.calls[4]?.[1]?.body),
+    );
     expect(reorderRequest.command).toBe("reorder_workflow_lanes");
     expect(reorderRequest.payload).toEqual({
       workflowId: "workflow-1",
       input: { laneIds: ["lane-plan", "lane-review", "lane-done"] },
     });
-    const createWorkflowRequest = JSON.parse(String(fetchMock.mock.calls[5]?.[1]?.body));
+    const createWorkflowRequest = JSON.parse(
+      String(fetchMock.mock.calls[5]?.[1]?.body),
+    );
     expect(createWorkflowRequest.command).toBe("create_workflow");
     expect(createWorkflowRequest.payload.input.name).toBe("Delivery workflow");
-    const duplicateWorkflowRequest = JSON.parse(String(fetchMock.mock.calls[6]?.[1]?.body));
+    const duplicateWorkflowRequest = JSON.parse(
+      String(fetchMock.mock.calls[6]?.[1]?.body),
+    );
     expect(duplicateWorkflowRequest.command).toBe("duplicate_workflow");
     expect(duplicateWorkflowRequest.payload).toEqual({
       workflowId: "workflow-1",
       newName: "Delivery workflow copy",
     });
-    const deleteImpactRequest = JSON.parse(String(fetchMock.mock.calls[7]?.[1]?.body));
+    const deleteImpactRequest = JSON.parse(
+      String(fetchMock.mock.calls[7]?.[1]?.body),
+    );
     expect(deleteImpactRequest.command).toBe("get_workflow_delete_impact");
     expect(deleteImpactRequest.payload).toEqual({ workflowId: "workflow-1" });
-    const deleteWorkflowRequest = JSON.parse(String(fetchMock.mock.calls[8]?.[1]?.body));
+    const deleteWorkflowRequest = JSON.parse(
+      String(fetchMock.mock.calls[8]?.[1]?.body),
+    );
     expect(deleteWorkflowRequest.command).toBe("delete_workflow");
     expect(deleteWorkflowRequest.payload).toEqual({ workflowId: "workflow-1" });
   });
@@ -1296,7 +1572,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       registerCommand() {},
     } as any);
 
-    const createTaskTool = registeredTools.find((tool) => tool.name === "create_task");
+    const createTaskTool = registeredTools.find(
+      (tool) => tool.name === "create_task",
+    );
     expect(createTaskTool.parameters.properties.projectId).toBeTruthy();
     expect(createTaskTool.parameters.properties.title).toBeTruthy();
     expect(createTaskTool.parameters.properties.inputJson).toBeUndefined();
@@ -1309,12 +1587,15 @@ describe("orchestra tools extension bridge tool setup", () => {
       tags: ["backend", "urgent"],
     });
 
-    const listTasksTool = registeredTools.find((tool) => tool.name === "list_tasks");
+    const listTasksTool = registeredTools.find(
+      (tool) => tool.name === "list_tasks",
+    );
     expect(listTasksTool.parameters.properties.projectId).toBeTruthy();
     expect(listTasksTool.parameters.properties.tags).toBeTruthy();
     expect(listTasksTool.parameters.properties.tagMatch).toBeTruthy();
     expect(listTasksTool.parameters.properties.sortBy).toBeTruthy();
     expect(listTasksTool.parameters.properties.sortDirection).toBeTruthy();
+    expect(listTasksTool.parameters.properties.pageSize).toBeTruthy();
     await listTasksTool.execute("tool-call-2", {
       projectId: "project-2",
       includeArchived: false,
@@ -1324,7 +1605,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       sortDirection: "asc",
     });
 
-    const updateTaskTool = registeredTools.find((tool) => tool.name === "update_task");
+    const updateTaskTool = registeredTools.find(
+      (tool) => tool.name === "update_task",
+    );
     expect(updateTaskTool.parameters.properties.taskId).toBeTruthy();
     expect(updateTaskTool.parameters.properties.tags).toBeTruthy();
     expect(updateTaskTool.parameters.properties.inputJson).toBeUndefined();
@@ -1336,7 +1619,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       tags: ["backend"],
     });
 
-    const getWorkerOverlayTool = registeredTools.find((tool) => tool.name === "get_worker_overlay");
+    const getWorkerOverlayTool = registeredTools.find(
+      (tool) => tool.name === "get_worker_overlay",
+    );
     expect(getWorkerOverlayTool.parameters.properties.projectSlug).toBeTruthy();
     await getWorkerOverlayTool.execute("tool-call-4", {
       workerType: "agent",
@@ -1344,8 +1629,12 @@ describe("orchestra tools extension bridge tool setup", () => {
       projectSlug: "project-two",
     });
 
-    const updateWorkerOverlayTool = registeredTools.find((tool) => tool.name === "update_worker_overlay");
-    expect(updateWorkerOverlayTool.parameters.properties.projectSlug).toBeTruthy();
+    const updateWorkerOverlayTool = registeredTools.find(
+      (tool) => tool.name === "update_worker_overlay",
+    );
+    expect(
+      updateWorkerOverlayTool.parameters.properties.projectSlug,
+    ).toBeTruthy();
     await updateWorkerOverlayTool.execute("tool-call-5", {
       workerType: "agent",
       workerSlug: "Data",
@@ -1353,12 +1642,18 @@ describe("orchestra tools extension bridge tool setup", () => {
       prompt: "Use the scoped overlay",
     });
 
-    const helpTool = registeredTools.find((tool) => tool.name === "orchestra_help");
+    const helpTool = registeredTools.find(
+      (tool) => tool.name === "orchestra_help",
+    );
     expect(helpTool.parameters.properties.command).toBeTruthy();
-    const helpResult = await helpTool.execute("tool-call-6", { command: "create_task" });
+    const helpResult = await helpTool.execute("tool-call-6", {
+      command: "create_task",
+    });
 
     expect(fetchMock).toHaveBeenCalledTimes(5);
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).payload).toEqual({
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).payload,
+    ).toEqual({
       projectId: "project-2",
       input: {
         title: "Scoped task",
@@ -1370,7 +1665,9 @@ describe("orchestra tools extension bridge tool setup", () => {
         tags: ["backend", "urgent"],
       },
     });
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).payload).toEqual({
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).payload,
+    ).toEqual({
       projectId: "project-2",
       includeArchived: false,
       tags: ["backend", "urgent"],
@@ -1378,7 +1675,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       sortBy: "tags",
       sortDirection: "asc",
     });
-    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body)).payload).toEqual({
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body)).payload,
+    ).toEqual({
       taskId: "task-1",
       input: {
         title: "Scoped task",
@@ -1389,12 +1688,16 @@ describe("orchestra tools extension bridge tool setup", () => {
         tags: ["backend"],
       },
     });
-    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body)).payload).toEqual({
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body)).payload,
+    ).toEqual({
       workerType: "agent",
       workerSlug: "Data",
       projectSlug: "project-two",
     });
-    expect(JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body)).payload).toEqual({
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body)).payload,
+    ).toEqual({
       workerType: "agent",
       workerSlug: "Data",
       projectSlug: "project-two",
@@ -1408,7 +1711,10 @@ describe("orchestra tools extension bridge tool setup", () => {
 
   test("exposes safe project-secret tools without returning raw values in tool details or UI commands", async () => {
     const registeredTools: Array<any> = [];
-    const registeredCommands = new Map<string, (args: string, ctx: any) => Promise<void>>();
+    const registeredCommands = new Map<
+      string,
+      (args: string, ctx: any) => Promise<void>
+    >();
     const notifications: Array<{ message: string; level: string }> = [];
     process.env.OPENAI_SOURCE = "sk-secret-from-env";
 
@@ -1446,12 +1752,23 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     } as any);
 
-    const searchProjectSecretsTool = registeredTools.find((tool) => tool.name === "search_project_secrets");
-    expect(searchProjectSecretsTool.parameters.properties.projectSlug).toBeTruthy();
+    const searchProjectSecretsTool = registeredTools.find(
+      (tool) => tool.name === "search_project_secrets",
+    );
+    expect(
+      searchProjectSecretsTool.parameters.properties.projectSlug,
+    ).toBeTruthy();
     expect(searchProjectSecretsTool.parameters.properties.query).toBeTruthy();
-    expect(searchProjectSecretsTool.parameters.properties.secretKey).toBeTruthy();
-    expect(searchProjectSecretsTool.parameters.properties.valueState).toBeTruthy();
-    expect(searchProjectSecretsTool.parameters.properties.hasDescription).toBeTruthy();
+    expect(
+      searchProjectSecretsTool.parameters.properties.secretKey,
+    ).toBeTruthy();
+    expect(
+      searchProjectSecretsTool.parameters.properties.valueState,
+    ).toBeTruthy();
+    expect(
+      searchProjectSecretsTool.parameters.properties.hasDescription,
+    ).toBeTruthy();
+    expect(searchProjectSecretsTool.parameters.properties.page).toBeTruthy();
     await searchProjectSecretsTool.execute("tool-call-1", {
       projectSlug: "secret-project",
       query: "openai",
@@ -1459,24 +1776,32 @@ describe("orchestra tools extension bridge tool setup", () => {
       hasDescription: true,
     });
 
-    const getProjectSecretTool = registeredTools.find((tool) => tool.name === "get_project_secret");
+    const getProjectSecretTool = registeredTools.find(
+      (tool) => tool.name === "get_project_secret",
+    );
     const loadResult = await getProjectSecretTool.execute("tool-call-2", {
       projectSlug: "secret-project",
       secretKey: "OPENAI_API_KEY",
       targetEnvVar: "OPENAI_TOKEN",
     });
 
-    expect(loadResult.content[0]?.text).toContain("Loaded OPENAI_API_KEY into env var OPENAI_TOKEN");
+    expect(loadResult.content[0]?.text).toContain(
+      "Loaded OPENAI_API_KEY into env var OPENAI_TOKEN",
+    );
     expect(loadResult.details.result).toEqual({
       projectSlug: "secret-project",
       secretKey: "OPENAI_API_KEY",
       targetEnvVar: "OPENAI_TOKEN",
       loaded: true,
     });
-    expect(JSON.stringify(loadResult.details.result)).not.toContain("sk-loaded-from-bridge");
+    expect(JSON.stringify(loadResult.details.result)).not.toContain(
+      "sk-loaded-from-bridge",
+    );
     expect(process.env.OPENAI_TOKEN).toBe("sk-loaded-from-bridge");
 
-    const updateProjectSecretTool = registeredTools.find((tool) => tool.name === "update_project_secret");
+    const updateProjectSecretTool = registeredTools.find(
+      (tool) => tool.name === "update_project_secret",
+    );
     await updateProjectSecretTool.execute("tool-call-3", {
       projectSlug: "secret-project",
       secretKey: "OPENAI_API_KEY",
@@ -1486,38 +1811,50 @@ describe("orchestra tools extension bridge tool setup", () => {
 
     const orchestraRun = registeredCommands.get("orchestra-run");
     expect(orchestraRun).toBeTruthy();
-    await orchestraRun?.("get_project_secret {\"projectSlug\":\"secret-project\",\"secretKey\":\"OPENAI_API_KEY\",\"targetEnvVar\":\"OPENAI_RUNTIME\"}", {
-      ui: {
-        notify(message: string, level: string) {
-          notifications.push({ message, level });
+    await orchestraRun?.(
+      'get_project_secret {"projectSlug":"secret-project","secretKey":"OPENAI_API_KEY","targetEnvVar":"OPENAI_RUNTIME"}',
+      {
+        ui: {
+          notify(message: string, level: string) {
+            notifications.push({ message, level });
+          },
         },
       },
-    });
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).payload).toEqual({
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).payload,
+    ).toEqual({
       projectSlug: "secret-project",
       query: "openai",
       valueState: "ready",
       hasDescription: true,
     });
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).payload).toEqual({
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).payload,
+    ).toEqual({
       projectSlug: "secret-project",
       secretKey: "OPENAI_API_KEY",
     });
-    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body)).payload).toEqual({
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body)).payload,
+    ).toEqual({
       projectSlug: "secret-project",
       secretKey: "OPENAI_API_KEY",
       description: "Rotated key",
       value: "sk-secret-from-env",
     });
-    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body)).payload).toEqual({
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body)).payload,
+    ).toEqual({
       projectSlug: "secret-project",
       secretKey: "OPENAI_API_KEY",
     });
     expect(notifications).toEqual([
       {
-        message: "Loaded OPENAI_API_KEY into env var OPENAI_RUNTIME for this session.",
+        message:
+          "Loaded OPENAI_API_KEY into env var OPENAI_RUNTIME for this session.",
         level: "info",
       },
     ]);
@@ -1537,15 +1874,31 @@ describe("orchestra tools extension bridge tool setup", () => {
       registerCommand() {},
     } as any);
 
-    const helpTool = registeredTools.find((tool) => tool.name === "orchestra_help");
-    const addHelp = JSON.parse((await helpTool.execute("tool-call-1", { command: "add_project_secret" })).content[0]?.text ?? "{}");
-    const updateHelp = JSON.parse((await helpTool.execute("tool-call-2", { command: "update_project_secret" })).content[0]?.text ?? "{}");
-    const loadHelp = JSON.parse((await helpTool.execute("tool-call-3", { command: "get_project_secret" })).content[0]?.text ?? "{}");
+    const helpTool = registeredTools.find(
+      (tool) => tool.name === "orchestra_help",
+    );
+    const addHelp = JSON.parse(
+      (await helpTool.execute("tool-call-1", { command: "add_project_secret" }))
+        .content[0]?.text ?? "{}",
+    );
+    const updateHelp = JSON.parse(
+      (
+        await helpTool.execute("tool-call-2", {
+          command: "update_project_secret",
+        })
+      ).content[0]?.text ?? "{}",
+    );
+    const loadHelp = JSON.parse(
+      (await helpTool.execute("tool-call-3", { command: "get_project_secret" }))
+        .content[0]?.text ?? "{}",
+    );
 
     expect(addHelp.requiredPermission).toBe("projects.secrets.write");
-    expect(addHelp.parameters.find((parameter: any) => parameter.name === "sourceEnvVar")).toEqual(
-      expect.objectContaining({ required: true }),
-    );
+    expect(
+      addHelp.parameters.find(
+        (parameter: any) => parameter.name === "sourceEnvVar",
+      ),
+    ).toEqual(expect.objectContaining({ required: true }));
     expect(updateHelp.requiredPermission).toBe("projects.secrets.write");
     expect(updateHelp.notes).toEqual(
       expect.arrayContaining([
@@ -1566,9 +1919,11 @@ describe("orchestra tools extension bridge tool setup", () => {
         }),
       ]),
     );
-    expect(updateHelp.parameters.find((parameter: any) => parameter.name === "sourceEnvVar")).toEqual(
-      expect.objectContaining({ required: false }),
-    );
+    expect(
+      updateHelp.parameters.find(
+        (parameter: any) => parameter.name === "sourceEnvVar",
+      ),
+    ).toEqual(expect.objectContaining({ required: false }));
     expect(loadHelp.requiredPermission).toBe("projects.secrets.use");
     expect(loadHelp.notes).toEqual(
       expect.arrayContaining([
@@ -1602,7 +1957,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     } as any);
 
-    const updateProjectSecretTool = registeredTools.find((tool) => tool.name === "update_project_secret");
+    const updateProjectSecretTool = registeredTools.find(
+      (tool) => tool.name === "update_project_secret",
+    );
     await expect(
       updateProjectSecretTool.execute("tool-call-update-secret", {
         secretKey: "OPENAI_API_KEY",
@@ -1644,7 +2001,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       registerCommand() {},
     } as any);
 
-    const createAgentTool = registeredTools.find((tool) => tool.name === "create_agent");
+    const createAgentTool = registeredTools.find(
+      (tool) => tool.name === "create_agent",
+    );
     expect(createAgentTool.parameters.properties.input).toBeTruthy();
     expect(createAgentTool.parameters.properties.inputJson).toBeUndefined();
     await createAgentTool.execute("tool-call-1", {
@@ -1658,7 +2017,9 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     });
 
-    const createSubtaskTool = registeredTools.find((tool) => tool.name === "create_subtask");
+    const createSubtaskTool = registeredTools.find(
+      (tool) => tool.name === "create_subtask",
+    );
     expect(createSubtaskTool.parameters.properties.parentTaskId).toBeTruthy();
     expect(createSubtaskTool.parameters.properties.input).toBeTruthy();
     await createSubtaskTool.execute("tool-call-2", {
@@ -1670,13 +2031,21 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     });
 
-    const helpTool = registeredTools.find((tool) => tool.name === "orchestra_help");
-    const helpResult = await helpTool.execute("tool-call-3", { command: "create_agent" });
+    const helpTool = registeredTools.find(
+      (tool) => tool.name === "orchestra_help",
+    );
+    const helpResult = await helpTool.execute("tool-call-3", {
+      command: "create_agent",
+    });
     const parsedHelp = JSON.parse(helpResult.content[0]?.text ?? "{}");
-    const inputParameter = parsedHelp.parameters.find((parameter: any) => parameter.name === "input");
+    const inputParameter = parsedHelp.parameters.find(
+      (parameter: any) => parameter.name === "input",
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).payload).toEqual({
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).payload,
+    ).toEqual({
       input: {
         name: "Planner",
         scope: "project",
@@ -1686,7 +2055,9 @@ describe("orchestra tools extension bridge tool setup", () => {
         policyIds: ["policy-1"],
       },
     });
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).payload).toEqual({
+    expect(
+      JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).payload,
+    ).toEqual({
       parentTaskId: "task-parent",
       input: {
         title: "Write regression coverage",
@@ -1717,10 +2088,26 @@ describe("orchestra tools extension bridge tool setup", () => {
     expect(inputParameter.description).toContain("top-level input");
     expect(inputParameter.properties).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: "name", required: true, type: "string" }),
-        expect.objectContaining({ name: "systemPrompt", required: false, type: "string" }),
-        expect.objectContaining({ name: "projectId", required: false, type: "string" }),
-        expect.objectContaining({ name: "policyIds", required: false, type: "array<string>" }),
+        expect.objectContaining({
+          name: "name",
+          required: true,
+          type: "string",
+        }),
+        expect.objectContaining({
+          name: "systemPrompt",
+          required: false,
+          type: "string",
+        }),
+        expect.objectContaining({
+          name: "projectId",
+          required: false,
+          type: "string",
+        }),
+        expect.objectContaining({
+          name: "policyIds",
+          required: false,
+          type: "array<string>",
+        }),
       ]),
     );
   });
@@ -1743,7 +2130,9 @@ describe("orchestra tools extension bridge tool setup", () => {
           data: {
             projectSlug: "test-project",
             availability: { status: "available", message: null },
-            secrets: [{ secretKey: "OPENAI_API_KEY", description: "Metadata only" }],
+            secrets: [
+              { secretKey: "OPENAI_API_KEY", description: "Metadata only" },
+            ],
           },
         };
       },
@@ -1760,15 +2149,22 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     } as any);
 
-    const updateProjectSecretTool = registeredTools.find((tool) => tool.name === "update_project_secret");
-    const result = await updateProjectSecretTool.execute("tool-call-update-secret", {
-      secretKey: "OPENAI_API_KEY",
-      description: "Metadata only",
-    });
+    const updateProjectSecretTool = registeredTools.find(
+      (tool) => tool.name === "update_project_secret",
+    );
+    const result = await updateProjectSecretTool.execute(
+      "tool-call-update-secret",
+      {
+        secretKey: "OPENAI_API_KEY",
+        description: "Metadata only",
+      },
+    );
 
     expect(result.content[0]?.text).not.toContain("sk-");
     expect(JSON.stringify(result.details)).not.toContain("sourceEnvVar");
-    const firstRequestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const firstRequestBody = JSON.parse(
+      String(fetchMock.mock.calls[0]?.[1]?.body),
+    );
     expect(firstRequestBody.command).toBe("update_project_secret");
     expect(firstRequestBody.payload).toEqual({
       secretKey: "OPENAI_API_KEY",
@@ -1784,12 +2180,17 @@ describe("orchestra tools extension bridge tool setup", () => {
 
     const orchestraRun = registeredCommands.get("orchestra-run");
     const notify = vi.fn();
-    await orchestraRun.handler('update_project_secret {"secretKey":"OPENAI_API_KEY","description":"Metadata only"}', {
-      ui: { notify },
-    });
+    await orchestraRun.handler(
+      'update_project_secret {"secretKey":"OPENAI_API_KEY","description":"Metadata only"}',
+      {
+        ui: { notify },
+      },
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    const secondRequestBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    const secondRequestBody = JSON.parse(
+      String(fetchMock.mock.calls[1]?.[1]?.body),
+    );
     expect(secondRequestBody.command).toBe("update_project_secret");
     expect(secondRequestBody.payload).toEqual({
       secretKey: "OPENAI_API_KEY",
@@ -1837,12 +2238,17 @@ describe("orchestra tools extension bridge tool setup", () => {
       registerCommand() {},
     } as any);
 
-    const updateProjectSecretTool = registeredTools.find((tool) => tool.name === "update_project_secret");
-    const result = await updateProjectSecretTool.execute("tool-call-update-secret", {
-      secretKey: "OPENAI_API_KEY",
-      description: "Rotated key",
-      sourceEnvVar: "SOURCE_SECRET",
-    });
+    const updateProjectSecretTool = registeredTools.find(
+      (tool) => tool.name === "update_project_secret",
+    );
+    const result = await updateProjectSecretTool.execute(
+      "tool-call-update-secret",
+      {
+        secretKey: "OPENAI_API_KEY",
+        description: "Rotated key",
+        sourceEnvVar: "SOURCE_SECRET",
+      },
+    );
 
     expect(result.content[0]?.text).not.toContain("sk-env-source");
     expect(JSON.stringify(result.details)).not.toContain("sk-env-source");
@@ -1898,31 +2304,45 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     } as any);
 
-    const getProjectSecretTool = registeredTools.find((tool) => tool.name === "get_project_secret");
+    const getProjectSecretTool = registeredTools.find(
+      (tool) => tool.name === "get_project_secret",
+    );
     expect(getProjectSecretTool.parameters.properties.secretKey).toBeTruthy();
-    expect(getProjectSecretTool.parameters.properties.sourceEnvVar).toBeUndefined();
+    expect(
+      getProjectSecretTool.parameters.properties.sourceEnvVar,
+    ).toBeUndefined();
 
     const toolResult = await getProjectSecretTool.execute("tool-call-secret", {
       secretKey: "OPENAI_API_KEY",
     });
-    expect(toolResult.content[0]?.text).toContain("Loaded OPENAI_API_KEY into env var OPENAI_API_KEY");
+    expect(toolResult.content[0]?.text).toContain(
+      "Loaded OPENAI_API_KEY into env var OPENAI_API_KEY",
+    );
     expect(toolResult.content[0]?.text).not.toContain("sk-super-secret");
     expect(JSON.stringify(toolResult.details)).not.toContain("sk-super-secret");
     expect(process.env.OPENAI_API_KEY).toBe("sk-super-secret");
 
     const orchestraRun = registeredCommands.get("orchestra-run");
     const notify = vi.fn();
-    await orchestraRun.handler("get_project_secret {\"secretKey\":\"OPENAI_API_KEY\",\"targetEnvVar\":\"OPENAI_TOKEN\"}", {
-      ui: { notify },
-    });
-    expect(notify).toHaveBeenCalledWith("Loaded OPENAI_API_KEY into env var OPENAI_TOKEN for this session.", "info");
+    await orchestraRun.handler(
+      'get_project_secret {"secretKey":"OPENAI_API_KEY","targetEnvVar":"OPENAI_TOKEN"}',
+      {
+        ui: { notify },
+      },
+    );
+    expect(notify).toHaveBeenCalledWith(
+      "Loaded OPENAI_API_KEY into env var OPENAI_TOKEN for this session.",
+      "info",
+    );
     expect(process.env.OPENAI_TOKEN).toBe("sk-super-secret");
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const firstRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(firstRequest.command).toBe("get_project_secret");
     expect(firstRequest.payload).toEqual({ secretKey: "OPENAI_API_KEY" });
-    const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    const secondRequest = JSON.parse(
+      String(fetchMock.mock.calls[1]?.[1]?.body),
+    );
     expect(secondRequest.command).toBe("get_project_secret");
     expect(secondRequest.payload).toEqual({ secretKey: "OPENAI_API_KEY" });
   });

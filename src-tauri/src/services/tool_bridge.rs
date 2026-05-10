@@ -22,9 +22,10 @@ use crate::{
     models::{
         AuthorizationContext, BridgeCleanupEvent, BridgeClientDiagnostics, BridgeDiagnostics,
         BridgeInstanceDiagnostics, BridgeRequestDiagnostics, MarkMailboxMessagesReadInput,
-        MarkTaskCommentsReadInput, NoteLocation, OrchestraToolDefinition, RoleQueueEntryInput,
-        SendMailboxMessageInput, TaskAttachmentInput, TaskCommentDomAnchor, TaskCommentInput,
-        TaskLaneAssignment, TaskTodoInput, TaskUpsertInput,
+        MarkTaskCommentsReadInput, NoteLocation, OrchestraToolDefinition,
+        ProjectSecretMetadataPagedResult, RoleQueueEntryInput, SendMailboxMessageInput,
+        TaskAttachmentInput, TaskCommentDomAnchor, TaskCommentInput, TaskLaneAssignment,
+        TaskTodoInput, TaskUpsertInput, ToolPagedResult,
     },
     services::{
         agents, authorization, command_authorization, database, live_sessions, messages,
@@ -116,6 +117,132 @@ fn delete_project_via_bridge(
     }
 
     projects::delete_project(connection, project_id)
+}
+
+const BRIDGE_DEFAULT_PAGE_SIZE: usize = 10;
+const BRIDGE_MAX_PAGE_SIZE: usize = 10;
+
+#[derive(Clone, Copy)]
+enum PaginationStrategy {
+    OldestFirst,
+    NewestFirstChronological,
+}
+
+#[derive(Clone, Copy)]
+struct NormalizedToolPagination {
+    page: usize,
+    page_size: usize,
+    count_only: bool,
+}
+
+fn payload_i64(payload: &Value, key: &str) -> Option<i64> {
+    payload.get(key).and_then(Value::as_i64).or_else(|| {
+        payload
+            .get(key)
+            .and_then(Value::as_u64)
+            .map(|value| value as i64)
+    })
+}
+
+fn normalize_tool_pagination(
+    payload: &Value,
+    legacy_page_size_field: Option<&str>,
+) -> NormalizedToolPagination {
+    let page = payload_i64(payload, "page").unwrap_or(1).max(1) as usize;
+    let raw_page_size = payload_i64(payload, "pageSize")
+        .or_else(|| legacy_page_size_field.and_then(|field| payload_i64(payload, field)))
+        .unwrap_or(BRIDGE_DEFAULT_PAGE_SIZE as i64);
+    let page_size = raw_page_size.clamp(1, BRIDGE_MAX_PAGE_SIZE as i64) as usize;
+    let count_only = payload
+        .get("countOnly")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    NormalizedToolPagination {
+        page,
+        page_size,
+        count_only,
+    }
+}
+
+fn paged_result<T>(
+    items: Vec<T>,
+    pagination: NormalizedToolPagination,
+    strategy: PaginationStrategy,
+) -> ToolPagedResult<T> {
+    let total_count = items.len();
+    if pagination.count_only {
+        let has_more = pagination.page.saturating_mul(pagination.page_size) < total_count;
+        return ToolPagedResult {
+            items: Vec::new(),
+            total_count: total_count as i64,
+            page: pagination.page as i64,
+            page_size: pagination.page_size as i64,
+            returned_count: 0,
+            has_more,
+            next_page: has_more.then_some((pagination.page + 1) as i64),
+        };
+    }
+
+    match strategy {
+        PaginationStrategy::OldestFirst => {
+            let offset = pagination
+                .page
+                .saturating_sub(1)
+                .saturating_mul(pagination.page_size);
+            let page_items = items
+                .into_iter()
+                .skip(offset)
+                .take(pagination.page_size)
+                .collect::<Vec<_>>();
+            let returned_count = page_items.len();
+            let has_more = offset.saturating_add(returned_count) < total_count;
+            ToolPagedResult {
+                items: page_items,
+                total_count: total_count as i64,
+                page: pagination.page as i64,
+                page_size: pagination.page_size as i64,
+                returned_count: returned_count as i64,
+                has_more,
+                next_page: has_more.then_some((pagination.page + 1) as i64),
+            }
+        }
+        PaginationStrategy::NewestFirstChronological => {
+            let skip_from_end = pagination
+                .page
+                .saturating_sub(1)
+                .saturating_mul(pagination.page_size);
+            if skip_from_end >= total_count {
+                return ToolPagedResult {
+                    items: Vec::new(),
+                    total_count: total_count as i64,
+                    page: pagination.page as i64,
+                    page_size: pagination.page_size as i64,
+                    returned_count: 0,
+                    has_more: false,
+                    next_page: None,
+                };
+            }
+            let end = total_count.saturating_sub(skip_from_end);
+            let start = end.saturating_sub(pagination.page_size);
+            let page_items = items
+                .into_iter()
+                .skip(start)
+                .take(end.saturating_sub(start))
+                .collect::<Vec<_>>();
+            let returned_count = page_items.len();
+            let has_more = start > 0;
+            ToolPagedResult {
+                items: page_items,
+                total_count: total_count as i64,
+                page: pagination.page as i64,
+                page_size: pagination.page_size as i64,
+                returned_count: returned_count as i64,
+                has_more,
+                next_page: has_more.then_some((pagination.page + 1) as i64),
+            }
+        }
+    }
 }
 
 const BRIDGE_SUPPORTED_COMMANDS: &[&str] = &[
@@ -977,12 +1104,13 @@ fn invoke_bridge_command(
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             let project_id = payload.get("projectId").and_then(Value::as_str);
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "agents.read")?;
-            serde_json::to_value(agents::list_agents_for_project(
-                connection,
-                include_archived,
-                project_id,
-            )?)
+            serde_json::to_value(paged_result(
+                agents::list_agents_for_project(connection, include_archived, project_id)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
             .map_err(|error| format!("Unable to serialize agents: {error}"))
         }
         "get_agent" => {
@@ -1028,9 +1156,14 @@ fn invoke_bridge_command(
                 .get("includeArchived")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "roles.read")?;
-            serde_json::to_value(roles::list_roles(connection, include_archived)?)
-                .map_err(|error| format!("Unable to serialize roles: {error}"))
+            serde_json::to_value(paged_result(
+                roles::list_roles(connection, include_archived)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
+            .map_err(|error| format!("Unable to serialize roles: {error}"))
         }
         "get_role" => {
             let role_id = require_string(&payload, "roleId")?;
@@ -1069,11 +1202,13 @@ fn invoke_bridge_command(
                 .get("includeArchived")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "roles.read")?;
-            serde_json::to_value(role_runtime::list_role_operations(
-                connection,
-                include_archived,
-            )?)
+            serde_json::to_value(paged_result(
+                role_runtime::list_role_operations(connection, include_archived)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
             .map_err(|error| format!("Unable to serialize role operations: {error}"))
         }
         "get_role_operations" => {
@@ -1092,9 +1227,14 @@ fn invoke_bridge_command(
                 .map_err(|error| format!("Unable to serialize role queue entry: {error}"))
         }
         "list_projects" => {
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "projects.read")?;
-            serde_json::to_value(projects::list_projects(connection)?)
-                .map_err(|error| format!("Unable to serialize projects: {error}"))
+            serde_json::to_value(paged_result(
+                projects::list_projects(connection)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
+            .map_err(|error| format!("Unable to serialize projects: {error}"))
         }
         "get_project" => {
             let project_id = require_string(&payload, "projectId")?;
@@ -1142,9 +1282,14 @@ fn invoke_bridge_command(
                 .get("projectId")
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty());
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "projects.read")?;
-            serde_json::to_value(projects::list_repositories(connection, project_id)?)
-                .map_err(|error| format!("Unable to serialize repositories: {error}"))
+            serde_json::to_value(paged_result(
+                projects::list_repositories(connection, project_id)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
+            .map_err(|error| format!("Unable to serialize repositories: {error}"))
         }
         "get_repository" => {
             let repository_id = require_string(&payload, "repositoryId")?;
@@ -1236,6 +1381,7 @@ fn invoke_bridge_command(
                 session_id,
                 "Create a project first before listing project secrets.",
             )?;
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(
                 connection,
                 authorization,
@@ -1243,12 +1389,17 @@ fn invoke_bridge_command(
             )?;
             let filters = project_secret_filter_from_payload(&payload)?;
             let orchestra_root = crate::services::orchestra_paths::default_orchestra_root()?;
-            serde_json::to_value(project_secrets::search_project_secrets_with_connection(
+            let state = project_secrets::search_project_secrets_with_connection(
                 connection,
                 Some(&orchestra_root),
                 &project_slug,
                 &filters,
-            )?)
+            )?;
+            serde_json::to_value(ProjectSecretMetadataPagedResult {
+                project_slug: state.project_slug,
+                availability: state.availability,
+                page: paged_result(state.secrets, pagination, PaginationStrategy::OldestFirst),
+            })
             .map_err(|error| format!("Unable to serialize project secrets: {error}"))
         }
         "search_project_secrets" => {
@@ -1259,6 +1410,7 @@ fn invoke_bridge_command(
                 session_id,
                 "Create a project first before searching project secrets.",
             )?;
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(
                 connection,
                 authorization,
@@ -1266,12 +1418,17 @@ fn invoke_bridge_command(
             )?;
             let filters = project_secret_filter_from_payload(&payload)?;
             let orchestra_root = crate::services::orchestra_paths::default_orchestra_root()?;
-            serde_json::to_value(project_secrets::search_project_secrets_with_connection(
+            let state = project_secrets::search_project_secrets_with_connection(
                 connection,
                 Some(&orchestra_root),
                 &project_slug,
                 &filters,
-            )?)
+            )?;
+            serde_json::to_value(ProjectSecretMetadataPagedResult {
+                project_slug: state.project_slug,
+                availability: state.availability,
+                page: paged_result(state.secrets, pagination, PaginationStrategy::OldestFirst),
+            })
             .map_err(|error| format!("Unable to serialize project secret search results: {error}"))
         }
         "get_project_secret" => {
@@ -1466,19 +1623,21 @@ fn invoke_bridge_command(
             .map_err(|error| format!("Unable to serialize moved project note: {error}"))
         }
         "list_sessions" => {
+            let pagination = normalize_tool_pagination(&payload, Some("limit"));
             command_authorization::require_permission(connection, authorization, "sessions.read")?;
-            let query =
+            let mut query =
                 serde_json::from_value::<session_management::SessionManagementQuery>(payload)
                     .map_err(|error| format!("Unable to parse list_sessions input: {error}"))?;
+            query.limit = None;
             let app = config.clone_app_handle();
             let state = app
                 .as_ref()
                 .map(|app| app.state::<crate::state::AppState>());
-            serde_json::to_value(session_management::list_sessions(
-                connection,
-                state.as_deref(),
-                query,
-            )?)
+            serde_json::to_value(paged_result(
+                session_management::list_sessions(connection, state.as_deref(), query)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
             .map_err(|error| format!("Unable to serialize sessions: {error}"))
         }
         "get_session_diagnostics" => {
@@ -1614,6 +1773,7 @@ fn invoke_bridge_command(
             .map_err(|error| format!("Unable to serialize stopped session runtime: {error}"))
         }
         "list_tasks" => {
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             let Some(project_id) = projects::resolve_requested_or_default_project_id(
                 connection,
@@ -1623,8 +1783,16 @@ fn invoke_bridge_command(
                     .filter(|value| !value.trim().is_empty()),
             )?
             else {
-                return serde_json::to_value(Vec::<crate::models::TaskSummary>::new())
-                    .map_err(|error| format!("Unable to serialize tasks: {error}"));
+                return serde_json::to_value(ToolPagedResult::<crate::models::TaskSummary> {
+                    items: Vec::new(),
+                    total_count: 0,
+                    page: pagination.page as i64,
+                    page_size: pagination.page_size as i64,
+                    returned_count: 0,
+                    has_more: false,
+                    next_page: None,
+                })
+                .map_err(|error| format!("Unable to serialize tasks: {error}"));
             };
             let tags = match payload.get("tags") {
                 Some(value) if !value.is_null() => Some(
@@ -1640,11 +1808,11 @@ fn invoke_bridge_command(
                 payload.get("sortBy").and_then(Value::as_str),
                 payload.get("sortDirection").and_then(Value::as_str),
             )?;
-            serde_json::to_value(tasks::list_tasks_with_query(
-                connection,
-                &project_id,
-                query,
-            )?)
+            serde_json::to_value(paged_result(
+                tasks::list_tasks_with_query(connection, &project_id, query)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
             .map_err(|error| format!("Unable to serialize tasks: {error}"))
         }
         "get_task" => {
@@ -1739,54 +1907,80 @@ fn invoke_bridge_command(
         }
         "list_task_comments" => {
             let task_id = require_string(&payload, "taskId")?;
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
-            serde_json::to_value(tasks::list_task_comments(connection, &task_id)?)
-                .map_err(|error| format!("Unable to serialize task comments: {error}"))
+            serde_json::to_value(paged_result(
+                tasks::list_task_comments(connection, &task_id)?,
+                pagination,
+                PaginationStrategy::NewestFirstChronological,
+            ))
+            .map_err(|error| format!("Unable to serialize task comments: {error}"))
         }
         "list_task_attachments" => {
             let task_id = require_string(&payload, "taskId")?;
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
-            serde_json::to_value(tasks::list_task_attachments(connection, &task_id)?)
-                .map_err(|error| format!("Unable to serialize task attachments: {error}"))
+            serde_json::to_value(paged_result(
+                tasks::list_task_attachments(connection, &task_id)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
+            .map_err(|error| format!("Unable to serialize task attachments: {error}"))
         }
         "search_task_comments" => {
             let task_id = require_string(&payload, "taskId")?;
             let query = require_string(&payload, "query")?;
+            let pagination = normalize_tool_pagination(&payload, Some("limit"));
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
-            let limit = payload.get("limit").and_then(Value::as_u64).map(|value| value as usize);
-            serde_json::to_value(tasks::search_task_comments(connection, &task_id, &query, limit)?)
-                .map_err(|error| format!("Unable to serialize task comment search results: {error}"))
+            serde_json::to_value(paged_result(
+                tasks::search_task_comments_unbounded(connection, &task_id, &query)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
+            .map_err(|error| format!("Unable to serialize task comment search results: {error}"))
         }
         "search_task_comment_file_mentions" => {
             let task_id = require_string(&payload, "taskId")?;
             let query = require_string(&payload, "query")?;
+            let pagination = normalize_tool_pagination(&payload, Some("limit"));
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
-            let limit = payload.get("limit").and_then(Value::as_u64).map(|value| value as usize);
-            serde_json::to_value(task_comment_file_mentions::search_task_comment_file_mentions(
-                connection,
-                &task_id,
-                &query,
-                limit,
-            )?)
-            .map_err(|error| format!("Unable to serialize task comment file mention search results: {error}"))
+            serde_json::to_value(paged_result(
+                task_comment_file_mentions::search_task_comment_file_mentions_unbounded(
+                    connection, &task_id, &query,
+                )?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
+            .map_err(|error| {
+                format!("Unable to serialize task comment file mention search results: {error}")
+            })
         }
         "list_task_todos" => {
             let task_id = require_string(&payload, "taskId")?;
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
-            serde_json::to_value(tasks::list_task_todos(connection, &task_id)?)
-                .map_err(|error| format!("Unable to serialize task todos: {error}"))
+            serde_json::to_value(paged_result(
+                tasks::list_task_todos(connection, &task_id)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
+            .map_err(|error| format!("Unable to serialize task todos: {error}"))
         }
         "list_unfinished_task_todos" => {
             let task_id = require_string(&payload, "taskId")?;
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             let lane_id = payload.get("laneId").and_then(Value::as_str);
-            serde_json::to_value(tasks::list_unfinished_task_todos(
-                connection, &task_id, lane_id,
-            )?)
+            serde_json::to_value(paged_result(
+                tasks::list_unfinished_task_todos(connection, &task_id, lane_id)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
             .map_err(|error| format!("Unable to serialize unfinished task todos: {error}"))
         }
         "get_unread_task_comments" => {
             let task_id = require_string(&payload, "taskId")?;
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             let assignment =
                 crate::services::task_runtime::get_active_lane_assignment(connection, &task_id)?
@@ -1795,11 +1989,11 @@ fn invoke_bridge_command(
                 &assignment,
                 authorization,
             )?;
-            serde_json::to_value(tasks::list_unread_task_comments(
-                connection,
-                &task_id,
-                &assignment,
-            )?)
+            serde_json::to_value(paged_result(
+                tasks::list_unread_task_comments(connection, &task_id, &assignment)?,
+                pagination,
+                PaginationStrategy::NewestFirstChronological,
+            ))
             .map_err(|error| format!("Unable to serialize unread task comments: {error}"))
         }
         "mark_task_comments_read" => {
@@ -1828,14 +2022,26 @@ fn invoke_bridge_command(
             .map_err(|error| format!("Unable to serialize task comment receipts: {error}"))
         }
         "get_unread_mail" => {
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             let task_id = payload.get("taskId").and_then(Value::as_str);
-            serde_json::to_value(messages::list_unread_mail_for_authorization(
+            let mut unread = messages::list_unread_mail_for_authorization(
                 connection,
                 authorization,
                 session_id,
                 task_id,
-            )?)
+            )?;
+            unread.sort_by(|left, right| {
+                right
+                    .created_at
+                    .cmp(&left.created_at)
+                    .then_with(|| right.delivery_id.cmp(&left.delivery_id))
+            });
+            serde_json::to_value(paged_result(
+                unread,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
             .map_err(|error| format!("Unable to serialize unread mail: {error}"))
         }
         "mark_mail_read" => {
@@ -1914,13 +2120,19 @@ fn invoke_bridge_command(
         }
         "list_task_repositories" => {
             let task_id = require_string(&payload, "taskId")?;
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             let task = tasks::get_task_context(connection, &task_id)?;
-            serde_json::to_value(task.task_repositories)
-                .map_err(|error| format!("Unable to serialize task repositories: {error}"))
+            serde_json::to_value(paged_result(
+                task.task_repositories,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
+            .map_err(|error| format!("Unable to serialize task repositories: {error}"))
         }
         "list_task_file_references" => {
             let task_id = require_string(&payload, "taskId")?;
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "tasks.read")?;
             let task = tasks::get_task_context(connection, &task_id)?;
             let task_workspace_cwd = task
@@ -1936,11 +2148,15 @@ fn invoke_bridge_command(
                 })
                 .transpose()?
                 .flatten();
-            serde_json::to_value(task_file_references::load_task_file_references(
-                connection,
-                &task_id,
-                task_workspace_cwd.as_deref(),
-            )?)
+            serde_json::to_value(paged_result(
+                task_file_references::load_task_file_references(
+                    connection,
+                    &task_id,
+                    task_workspace_cwd.as_deref(),
+                )?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
             .map_err(|error| format!("Unable to serialize task file references: {error}"))
         }
         "add_task_file_reference" => {
@@ -2604,9 +2820,14 @@ fn invoke_bridge_command(
                 .get("includeArchived")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "workflows.read")?;
-            serde_json::to_value(workflows::list_workflows(connection, include_archived)?)
-                .map_err(|error| format!("Unable to serialize workflows: {error}"))
+            serde_json::to_value(paged_result(
+                workflows::list_workflows(connection, include_archived)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
+            .map_err(|error| format!("Unable to serialize workflows: {error}"))
         }
         "get_workflow" => {
             let workflow_id = require_string(&payload, "workflowId")?;
@@ -2780,9 +3001,14 @@ fn invoke_bridge_command(
                 .map_err(|error| format!("Unable to serialize workflow delete result: {error}"))
         }
         "list_policies" => {
+            let pagination = normalize_tool_pagination(&payload, None);
             command_authorization::require_permission(connection, authorization, "policies.read")?;
-            serde_json::to_value(policies::list_policies(connection)?)
-                .map_err(|error| format!("Unable to serialize policies: {error}"))
+            serde_json::to_value(paged_result(
+                policies::list_policies(connection)?,
+                pagination,
+                PaginationStrategy::OldestFirst,
+            ))
+            .map_err(|error| format!("Unable to serialize policies: {error}"))
         }
         "get_policy" => {
             let policy_id = require_string(&payload, "policyId")?;
@@ -3024,6 +3250,13 @@ mod tests {
         }
     }
 
+    fn paged_items(value: &Value) -> &Vec<Value> {
+        value
+            .get("items")
+            .and_then(Value::as_array)
+            .expect("paged response should include an items array")
+    }
+
     fn seed_bridge_task_todo_context(
         connection: &mut Connection,
         task_title: &str,
@@ -3206,9 +3439,12 @@ mod tests {
             json!({ "taskId": task.id }),
         )
         .expect("list_task_file_references should succeed");
-        assert_eq!(listed.as_array().map(|items| items.len()), Some(1));
+        assert_eq!(listed.get("totalCount").and_then(Value::as_i64), Some(1));
+        assert_eq!(paged_items(&listed).len(), 1);
         assert_eq!(
-            listed.pointer("/0/relativePath").and_then(Value::as_str),
+            listed
+                .pointer("/items/0/relativePath")
+                .and_then(Value::as_str),
             Some("docs/design.md")
         );
     }
@@ -3311,10 +3547,8 @@ mod tests {
                     "sortDirection": "asc"
                 }),
             )
-            .expect("list_tasks should respect the provided project id")
-            .as_array()
-            .cloned()
-            .expect("task list should serialize as an array");
+            .expect("list_tasks should respect the provided project id");
+            let scoped_tasks = paged_items(&scoped_tasks);
             assert_eq!(scoped_tasks.len(), 1);
             assert_eq!(
                 scoped_tasks[0].get("projectId").and_then(Value::as_str),
@@ -3339,11 +3573,8 @@ mod tests {
                 None,
                 json!({ "projectId": "orchestra", "includeArchived": false }),
             )
-            .expect("orchestra task list should still load")
-            .as_array()
-            .cloned()
-            .expect("task list should serialize as an array");
-            assert!(orchestra_tasks.is_empty());
+            .expect("orchestra task list should still load");
+            assert!(paged_items(&orchestra_tasks).is_empty());
         });
     }
 
@@ -3457,9 +3688,7 @@ mod tests {
                 json!({}),
             )
             .expect("list_projects should succeed");
-            assert!(projects_result
-                .as_array()
-                .expect("projects should serialize as an array")
+            assert!(paged_items(&projects_result)
                 .iter()
                 .any(|entry| entry.get("id").and_then(Value::as_str) == Some(project_id.as_str())));
 
@@ -3534,9 +3763,7 @@ mod tests {
                 json!({ "projectId": project_id }),
             )
             .expect("list_repositories should succeed");
-            assert!(repositories
-                .as_array()
-                .expect("repositories should serialize as an array")
+            assert!(paged_items(&repositories)
                 .iter()
                 .any(
                     |entry| entry.get("id").and_then(Value::as_str) == Some(repository_id.as_str())
@@ -3718,14 +3945,9 @@ mod tests {
                 json!({}),
             )
             .expect("list_workflows should succeed");
-            assert!(
-                workflow_list
-                    .as_array()
-                    .expect("workflows should serialize as an array")
-                    .iter()
-                    .any(|entry| entry.get("id").and_then(Value::as_str)
-                        == Some(workflow_id.as_str()))
-            );
+            assert!(paged_items(&workflow_list).iter().any(|entry| {
+                entry.get("id").and_then(Value::as_str) == Some(workflow_id.as_str())
+            }));
 
             let added_lane = invoke_bridge_command(
                 &config,
@@ -3987,7 +4209,7 @@ mod tests {
             );
             assert_eq!(
                 listed
-                    .pointer("/secrets/0/description")
+                    .pointer("/items/0/description")
                     .and_then(Value::as_str),
                 Some("Secondary provider key")
             );
@@ -4008,13 +4230,13 @@ mod tests {
             .expect("search project secrets should succeed");
             assert_eq!(
                 searched
-                    .pointer("/secrets/0/secretKey")
+                    .pointer("/items/0/secretKey")
                     .and_then(Value::as_str),
                 Some("OPENAI_API_KEY")
             );
             assert_eq!(
                 searched
-                    .pointer("/secrets")
+                    .pointer("/items")
                     .and_then(Value::as_array)
                     .map(Vec::len),
                 Some(1)
@@ -4034,13 +4256,13 @@ mod tests {
             .expect("filtered list project secrets should succeed");
             assert_eq!(
                 filtered_list
-                    .pointer("/secrets/0/secretKey")
+                    .pointer("/items/0/secretKey")
                     .and_then(Value::as_str),
                 Some("ANTHROPIC_API_KEY")
             );
             assert_eq!(
                 filtered_list
-                    .pointer("/secrets")
+                    .pointer("/items")
                     .and_then(Value::as_array)
                     .map(Vec::len),
                 Some(1)
@@ -4212,9 +4434,7 @@ mod tests {
             )
             .expect("reader should list project secrets");
             assert_eq!(
-                listed
-                    .pointer("/secrets/0/secretKey")
-                    .and_then(Value::as_str),
+                listed.pointer("/items/0/secretKey").and_then(Value::as_str),
                 Some("OPENAI_API_KEY")
             );
 
@@ -4235,7 +4455,7 @@ mod tests {
             .expect("reader should search project secrets");
             assert_eq!(
                 searched
-                    .pointer("/secrets/0/secretKey")
+                    .pointer("/items/0/secretKey")
                     .and_then(Value::as_str),
                 Some("OPENAI_API_KEY")
             );
@@ -4367,7 +4587,7 @@ mod tests {
             json!({}),
         )
         .expect("bridge call should succeed");
-        let array = result.as_array().expect("result should be an array");
+        let array = paged_items(&result);
         assert_eq!(array.len(), 1);
 
         let error = invoke_bridge_command(
@@ -4383,6 +4603,231 @@ mod tests {
         )
         .expect_err("bridge call should be denied");
         assert!(error.contains("roles.read"));
+    }
+
+    #[test]
+    fn paged_result_clamps_page_size_and_supports_count_only() {
+        let pagination = normalize_tool_pagination(&json!({ "page": 0, "pageSize": 99 }), None);
+        let first_page = paged_result(
+            (1..=12).collect::<Vec<_>>(),
+            pagination,
+            PaginationStrategy::OldestFirst,
+        );
+        assert_eq!(first_page.page, 1);
+        assert_eq!(first_page.page_size, 10);
+        assert_eq!(first_page.total_count, 12);
+        assert_eq!(first_page.returned_count, 10);
+        assert_eq!(first_page.items, (1..=10).collect::<Vec<_>>());
+        assert!(first_page.has_more);
+        assert_eq!(first_page.next_page, Some(2));
+
+        let count_only = paged_result(
+            (1..=12).collect::<Vec<_>>(),
+            normalize_tool_pagination(
+                &json!({ "page": 2, "pageSize": 3, "countOnly": true }),
+                None,
+            ),
+            PaginationStrategy::OldestFirst,
+        );
+        assert!(count_only.items.is_empty());
+        assert_eq!(count_only.total_count, 12);
+        assert_eq!(count_only.returned_count, 0);
+        assert!(count_only.has_more);
+        assert_eq!(count_only.next_page, Some(3));
+    }
+
+    #[test]
+    fn list_task_comments_bridge_pages_recent_history_chronologically() {
+        with_temp_home("bridge-task-comments-pagination", || {
+            let mut connection = open_test_connection("bridge-task-comments-pagination");
+            let task = tasks::create_task(
+                &mut connection,
+                Some("orchestra"),
+                TaskUpsertInput {
+                    title: "Paged comments".into(),
+                    description: None,
+                    task_type: "task".into(),
+                    tags: Vec::new(),
+                    status: "ready".into(),
+                    priority: "P2".into(),
+                    workflow_id: None,
+                    current_lane_id: None,
+                    assignee_type: "user".into(),
+                    assignee_id: None,
+                    repository_id: None,
+                    repository_ids: Vec::new(),
+                    parent_task_id: None,
+                    whip_max_attempts: None,
+                    archived: None,
+                },
+            )
+            .expect("task should create");
+            for index in 1..=5 {
+                let timestamp = format!("2026-03-22T00:00:0{index}Z");
+                connection
+                    .execute(
+                        "INSERT INTO task_comments (id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, diff_anchor_json, created_at, updated_at) VALUES (?1, ?2, NULL, 'Tester', 'user', 'tester', ?3, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?4, ?4)",
+                        params![format!("comment-{index}"), task.id.as_str(), format!("comment {index}"), timestamp],
+                    )
+                    .expect("comment should insert");
+            }
+
+            let config = dummy_bridge_config("task-comments-pagination");
+            let page_one = invoke_bridge_command(
+                &config,
+                &connection,
+                "list_task_comments",
+                Some(&AuthorizationContext {
+                    actor_type: "user".into(),
+                    actor_id: "tester".into(),
+                }),
+                None,
+                json!({ "taskId": task.id, "pageSize": 2 }),
+            )
+            .expect("first task comment page should load");
+            assert_eq!(page_one.get("totalCount").and_then(Value::as_i64), Some(5));
+            assert_eq!(
+                page_one.get("returnedCount").and_then(Value::as_i64),
+                Some(2)
+            );
+            assert_eq!(page_one.get("hasMore").and_then(Value::as_bool), Some(true));
+            assert_eq!(
+                paged_items(&page_one)
+                    .iter()
+                    .filter_map(|entry| entry.get("message").and_then(Value::as_str))
+                    .collect::<Vec<_>>(),
+                vec!["comment 4", "comment 5"]
+            );
+
+            let page_two = invoke_bridge_command(
+                &config,
+                &connection,
+                "list_task_comments",
+                Some(&AuthorizationContext {
+                    actor_type: "user".into(),
+                    actor_id: "tester".into(),
+                }),
+                None,
+                json!({ "taskId": task.id, "page": 2, "pageSize": 2 }),
+            )
+            .expect("second task comment page should load");
+            assert_eq!(
+                paged_items(&page_two)
+                    .iter()
+                    .filter_map(|entry| entry.get("message").and_then(Value::as_str))
+                    .collect::<Vec<_>>(),
+                vec!["comment 2", "comment 3"]
+            );
+
+            let count_only = invoke_bridge_command(
+                &config,
+                &connection,
+                "list_task_comments",
+                Some(&AuthorizationContext {
+                    actor_type: "user".into(),
+                    actor_id: "tester".into(),
+                }),
+                None,
+                json!({ "taskId": task.id, "countOnly": true }),
+            )
+            .expect("count-only task comment page should load");
+            assert_eq!(
+                count_only.get("totalCount").and_then(Value::as_i64),
+                Some(5)
+            );
+            assert!(paged_items(&count_only).is_empty());
+        });
+    }
+
+    #[test]
+    fn get_unread_mail_bridge_pages_and_counts_results() {
+        let mut connection = open_test_connection("bridge-unread-mail-pagination");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Inbox Worker".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: vec!["tasks.read".into()],
+            },
+        )
+        .expect("agent should create");
+
+        for (index, timestamp) in [
+            "2026-03-22T00:00:01Z",
+            "2026-03-22T00:00:02Z",
+            "2026-03-22T00:00:03Z",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let message_id = format!("mail-message-{}", index + 1);
+            let delivery_id = format!("mail-delivery-{}", index + 1);
+            connection
+                .execute(
+                    "INSERT INTO mailbox_messages (id, project_id, task_id, sender_type, sender_id, sender_label, body, priority, created_at, updated_at) VALUES (?1, 'orchestra', NULL, 'user', 'tester', 'Tester', ?2, 'normal', ?3, ?3)",
+                    params![message_id.as_str(), format!("message {}", index + 1), timestamp],
+                )
+                .expect("mailbox message should insert");
+            connection
+                .execute(
+                    "INSERT INTO mailbox_message_deliveries (id, message_id, recipient_type, recipient_id, recipient_label, assignment_id, read_at, read_session_id, archived_at, last_notified_at, created_at, updated_at) VALUES (?1, ?2, 'agent', ?3, 'Inbox Worker', NULL, NULL, NULL, NULL, NULL, ?4, ?4)",
+                    params![delivery_id.as_str(), message_id.as_str(), agent.id.as_str(), timestamp],
+                )
+                .expect("mailbox delivery should insert");
+        }
+
+        let config = dummy_bridge_config("unread-mail-pagination");
+        let page_one = invoke_bridge_command(
+            &config,
+            &connection,
+            "get_unread_mail",
+            Some(&AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: agent.id.clone(),
+            }),
+            Some("worker-session"),
+            json!({ "pageSize": 2 }),
+        )
+        .expect("unread mail should page through bridge");
+        assert_eq!(page_one.get("totalCount").and_then(Value::as_i64), Some(3));
+        assert_eq!(
+            page_one.get("returnedCount").and_then(Value::as_i64),
+            Some(2)
+        );
+        assert_eq!(
+            paged_items(&page_one)
+                .iter()
+                .filter_map(|entry| entry.get("body").and_then(Value::as_str))
+                .collect::<Vec<_>>(),
+            vec!["message 3", "message 2"]
+        );
+
+        let count_only = invoke_bridge_command(
+            &config,
+            &connection,
+            "get_unread_mail",
+            Some(&AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: agent.id.clone(),
+            }),
+            Some("worker-session"),
+            json!({ "countOnly": true }),
+        )
+        .expect("count-only unread mail should load");
+        assert_eq!(
+            count_only.get("totalCount").and_then(Value::as_i64),
+            Some(3)
+        );
+        assert!(paged_items(&count_only).is_empty());
     }
 
     #[test]
@@ -4494,7 +4939,7 @@ mod tests {
             json!({ "taskId": task.id, "laneId": "lane-plan" }),
         )
         .expect("unfinished task todos should list");
-        assert_eq!(unfinished.as_array().map(Vec::len), Some(1));
+        assert_eq!(paged_items(&unfinished).len(), 1);
     }
 
     #[test]
@@ -4661,9 +5106,7 @@ mod tests {
             json!({ "taskId": task.id }),
         )
         .expect("unread comments should load through bridge");
-        let unread_comments = unread
-            .as_array()
-            .expect("unread comments should be an array");
+        let unread_comments = paged_items(&unread);
         assert_eq!(unread_comments.len(), 1);
 
         let receipts = invoke_bridge_command(
@@ -4687,7 +5130,7 @@ mod tests {
             json!({ "taskId": task.id }),
         )
         .expect("unread comments should reload through bridge");
-        assert_eq!(unread_after.as_array().map(Vec::len), Some(0));
+        assert!(paged_items(&unread_after).is_empty());
     }
 
     #[test]
@@ -4746,12 +5189,10 @@ mod tests {
                 "list_sessions",
                 None,
                 Some("worker-session"),
-                json!({ "query": "Larry main", "limit": 5 }),
+                json!({ "query": "Larry main", "pageSize": 5 }),
             )
             .expect("sessions should list through bridge");
-            let listed_sessions = listed
-                .as_array()
-                .expect("listed sessions should be an array");
+            let listed_sessions = paged_items(&listed);
             assert_eq!(listed_sessions.len(), 1);
             assert_eq!(
                 listed_sessions[0].get("sessionId").and_then(Value::as_str),
