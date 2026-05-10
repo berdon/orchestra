@@ -1641,14 +1641,6 @@ export function TasksPage({
       return;
     }
     await runDetailAction("whip", async () => {
-      const activeSessionId = taskDetail?.activeLaneAssignment?.sessionId ?? null;
-      if (activeSessionId) {
-        await orchestraClient.sessions.sendMessage(
-          activeSessionId,
-          `Keep working until you are done - when you are done use tool \`complete_lane_as_success\` (with the task ID, required lane summary, and optional notes) unless you truly failed - then use tool \`complete_lane_as_failure\` (with task ID, required lane summary, required \`actuallyFailed\`, and optional notes). Pass \`actuallyFailed=false\` only when you finished this slice but are not actually failed and want Orchestra to guide the next slice. If you truly need the user - use tool \`request_user_intervention\` (with task ID, required lane summary, required \`actuallyBlocked\`, and optional notes). Pass \`actuallyBlocked=false\` only when you finished this slice but are not actually blocked and want Orchestra to guide the next slice.\n\nCanonical task ID: ${route.taskId}`,
-          `manual-whip-${Date.now()}`,
-        );
-      }
       const updatedTask = await orchestraClient.tasks.manualWhip(route.taskId);
       setTaskDetail((current) => (sameData(current, updatedTask) ? current : updatedTask));
       await loadTasksData();

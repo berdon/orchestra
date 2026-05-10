@@ -191,6 +191,13 @@ run_inner() {
     rm -f "${ORCHESTRA_FAKE_PI_MODEL_AUTH_LOG_PATH}"
     echo "[desktop-e2e-runner] using fake Pi model-auth fixture ${ORCHESTRA_PI_EXECUTABLE}"
   fi
+  if [[ "${TEST_FILE}" == "tests/desktop-e2e/task-resume-continuation.test.ts" ]]; then
+    export ORCHESTRA_PI_EXECUTABLE="${ROOT_DIR}/tests/desktop-e2e/fixtures/fake-pi-resume-continuation-fixture.mjs"
+    export ORCHESTRA_FAKE_PI_RESUME_CONTINUATION_LOG_PATH="${RUN_DIR}/resume-continuation-fixture.log"
+    export ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_SETTINGS=0
+    rm -f "${ORCHESTRA_FAKE_PI_RESUME_CONTINUATION_LOG_PATH}"
+    echo "[desktop-e2e-runner] using fake Pi resume-continuation fixture ${ORCHESTRA_PI_EXECUTABLE}"
+  fi
   local import_legacy_auth="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_AUTH:-1}"
   local import_legacy_models="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS:-1}"
   local import_legacy_settings="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_SETTINGS:-0}"

@@ -128,7 +128,7 @@ describe("desktop task whip configuration", () => {
     }
   }, 180_000);
 
-  it.skipIf(!isDesktopE2E)("suppresses rapid automatic re-whips, resets after repeated unanswered whips, and records whip activity outside task comments", async () => {
+  it.skipIf(!isDesktopE2E)("suppresses rapid automatic re-whips, delivers backend-owned manual whips, and records whip activity outside task comments", async () => {
     const sessionId = await createReadyWebdriverSession();
     try {
       await ensureReactReady(sessionId);
@@ -169,25 +169,17 @@ describe("desktop task whip configuration", () => {
       for (let index = 0; index < 3; index += 1) {
         await invokeCommand(sessionId, "manual_task_whip", { taskId: scenario.taskId });
       }
-      const unansweredTask = await invokeCommand<any>(sessionId, "get_task", { taskId: scenario.taskId });
-      expect(unansweredTask.activeLaneAssignment?.unansweredWhipCount ?? 0).toBeGreaterThanOrEqual(3);
-
-      await invokeCommand(sessionId, "debug_expire_task_whip_cooldown", { taskId: scenario.taskId });
-      await invokeCommand(sessionId, "run_dispatcher_tick");
-
-      const resetTask = await waitForCondition(
+      const deliveredTask = await waitForCondition(
         () => invokeCommand<any>(sessionId, "get_task", { taskId: scenario.taskId }),
-        (task) => Boolean(task.activeLaneAssignment?.sessionId && task.activeLaneAssignment.sessionId !== originalSessionId),
+        (task) => (task.activeLaneAssignment?.whipCount ?? 0) >= 4,
       );
-      expect(resetTask.activeLaneAssignment?.id).not.toBe(originalAssignmentId);
-      expect(resetTask.activeLaneAssignment?.sessionId).not.toBe(originalSessionId);
-      expect(resetTask.activeLaneAssignment?.unansweredWhipCount ?? 0).toBe(0);
-      expect(resetTask.comments.length).toBe(baselineCommentCount);
+      expect(deliveredTask.activeLaneAssignment?.id).toBe(originalAssignmentId);
+      expect(deliveredTask.activeLaneAssignment?.sessionId).toBe(originalSessionId);
+      expect(deliveredTask.comments.length).toBe(baselineCommentCount);
 
-      const eventTopics = (resetTask.domainEvents ?? []).map((event: { topic: string }) => event.topic);
+      const eventTopics = (deliveredTask.domainEvents ?? []).map((event: { topic: string }) => event.topic);
       expect(eventTopics).toContain("task.whip.sent");
-      expect(eventTopics).toContain("task.whip.reset");
-      expect(resetTask.comments.some((comment: { author?: string; message?: string }) =>
+      expect(deliveredTask.comments.some((comment: { author?: string; message?: string }) =>
         comment.author === "Orchestra" && (comment.message ?? "").toLowerCase().includes("whip"),
       )).toBe(false);
     } finally {

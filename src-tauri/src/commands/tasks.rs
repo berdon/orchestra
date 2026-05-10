@@ -1914,6 +1914,13 @@ pub async fn manual_task_whip(
     state: State<'_, AppState>,
     task_id: String,
 ) -> Result<TaskDetail, String> {
+    let task_id_for_context = task_id.clone();
+    let context = tauri::async_runtime::spawn_blocking(move || {
+        session_context_for_task_id(&task_id_for_context)
+    })
+    .await
+    .map_err(|error| format!("Unable to join manual task whip context task: {error}"))??;
+
     let connection = database::open_connection()?;
     let task = tasks::get_task_context(&connection, &task_id)?;
     let assignment = task.active_lane_assignment.clone().ok_or_else(|| {
@@ -1929,6 +1936,15 @@ pub async fn manual_task_whip(
             task_id
         ));
     }
+
+    let whip_message = task_runtime::build_task_whip_message(&task_id);
+    task_runtime::continue_assignment_message(
+        app.clone(),
+        &state,
+        context.session_dir.clone(),
+        &assignment,
+        &whip_message,
+    )?;
 
     let (next_whip_count, next_unanswered_whip_count) = task_runtime::record_task_whip_sent(
         &connection,

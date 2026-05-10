@@ -2789,6 +2789,44 @@ pub fn requeue_busy_agent_assignment(
     Ok(true)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AssignmentContinuationMode {
+    Default,
+    Interrupt,
+}
+
+fn resolve_assignment_continuation_delivery_mode(
+    mode: AssignmentContinuationMode,
+    session_busy: bool,
+) -> &'static str {
+    if !session_busy {
+        return "prompt";
+    }
+
+    match mode {
+        AssignmentContinuationMode::Default => "follow_up",
+        AssignmentContinuationMode::Interrupt => "steer",
+    }
+}
+
+pub fn continue_assignment_message(
+    app: AppHandle,
+    state: &AppState,
+    session_dir: PathBuf,
+    assignment: &TaskLaneAssignment,
+    message: &str,
+) -> Result<(), String> {
+    start_assignment_continuation(
+        app,
+        state,
+        session_dir,
+        assignment,
+        AssignmentContinuationMode::Default,
+        message,
+    )
+}
+
 pub fn start_assignment_follow_up(
     app: AppHandle,
     state: &AppState,
@@ -2796,14 +2834,7 @@ pub fn start_assignment_follow_up(
     assignment: &TaskLaneAssignment,
     prompt: &str,
 ) -> Result<(), String> {
-    if assignment.status != ASSIGNMENT_STATUS_ACTIVE {
-        return Err(format!(
-            "Task lane assignment {} is not active and cannot accept follow-up work",
-            assignment.id
-        ));
-    }
-
-    start_assignment_delivery(app, state, session_dir, assignment, "follow_up", prompt)
+    continue_assignment_message(app, state, session_dir, assignment, prompt)
 }
 
 pub fn start_assignment_prompt_message(
@@ -3061,22 +3092,67 @@ fn start_assignment_prompt(
     }
 }
 
-fn start_assignment_delivery(
+fn start_assignment_continuation(
     app: AppHandle,
     state: &AppState,
     session_dir: PathBuf,
     assignment: &TaskLaneAssignment,
-    delivery_type: &str,
+    mode: AssignmentContinuationMode,
     message: &str,
 ) -> Result<(), String> {
-    let Some((_session_id, runtime)) =
+    if assignment.status != ASSIGNMENT_STATUS_ACTIVE {
+        return Err(format!(
+            "Task lane assignment {} is not active and cannot accept continued work",
+            assignment.id
+        ));
+    }
+
+    let Some((session_id, runtime)) =
         ensure_assignment_runtime(app, state, session_dir, assignment)?
     else {
         return Ok(());
     };
 
     let run_id = generate_id("task-delivery");
-    runtime.start_delivery(&run_id, delivery_type, message)
+    let mut session_busy = false;
+    let mut owns_prompt_run = false;
+
+    match state.begin_session_run(&session_id, &run_id) {
+        Ok(()) => {
+            if runtime.has_active_prompt() {
+                let _ = state.end_session_run(&session_id, &run_id);
+                session_busy = true;
+            } else {
+                owns_prompt_run = true;
+            }
+        }
+        Err(error) if error == "This session is already processing a message" => {
+            if runtime.has_active_prompt() {
+                session_busy = true;
+            } else {
+                state.clear_active_session_run(&session_id)?;
+                state.begin_session_run(&session_id, &run_id)?;
+                owns_prompt_run = true;
+            }
+        }
+        Err(error) => return Err(error),
+    }
+
+    let delivery_mode = resolve_assignment_continuation_delivery_mode(mode, session_busy);
+    let result = match delivery_mode {
+        "prompt" => runtime.start_run(&run_id, message),
+        other => runtime.start_delivery(&run_id, other, message),
+    };
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if owns_prompt_run {
+                let _ = state.end_session_run(&session_id, &run_id);
+            }
+            Err(error)
+        }
+    }
 }
 
 fn build_unread_comment_delivery_message(task_id: &str, comment: &TaskComment) -> String {
@@ -13868,5 +13944,37 @@ mod tests {
             .expect("session should resolve an active assignment");
         assert_eq!(assignment.id, "assignment-session-current");
         assert_eq!(assignment.lane_id, "lane-review");
+    }
+
+    #[test]
+    fn resolves_assignment_continuation_delivery_mode_from_runtime_busy_state() {
+        assert_eq!(
+            resolve_assignment_continuation_delivery_mode(
+                AssignmentContinuationMode::Default,
+                false,
+            ),
+            "prompt"
+        );
+        assert_eq!(
+            resolve_assignment_continuation_delivery_mode(
+                AssignmentContinuationMode::Default,
+                true,
+            ),
+            "follow_up"
+        );
+        assert_eq!(
+            resolve_assignment_continuation_delivery_mode(
+                AssignmentContinuationMode::Interrupt,
+                false,
+            ),
+            "prompt"
+        );
+        assert_eq!(
+            resolve_assignment_continuation_delivery_mode(
+                AssignmentContinuationMode::Interrupt,
+                true,
+            ),
+            "steer"
+        );
     }
 }

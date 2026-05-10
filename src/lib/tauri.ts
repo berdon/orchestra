@@ -6340,6 +6340,11 @@ async function completeMockTaskLane(
     task.activeLaneAssignment &&
     ["agent", "role"].includes(task.activeLaneAssignment.workerType)
   ) {
+    const activeLaneAssignment = task.activeLaneAssignment;
+    if (!activeLaneAssignment.sessionId) {
+      throw new Error(`Task ${taskId} is missing an active session for continued work.`);
+    }
+    const activeSessionId = activeLaneAssignment.sessionId;
     const unfinishedTaskTodos = listMockTaskTodos(taskId, undefined, false);
     const followUpPrompt =
       unfinishedTaskTodos.length > 0
@@ -6360,14 +6365,14 @@ async function completeMockTaskLane(
       ),
     );
 
-    updateMockSession(task.activeLaneAssignment.sessionId, (current) => ({
+    updateMockSession(activeSessionId, (current) => ({
       ...current,
       status: "active",
       updatedAt,
       events: [...current.events, createEvent("system", followUpPrompt)],
     }));
     emitMockSessionChange({
-      sessionIds: [task.activeLaneAssignment.sessionId],
+      sessionIds: [activeSessionId],
       reason: "task.transition.continue_working",
     });
     emitMockTaskChange({
