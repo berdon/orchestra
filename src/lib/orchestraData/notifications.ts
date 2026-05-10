@@ -11,9 +11,43 @@ interface UseNotificationControllerOptions {
   disabled?: boolean;
   enabled: boolean;
   notifications?: OrchestraLocalNotificationsExtension;
+  bootstrap: OrchestraClientBootstrap;
+  remoteWebPushState: RemoteWebPushState;
 }
 
-export function useNotificationController({ disabled, enabled, notifications }: UseNotificationControllerOptions) {
+export function hostedWebClientShouldDeliverLiveNotification({
+  bootstrap,
+  remoteWebPushState,
+  visibilityState,
+  hasFocus,
+}: {
+  bootstrap: OrchestraClientBootstrap;
+  remoteWebPushState: RemoteWebPushState;
+  visibilityState?: DocumentVisibilityState;
+  hasFocus?: boolean;
+}) {
+  if (bootstrap.hostKind !== "remote_api" || bootstrap.authMode !== "same_origin_cookie") {
+    return true;
+  }
+
+  if (remoteWebPushState.status !== "subscribed") {
+    return true;
+  }
+
+  if (typeof visibilityState === "undefined") {
+    return true;
+  }
+
+  return visibilityState === "visible" && hasFocus !== false;
+}
+
+export function useNotificationController({
+  disabled,
+  enabled,
+  notifications,
+  bootstrap,
+  remoteWebPushState,
+}: UseNotificationControllerOptions) {
   const deliveredIntentIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
@@ -24,6 +58,17 @@ export function useNotificationController({ disabled, enabled, notifications }: 
 
   useOrchestraEventSubscription((event) => {
     if (disabled || !enabled || !notifications || event.kind !== "notification.intent") {
+      return;
+    }
+
+    if (!hostedWebClientShouldDeliverLiveNotification({
+      bootstrap,
+      remoteWebPushState,
+      visibilityState: typeof document !== "undefined" ? document.visibilityState : undefined,
+      hasFocus: typeof document !== "undefined" && typeof document.hasFocus === "function"
+        ? document.hasFocus()
+        : undefined,
+    })) {
       return;
     }
 

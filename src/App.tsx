@@ -3775,16 +3775,18 @@ export function App() {
     replaceSessions,
   ]);
 
-  useNotificationController({
-    disabled: isDetachedWindow || isLogsWindow || isAgentTerminalWindow,
-    enabled: localNotificationsEnabled,
-    notifications: notificationsExtension,
-  });
   const remoteWebPushState = useRemoteWebPushController({
     bootstrap: orchestraBootstrap,
     enabled: localNotificationsEnabled,
     notifications: notificationsExtension,
     permissionState: systemNotificationPermission,
+  });
+  useNotificationController({
+    disabled: isDetachedWindow || isLogsWindow || isAgentTerminalWindow,
+    enabled: localNotificationsEnabled,
+    notifications: notificationsExtension,
+    bootstrap: orchestraBootstrap,
+    remoteWebPushState,
   });
 
   useEffect(() => {
