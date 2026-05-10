@@ -1973,6 +1973,7 @@ pub async fn manual_task_whip(
         whip_count: assignment.whip_count,
         unanswered_whip_count: assignment.unanswered_whip_count,
         last_whip_at: assignment.last_whip_at.clone(),
+        started_at: assignment.started_at.clone(),
         whip_max_attempts: task.whip_max_attempts,
     };
     task_runtime::record_task_whip_domain_event(

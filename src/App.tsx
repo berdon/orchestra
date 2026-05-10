@@ -2373,6 +2373,49 @@ export function App() {
     [mergeSessionRecord],
   );
 
+  const retireLocalReplacedTaskSession = useCallback(
+    (replacedSessionId: string, successorSessionId: string) => {
+      if (selectedSessionIdRef.current === replacedSessionId) {
+        selectedSessionIdRef.current = successorSessionId;
+      }
+      if (viewedSessionIdRef.current === replacedSessionId) {
+        viewedSessionIdRef.current = successorSessionId;
+      }
+      liveSurfaceSubscribedSessionIdsRef.current.delete(replacedSessionId);
+      replaceSessions((current) =>
+        current.filter((session) => session.id !== replacedSessionId),
+      );
+      replacePendingRuns((current) => {
+        if (!(replacedSessionId in current)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[replacedSessionId];
+        return next;
+      });
+      setModelStates((current) => {
+        if (!(replacedSessionId in current)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[replacedSessionId];
+        return next;
+      });
+      setSessionStats((current) => {
+        if (!(replacedSessionId in current)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[replacedSessionId];
+        return next;
+      });
+      setSelectedSessionId((current) =>
+        current === replacedSessionId ? successorSessionId : current,
+      );
+    },
+    [replacePendingRuns, replaceSessions],
+  );
+
   const openTaskSession = useCallback(
     async (sessionId: string, projectId?: string | null) => {
       setSessionActionError(null);
@@ -5469,14 +5512,23 @@ export function App() {
     setIsSubmitting(true);
     setSessionActionError(null);
 
-    const effectiveChatAgentId =
-      options?.chatAgentId ??
-      selectedChatAgent?.id ??
-      selectedChatAgentSnapshot?.agent.id ??
-      selectedChatAgentId ??
-      chatSessionAgentIdRef.current ??
-      lastKnownChatSessionAgentIdRef.current ??
-      null;
+    const sourceSessionSnapshot = sessionId
+      ? (sessionsRef.current.find((session) => session.id === sessionId) ?? null)
+      : null;
+    const sourceSessionIsTaskAssociated = Boolean(
+      sourceSessionSnapshot?.activeTaskId || sourceSessionSnapshot?.taskId,
+    );
+    const effectiveChatAgentId = sourceSessionIsTaskAssociated
+      ? (options?.chatAgentId ?? null)
+      : (
+          options?.chatAgentId ??
+          selectedChatAgent?.id ??
+          selectedChatAgentSnapshot?.agent.id ??
+          selectedChatAgentId ??
+          chatSessionAgentIdRef.current ??
+          lastKnownChatSessionAgentIdRef.current ??
+          null
+        );
 
     console.info("[orchestra][session-create:start]", {
       sourceSessionId: sessionId ?? null,
@@ -5486,6 +5538,7 @@ export function App() {
       activeProjectSlug: activeProject?.slug ?? null,
       selectedChatAgentId,
       currentChatSessionId: chatSessionId,
+      sourceSessionIsTaskAssociated,
     });
 
     try {
@@ -5523,6 +5576,14 @@ export function App() {
         activeProjectSlug: activeProject?.slug ?? null,
       });
       mergeSessionRecord(nextSession, { select: false });
+      if (
+        sessionId &&
+        nextSession.id !== sessionId &&
+        sourceSessionSnapshot &&
+        (sourceSessionSnapshot.activeTaskId || sourceSessionSnapshot.taskId)
+      ) {
+        retireLocalReplacedTaskSession(sessionId, nextSession.id);
+      }
       if (effectiveChatAgentId) {
         setPendingSessionOpenRequest(null);
       } else {

@@ -17,6 +17,8 @@ use crate::{
 const DISPATCHER_MIN_INTERVAL: Duration = Duration::from_secs(5);
 const DISPATCHER_MAX_INTERVAL: Duration = Duration::from_secs(60);
 const STALE_ASSIGNMENT_GRACE_PERIOD_SECS: i64 = 30;
+const TASK_WHIP_STARTUP_GRACE_PERIOD_SECS: i64 = 15;
+const TASK_WHIP_RETRY_INTERVAL_SECS: i64 = 30;
 
 pub fn start_dispatcher_loop(app: AppHandle) {
     thread::spawn(move || {
@@ -221,14 +223,30 @@ fn next_dispatcher_interval(current: Duration, actions: usize) -> Duration {
     ))
 }
 
-fn stale_assignment_is_past_grace_window(updated_at: &str) -> bool {
-    DateTime::parse_from_rfc3339(updated_at)
-        .map(|timestamp| {
+fn timestamp_is_past_grace_window(timestamp: &str, grace_period_secs: i64) -> bool {
+    DateTime::parse_from_rfc3339(timestamp)
+        .map(|parsed| {
             Utc::now()
-                .signed_duration_since(timestamp.with_timezone(&Utc))
+                .signed_duration_since(parsed.with_timezone(&Utc))
                 .num_seconds()
-                >= STALE_ASSIGNMENT_GRACE_PERIOD_SECS
+                >= grace_period_secs
         })
+        .unwrap_or(true)
+}
+
+fn stale_assignment_is_past_grace_window(updated_at: &str) -> bool {
+    timestamp_is_past_grace_window(updated_at, STALE_ASSIGNMENT_GRACE_PERIOD_SECS)
+}
+
+fn task_whip_is_past_startup_grace(candidate: &task_runtime::TaskWhipCandidate) -> bool {
+    timestamp_is_past_grace_window(&candidate.started_at, TASK_WHIP_STARTUP_GRACE_PERIOD_SECS)
+}
+
+fn task_whip_is_past_retry_interval(candidate: &task_runtime::TaskWhipCandidate) -> bool {
+    candidate
+        .last_whip_at
+        .as_deref()
+        .map(|timestamp| timestamp_is_past_grace_window(timestamp, TASK_WHIP_RETRY_INTERVAL_SECS))
         .unwrap_or(true)
 }
 
@@ -248,9 +266,6 @@ fn recover_stale_task_assignments(app: AppHandle, state: &AppState) -> Result<us
         if current_assignment.status != "active" && current_assignment.status != "queued" {
             continue;
         }
-        if !stale_assignment_is_past_grace_window(&current_assignment.updated_at) {
-            continue;
-        }
 
         let Some(current_candidate) =
             task_runtime::find_stale_task_assignment_candidates(&connection)?
@@ -259,6 +274,51 @@ fn recover_stale_task_assignments(app: AppHandle, state: &AppState) -> Result<us
         else {
             continue;
         };
+
+        if let Some(pruned) = task_runtime::prune_stale_duplicate_open_assignments(
+            &mut connection,
+            &current_assignment.task_id,
+            &current_assignment.lane_id,
+            Some(current_candidate.project_id.as_str()),
+            &current_candidate.reason,
+        )? {
+            state.log(
+                "warn",
+                "task.runtime.stale_assignment_pruned",
+                &format!(
+                    "Pruned stale duplicate assignment(s) {:?} while keeping {} for task {} lane {}: {}",
+                    pruned.canceled_assignment_ids,
+                    pruned.kept_assignment_id,
+                    current_assignment.task_id,
+                    current_assignment.lane_id,
+                    current_candidate.reason
+                ),
+            );
+            let _ = app_events::emit_task_change(
+                &app,
+                "task.runtime.stale_assignment_pruned",
+                [current_assignment.task_id.clone()],
+            );
+            for session_id in pruned.canceled_session_ids {
+                let _ = app_events::emit_session_change(
+                    &app,
+                    "task.runtime.stale_assignment_pruned",
+                    [session_id.clone()],
+                );
+                crate::services::live_sessions::schedule_session_retirement(
+                    app.clone(),
+                    session_id,
+                    Duration::ZERO,
+                    "task.runtime.stale_assignment_pruned",
+                );
+            }
+            recovered += 1;
+            continue;
+        }
+
+        if !stale_assignment_is_past_grace_window(&current_assignment.updated_at) {
+            continue;
+        }
 
         let _cleanup = task_runtime::clear_task_runtime_claims_preserving_status(
             &mut connection,
@@ -512,6 +572,30 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
             );
             continue;
         };
+
+        if !task_whip_is_past_startup_grace(&candidate) {
+            state.log(
+                "info",
+                "task.whip.skipped",
+                &format!(
+                    "Skipped whip for task {} because assignment {} is still within the startup grace window",
+                    candidate.task_id, candidate.assignment_id
+                ),
+            );
+            continue;
+        }
+
+        if !task_whip_is_past_retry_interval(&candidate) {
+            state.log(
+                "info",
+                "task.whip.skipped",
+                &format!(
+                    "Skipped whip for task {} because assignment {} was whipped too recently",
+                    candidate.task_id, candidate.assignment_id
+                ),
+            );
+            continue;
+        }
 
         if unanswered_whips_require_reset(candidate.unanswered_whip_count) {
             let replacement_session_id = reset_task_after_unanswered_whips(

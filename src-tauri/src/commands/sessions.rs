@@ -1459,9 +1459,10 @@ pub async fn create_contextual_session(
         let old_row = session_records::load_session_row(&connection, &session_id_for_task)?;
         let now = crate::state::now_iso();
 
-        if let Some(assignment) =
-            task_runtime::get_active_assignment_for_session(&connection, &session_id_for_task)?
-        {
+        if let Some(assignment) = crate::services::session_ownership::load_session_open_assignment(
+            &connection,
+            &session_id_for_task,
+        )? {
             let runtime_root = assignment
                 .runtime_cwd
                 .clone()
@@ -2170,6 +2171,122 @@ pub async fn create_contextual_session(
                 .map(PathBuf::from)
                 .unwrap_or_else(|| old_context.project_root.clone());
             ensure_session_runtime_root(&runtime_root)?;
+
+            let fallback_task_assignment = old_row
+                .as_ref()
+                .and_then(|row| row.effective_assignment_id())
+                .and_then(|assignment_id| {
+                    task_runtime::get_assignment_by_id(&connection, assignment_id)
+                        .ok()
+                        .flatten()
+                })
+                .filter(|assignment| {
+                    assignment.worker_type == "role"
+                        && assignment.session_id.as_deref()
+                            == Some(session_id_for_task.as_str())
+                        && matches!(
+                            assignment.status.as_str(),
+                            "queued" | "active" | "awaiting_user_approval"
+                        )
+                })
+                .or_else(|| {
+                    old_row
+                        .as_ref()
+                        .and_then(|row| row.effective_task_id())
+                        .and_then(|task_id| {
+                            task_runtime::get_current_lane_assignment(&connection, task_id)
+                                .ok()
+                                .flatten()
+                        })
+                        .filter(|assignment| {
+                            assignment.worker_type == "role"
+                                && assignment.session_id.as_deref()
+                                    == Some(session_id_for_task.as_str())
+                                && matches!(
+                                    assignment.status.as_str(),
+                                    "queued" | "active" | "awaiting_user_approval"
+                                )
+                        })
+                });
+
+            if let Some(assignment) = fallback_task_assignment {
+                let task = crate::services::tasks::get_task_context(
+                    &connection,
+                    &assignment.task_id,
+                )?;
+                let tx = connection.transaction().map_err(|error| {
+                    format!(
+                        "Unable to start fallback contextual role task-session rotation transaction: {error}"
+                    )
+                })?;
+                let runtime_cwd = assignment
+                    .runtime_cwd
+                    .clone()
+                    .unwrap_or_else(|| runtime_root.display().to_string());
+                let replacement_assignment_id = generate_id("assignment");
+                let created = session_records::rotate_session_record(
+                    &tx,
+                    &runtime_root,
+                    &old_context.session_dir,
+                    &session_id_for_task,
+                    session_records::RotateSessionRecordInput {
+                        project_id: Some(task.project_id.as_str()),
+                        title: Some(old_record.title.as_str()),
+                        session_kind: session_records::SESSION_KIND_ROLE_INSTANCE,
+                        agent_id: None,
+                        role_instance_id: Some(role_instance_id.as_str()),
+                        task_id: Some(task.id.as_str()),
+                        workflow_id: task.workflow_id.as_deref(),
+                        lane_id: Some(assignment.lane_id.as_str()),
+                        assignment: Some(session_records::AssignmentBinding {
+                            assignment_id: replacement_assignment_id.as_str(),
+                            runtime_cwd: Some(runtime_cwd.as_str()),
+                        }),
+                        worker_type: Some("role"),
+                        worker_id: assignment.worker_id.as_deref(),
+                        runtime_cwd: Some(runtime_cwd.as_str()),
+                        subscribed: false,
+                        agent_runtime: None,
+                        update_role_instance_session: true,
+                    },
+                )?;
+                role_dispatch::apply_role_session_defaults(
+                    &runtime_root,
+                    &old_context.session_dir,
+                    &created.record.id,
+                    &role,
+                )?;
+                let replacement = task_runtime::rotate_open_assignment_session(
+                    &tx,
+                    &assignment,
+                    &created.record.id,
+                    Some(replacement_assignment_id.as_str()),
+                    &now,
+                )?;
+                bind_rotated_assignment_session_context(
+                    &tx,
+                    task.project_id.as_str(),
+                    session_records::SESSION_KIND_ROLE_INSTANCE,
+                    &replacement,
+                )?;
+                tx.commit().map_err(|error| {
+                    format!(
+                        "Unable to commit fallback contextual role task-session rotation for task {}: {error}",
+                        assignment.task_id
+                    )
+                })?;
+
+                return Ok(ContextualSessionCreation {
+                    project_root: runtime_root,
+                    session_dir: old_context.session_dir,
+                    new_session_id: created.record.id,
+                    rotated_from_session_id: Some(session_id_for_task.clone()),
+                    affected_task_id: Some(assignment.task_id),
+                    project_id: Some(task.project_id),
+                    direct_agent_context_seed: None,
+                });
+            }
+
             let role_project_id = session_project_id(&connection, &session_id_for_task);
             let runtime_cwd = runtime_root.display().to_string();
             let tx = connection.transaction().map_err(|error| {
@@ -2387,6 +2504,32 @@ pub async fn create_contextual_session(
             seed.active_project_id.as_deref(),
         )?;
     }
+    if affected_task_id.is_some() {
+        let connection = database::open_connection()?;
+        if let Some(replacement_assignment) =
+            task_runtime::get_active_assignment_for_session(&connection, &prepared.new_session_id)?
+        {
+            if let Err(error) = task_runtime::start_assignment_run(
+                app.clone(),
+                &state,
+                fallback_session_dir.clone(),
+                &replacement_assignment,
+            ) {
+                if !error.contains("already processing a message") {
+                    return Err(error);
+                }
+                state.log(
+                    "info",
+                    "sessions.create_contextual.already_running",
+                    &format!(
+                        "Replacement task session {} was already processing assignment {} immediately after rotation; treating contextual session creation as successful.",
+                        prepared.new_session_id, replacement_assignment.id,
+                    ),
+                );
+            }
+        }
+    }
+
     let terminal_attached_session_ids = state.terminal_attached_session_ids()?;
     let new_session_id_for_task = prepared.new_session_id.clone();
     let decorated_record = spawn_blocking(move || {

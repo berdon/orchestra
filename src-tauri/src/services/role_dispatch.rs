@@ -133,6 +133,9 @@ fn complete_role_run_with_connection(
     }
 
     let instance = role_runtime::get_role_instance(connection, &instance_id)?;
+    if instance.session_id.as_deref() != Some(session_id) {
+        return Ok(());
+    }
     let now = crate::state::now_iso();
     let tx = connection
         .transaction()
@@ -178,6 +181,9 @@ fn fail_role_run_with_connection(
     }
 
     let instance = role_runtime::get_role_instance(connection, &instance_id)?;
+    if instance.session_id.as_deref() != Some(session_id) {
+        return Ok(());
+    }
     let now = crate::state::now_iso();
     let tx = connection
         .transaction()
@@ -1394,6 +1400,312 @@ mod tests {
             .instances
             .iter()
             .any(|instance| instance.session_id.as_deref() == Some(session_id.as_str())));
+    }
+
+    #[test]
+    fn rotated_predecessor_completion_does_not_clear_successor_role_instance_state() {
+        let mut connection = open_test_connection("role-dispatch-rotated-predecessor-complete");
+        let role = create_role(&mut connection, "Stable", 1);
+        let project_root = init_test_repo("role-dispatch-rotated-predecessor-complete-project");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Rotated Completion Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-rotated-complete".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the task".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let now = crate::state::now_iso();
+        connection.execute(
+            "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+            params![now.as_str()],
+        ).expect("project should insert");
+        connection.execute(
+            "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-rotated-complete', 'orchestra', 'role-rotated-complete', 'Role Rotated Complete Repo', ?1, NULL, 'main', ?2, ?2)",
+            params![project_root.display().to_string(), now.as_str()],
+        ).expect("repository should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Rotated completion assignment".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-rotated-complete".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-rotated-complete".into()),
+                repository_ids: vec!["repo-rotated-complete".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = task_runtime::dispatch_task_lane(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+        )
+        .expect("task should dispatch");
+        let original_session_id = assignment.session_id.clone().expect("session should exist");
+        let role_instance_id = assignment
+            .role_instance_id
+            .clone()
+            .expect("role instance should exist");
+        let replacement_assignment_id = "assignment-rotated-complete";
+        let rotated = session_records::rotate_session_record(
+            &connection,
+            &project_root,
+            &session_dir,
+            &original_session_id,
+            session_records::RotateSessionRecordInput {
+                project_id: Some("orchestra"),
+                title: Some("Rotated completion assignment"),
+                session_kind: session_records::SESSION_KIND_ROLE_INSTANCE,
+                agent_id: None,
+                role_instance_id: Some(role_instance_id.as_str()),
+                task_id: Some(task.id.as_str()),
+                workflow_id: Some(workflow.id.as_str()),
+                lane_id: Some("lane-rotated-complete"),
+                assignment: Some(session_records::AssignmentBinding {
+                    assignment_id: replacement_assignment_id,
+                    runtime_cwd: assignment.runtime_cwd.as_deref(),
+                }),
+                worker_type: Some("role"),
+                worker_id: Some(role.id.as_str()),
+                runtime_cwd: assignment.runtime_cwd.as_deref(),
+                subscribed: false,
+                agent_runtime: None,
+                update_role_instance_session: true,
+            },
+        )
+        .expect("rotation should create successor session");
+        let replacement = task_runtime::rotate_open_assignment_session(
+            &connection,
+            &assignment,
+            &rotated.record.id,
+            Some(replacement_assignment_id),
+            crate::state::now_iso().as_str(),
+        )
+        .expect("assignment rotation should succeed");
+        session_records::bind_session_context(
+            &connection,
+            &rotated.record.id,
+            session_records::SessionContextBinding {
+                project_id: Some("orchestra"),
+                session_kind: Some(session_records::SESSION_KIND_ROLE_INSTANCE),
+                worker_type: Some("role"),
+                worker_id: Some(role.id.as_str()),
+                agent_id: None,
+                role_instance_id: Some(role_instance_id.as_str()),
+                task_id: Some(task.id.as_str()),
+                workflow_id: Some(workflow.id.as_str()),
+                lane_id: Some("lane-rotated-complete"),
+                assignment_id: Some(replacement.id.as_str()),
+                runtime_cwd: replacement.runtime_cwd.as_deref().map(std::path::Path::new),
+            },
+        )
+        .expect("successor session should be rebound");
+
+        complete_role_run_with_connection(&mut connection, &original_session_id)
+            .expect("stale predecessor completion should no-op");
+
+        let detail_after = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role ops should load after predecessor completion");
+        assert_eq!(detail_after.active_instance_count, 1);
+        assert_eq!(detail_after.assigned_count, 1);
+        assert!(detail_after.instances.iter().any(|instance| {
+            instance.id == role_instance_id
+                && instance.status == "running"
+                && instance.session_id.as_deref() == Some(rotated.record.id.as_str())
+        }));
+        assert!(
+            task_runtime::get_active_assignment_for_session(&connection, &rotated.record.id)
+                .expect("successor assignment lookup should succeed")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn rotated_predecessor_failure_does_not_fail_successor_role_instance_state() {
+        let mut connection = open_test_connection("role-dispatch-rotated-predecessor-fail");
+        let role = create_role(&mut connection, "Stable", 1);
+        let project_root = init_test_repo("role-dispatch-rotated-predecessor-fail-project");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+        let workflow = workflows::create_workflow(
+            &mut connection,
+            WorkflowUpsertInput {
+                name: "Rotated Failure Flow".into(),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some("lane-rotated-fail".into()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "role".into(),
+                    assigned_entity_id: Some(role.slug.clone()),
+                    entry_prompt_template: Some("Implement the task".into()),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success: false,
+                    needs_work_target_lane_id: None,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+        let now = crate::state::now_iso();
+        connection.execute(
+            "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+            params![now.as_str()],
+        ).expect("project should insert");
+        connection.execute(
+            "INSERT INTO repositories (id, project_id, slug, name, local_path, remote_url, default_branch, created_at, updated_at) VALUES ('repo-rotated-fail', 'orchestra', 'role-rotated-fail', 'Role Rotated Fail Repo', ?1, NULL, 'main', ?2, ?2)",
+            params![project_root.display().to_string(), now.as_str()],
+        ).expect("repository should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Rotated failure assignment".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-rotated-fail".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-rotated-fail".into()),
+                repository_ids: vec!["repo-rotated-fail".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = task_runtime::dispatch_task_lane(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+        )
+        .expect("task should dispatch");
+        let original_session_id = assignment.session_id.clone().expect("session should exist");
+        let role_instance_id = assignment
+            .role_instance_id
+            .clone()
+            .expect("role instance should exist");
+        let replacement_assignment_id = "assignment-rotated-fail";
+        let rotated = session_records::rotate_session_record(
+            &connection,
+            &project_root,
+            &session_dir,
+            &original_session_id,
+            session_records::RotateSessionRecordInput {
+                project_id: Some("orchestra"),
+                title: Some("Rotated failure assignment"),
+                session_kind: session_records::SESSION_KIND_ROLE_INSTANCE,
+                agent_id: None,
+                role_instance_id: Some(role_instance_id.as_str()),
+                task_id: Some(task.id.as_str()),
+                workflow_id: Some(workflow.id.as_str()),
+                lane_id: Some("lane-rotated-fail"),
+                assignment: Some(session_records::AssignmentBinding {
+                    assignment_id: replacement_assignment_id,
+                    runtime_cwd: assignment.runtime_cwd.as_deref(),
+                }),
+                worker_type: Some("role"),
+                worker_id: Some(role.id.as_str()),
+                runtime_cwd: assignment.runtime_cwd.as_deref(),
+                subscribed: false,
+                agent_runtime: None,
+                update_role_instance_session: true,
+            },
+        )
+        .expect("rotation should create successor session");
+        let replacement = task_runtime::rotate_open_assignment_session(
+            &connection,
+            &assignment,
+            &rotated.record.id,
+            Some(replacement_assignment_id),
+            crate::state::now_iso().as_str(),
+        )
+        .expect("assignment rotation should succeed");
+        session_records::bind_session_context(
+            &connection,
+            &rotated.record.id,
+            session_records::SessionContextBinding {
+                project_id: Some("orchestra"),
+                session_kind: Some(session_records::SESSION_KIND_ROLE_INSTANCE),
+                worker_type: Some("role"),
+                worker_id: Some(role.id.as_str()),
+                agent_id: None,
+                role_instance_id: Some(role_instance_id.as_str()),
+                task_id: Some(task.id.as_str()),
+                workflow_id: Some(workflow.id.as_str()),
+                lane_id: Some("lane-rotated-fail"),
+                assignment_id: Some(replacement.id.as_str()),
+                runtime_cwd: replacement.runtime_cwd.as_deref().map(std::path::Path::new),
+            },
+        )
+        .expect("successor session should be rebound");
+
+        fail_role_run_with_connection(&mut connection, &original_session_id, "stale process end")
+            .expect("stale predecessor failure should no-op");
+
+        let detail_after = role_runtime::get_role_operations(&connection, &role.id)
+            .expect("role ops should load after predecessor failure");
+        assert_eq!(detail_after.active_instance_count, 1);
+        assert_eq!(detail_after.assigned_count, 1);
+        assert!(detail_after.instances.iter().any(|instance| {
+            instance.id == role_instance_id
+                && instance.status == "running"
+                && instance.session_id.as_deref() == Some(rotated.record.id.as_str())
+        }));
+        assert!(
+            task_runtime::get_active_assignment_for_session(&connection, &rotated.record.id)
+                .expect("successor assignment lookup should succeed")
+                .is_some()
+        );
     }
 
     #[test]

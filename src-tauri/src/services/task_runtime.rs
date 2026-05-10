@@ -66,6 +66,13 @@ pub struct StaleTaskAssignmentCandidate {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrunedStaleAssignmentDuplicates {
+    pub kept_assignment_id: String,
+    pub canceled_assignment_ids: Vec<String>,
+    pub canceled_session_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub enum ReviewReworkAction {
     Reactivated(TaskLaneAssignment),
@@ -274,8 +281,20 @@ pub fn find_open_assignment_for_task_lane(
     task_id: &str,
     lane_id: &str,
 ) -> Result<Option<TaskLaneAssignment>, String> {
-    connection
-        .query_row(
+    Ok(
+        list_open_assignments_for_task_lane(connection, task_id, lane_id)?
+            .into_iter()
+            .next(),
+    )
+}
+
+fn list_open_assignments_for_task_lane(
+    connection: &Connection,
+    task_id: &str,
+    lane_id: &str,
+) -> Result<Vec<TaskLaneAssignment>, String> {
+    let mut statement = connection
+        .prepare(
             r#"
             SELECT
                 id,
@@ -313,15 +332,23 @@ pub fn find_open_assignment_for_task_lane(
                      END,
                      created_at ASC,
                      id ASC
-            LIMIT 1
             "#,
-            params![task_id, lane_id],
-            read_assignment,
         )
-        .optional()
+        .map_err(|error| {
+            format!(
+                "Unable to prepare open assignment query for task {task_id} lane {lane_id}: {error}"
+            )
+        })?;
+
+    let rows = statement
+        .query_map(params![task_id, lane_id], read_assignment)
         .map_err(|error| {
             format!("Unable to query open assignment for task {task_id} lane {lane_id}: {error}")
-        })
+        })?;
+
+    rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
+        format!("Unable to collect open assignments for task {task_id} lane {lane_id}: {error}")
+    })
 }
 
 pub fn cancel_duplicate_open_assignments_for_task_lane(
@@ -393,6 +420,108 @@ pub fn cancel_duplicate_open_assignments_for_task_lane(
     }
 
     Ok(duplicate_ids)
+}
+
+pub fn prune_stale_duplicate_open_assignments(
+    connection: &mut Connection,
+    task_id: &str,
+    lane_id: &str,
+    project_id: Option<&str>,
+    reason: &str,
+) -> Result<Option<PrunedStaleAssignmentDuplicates>, String> {
+    let assignments = list_open_assignments_for_task_lane(connection, task_id, lane_id)?;
+    if assignments.len() < 2 {
+        return Ok(None);
+    }
+
+    let mut keep_assignment: Option<TaskLaneAssignment> = None;
+    let mut saw_stale_assignment = false;
+    for assignment in &assignments {
+        if stale_assignment_reason(connection, assignment)?.is_some() {
+            saw_stale_assignment = true;
+            continue;
+        }
+        if keep_assignment.as_ref().is_none_or(|current| {
+            let current_rank = assignment_status_sort_key(&current.status);
+            let next_rank = assignment_status_sort_key(&assignment.status);
+            next_rank < current_rank
+                || (next_rank == current_rank
+                    && (assignment.created_at.as_str(), assignment.id.as_str())
+                        < (current.created_at.as_str(), current.id.as_str()))
+        }) {
+            keep_assignment = Some(assignment.clone());
+        }
+    }
+
+    let Some(keep_assignment) = keep_assignment else {
+        return Ok(None);
+    };
+    if !saw_stale_assignment {
+        return Ok(None);
+    }
+
+    let duplicates = assignments
+        .into_iter()
+        .filter(|assignment| assignment.id != keep_assignment.id)
+        .collect::<Vec<_>>();
+    if duplicates.is_empty() {
+        return Ok(None);
+    }
+
+    let now = now_iso();
+    let mut canceled_session_ids = Vec::new();
+    for duplicate in &duplicates {
+        update_open_lane_run(
+            connection,
+            task_id,
+            lane_id,
+            duplicate.session_id.as_deref(),
+            ASSIGNMENT_STATUS_CANCELED,
+            Some(reason.to_string()),
+            &now,
+        )?;
+        if let Some(session_id) = duplicate
+            .session_id
+            .as_deref()
+            .filter(|session_id| Some(*session_id) != keep_assignment.session_id.as_deref())
+        {
+            if !canceled_session_ids
+                .iter()
+                .any(|existing| existing == session_id)
+            {
+                canceled_session_ids.push(session_id.to_string());
+            }
+        }
+    }
+
+    let canceled_assignment_ids = cancel_duplicate_open_assignments_for_task_lane(
+        connection,
+        task_id,
+        lane_id,
+        &keep_assignment.id,
+        reason,
+    )?;
+    for session_id in &canceled_session_ids {
+        let _ = session_records::close_active_assignment_session(
+            connection, session_id, project_id, false,
+        );
+    }
+
+    Ok(Some(PrunedStaleAssignmentDuplicates {
+        kept_assignment_id: keep_assignment.id,
+        canceled_assignment_ids,
+        canceled_session_ids,
+    }))
+}
+
+fn assignment_status_sort_key(status: &str) -> i32 {
+    match status {
+        ASSIGNMENT_STATUS_ACTIVE => 0,
+        ASSIGNMENT_STATUS_AWAITING_USER_APPROVAL => 1,
+        ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION => 2,
+        ASSIGNMENT_STATUS_PAUSED_BY_USER => 3,
+        _ => 4,
+    }
 }
 
 fn latest_lane_assignment_status(
@@ -748,6 +877,24 @@ pub fn rotate_open_assignment_session(
     }
 
     complete_assignment(connection, &assignment.id, ASSIGNMENT_STATUS_CANCELED, now)?;
+    connection
+        .execute(
+            r#"
+            UPDATE task_lane_assignments
+            SET session_id = NULL,
+                runtime_cwd = NULL,
+                role_instance_id = NULL,
+                updated_at = ?2
+            WHERE id = ?1
+            "#,
+            params![assignment.id, now],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to clear superseded runtime claims for assignment {}: {error}",
+                assignment.id
+            )
+        })?;
 
     let replacement = TaskLaneAssignment {
         id: replacement_assignment_id
@@ -2154,8 +2301,9 @@ fn read_task_whip_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskWhi
         whip_count: row.get(12)?,
         unanswered_whip_count: row.get(13)?,
         last_whip_at: row.get(14)?,
+        started_at: row.get(15)?,
         whip_max_attempts: {
-            let configured = row.get::<_, i64>(15)?;
+            let configured = row.get::<_, i64>(16)?;
             if configured < 1 {
                 DEFAULT_TASK_WHIP_MAX_ATTEMPTS
             } else {
@@ -2188,6 +2336,7 @@ fn load_task_whip_candidates(
                 tla.whip_count,
                 tla.unanswered_whip_count,
                 tla.last_whip_at,
+                tla.started_at,
                 t.whip_max_attempts
             FROM task_lane_assignments tla
             JOIN tasks t ON t.id = tla.task_id
@@ -2431,6 +2580,7 @@ pub struct TaskWhipCandidate {
     pub whip_count: i64,
     pub unanswered_whip_count: i64,
     pub last_whip_at: Option<String>,
+    pub started_at: String,
     pub whip_max_attempts: i64,
 }
 
@@ -11088,6 +11238,8 @@ mod tests {
             Some("/tmp/runtime-role-whip")
         );
         assert_eq!(candidates[0].whip_max_attempts, 4);
+        assert_eq!(candidates[0].started_at, now);
+        assert!(candidates[0].last_whip_at.is_none());
     }
 
     #[test]
@@ -13448,6 +13600,269 @@ mod tests {
     }
 
     #[test]
+    fn prune_stale_duplicate_open_assignments_keeps_rotated_successor_and_closes_predecessor_session(
+    ) {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Duplicate Recovery Role".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Duplicate Recovery Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_named_workflow_with_lanes(
+            &mut connection,
+            "Duplicate Recovery Flow",
+            &role.slug,
+            &agent.slug,
+        );
+        let project_root = init_test_repo("task-runtime-prune-stale-duplicate");
+        insert_project_and_repository(
+            &connection,
+            "project-prune-stale-duplicate",
+            "project-prune-stale-duplicate",
+            "repo-prune-stale-duplicate",
+            "repo-prune-stale-duplicate",
+            "Prune Stale Duplicate Repo",
+            &project_root,
+        );
+
+        let task = tasks::create_task(
+            &mut connection,
+            Some("project-prune-stale-duplicate"),
+            TaskUpsertInput {
+                title: "Prune stale duplicate".into(),
+                description: Some(
+                    "Keep the rotated successor and retire the stale predecessor.".into(),
+                ),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: Some("repo-prune-stale-duplicate".into()),
+                repository_ids: vec!["repo-prune-stale-duplicate".into()],
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let session_dir = project_root
+            .parent()
+            .expect("repo should have parent")
+            .join("sessions");
+        fs::create_dir_all(&session_dir).expect("session dir should create");
+
+        let original_assignment =
+            dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+                .expect("initial dispatch should succeed");
+        let original_session_id = original_assignment
+            .session_id
+            .clone()
+            .expect("original session should exist");
+        let runtime_cwd = original_assignment
+            .runtime_cwd
+            .clone()
+            .expect("runtime cwd should exist");
+        let role_instance_id = original_assignment
+            .role_instance_id
+            .clone()
+            .expect("role instance should exist");
+
+        let replacement_assignment_id = "assignment-rotated-successor";
+        let rotated = session_records::rotate_session_record(
+            &connection,
+            &project_root,
+            &session_dir,
+            &original_session_id,
+            session_records::RotateSessionRecordInput {
+                project_id: Some("project-prune-stale-duplicate"),
+                title: Some(task.title.as_str()),
+                session_kind: session_records::SESSION_KIND_ROLE_INSTANCE,
+                agent_id: None,
+                role_instance_id: Some(role_instance_id.as_str()),
+                task_id: Some(task.id.as_str()),
+                workflow_id: Some(workflow.id.as_str()),
+                lane_id: Some("lane-implement"),
+                assignment: Some(session_records::AssignmentBinding {
+                    assignment_id: replacement_assignment_id,
+                    runtime_cwd: Some(runtime_cwd.as_str()),
+                }),
+                worker_type: Some("role"),
+                worker_id: original_assignment.worker_id.as_deref(),
+                runtime_cwd: Some(runtime_cwd.as_str()),
+                subscribed: false,
+                agent_runtime: None,
+                update_role_instance_session: true,
+            },
+        )
+        .expect("rotation should create successor session");
+        let replacement = rotate_open_assignment_session(
+            &connection,
+            &original_assignment,
+            &rotated.record.id,
+            Some(replacement_assignment_id),
+            "2026-01-01T00:01:00Z",
+        )
+        .expect("assignment rotation should succeed");
+        session_records::bind_session_context(
+            &connection,
+            &rotated.record.id,
+            session_records::SessionContextBinding {
+                project_id: Some("project-prune-stale-duplicate"),
+                session_kind: Some(session_records::SESSION_KIND_ROLE_INSTANCE),
+                worker_type: Some("role"),
+                worker_id: replacement.worker_id.as_deref(),
+                agent_id: None,
+                role_instance_id: Some(role_instance_id.as_str()),
+                task_id: Some(task.id.as_str()),
+                workflow_id: Some(workflow.id.as_str()),
+                lane_id: Some("lane-implement"),
+                assignment_id: Some(replacement.id.as_str()),
+                runtime_cwd: Some(std::path::Path::new(runtime_cwd.as_str())),
+            },
+        )
+        .expect("successor session should bind to replacement assignment");
+
+        connection
+            .execute(
+                r#"
+                UPDATE task_lane_assignments
+                SET status = 'active',
+                    session_id = ?2,
+                    runtime_cwd = ?3,
+                    role_instance_id = ?4,
+                    completed_at = NULL,
+                    updated_at = ?5
+                WHERE id = ?1
+                "#,
+                params![
+                    original_assignment.id.as_str(),
+                    original_session_id.as_str(),
+                    runtime_cwd.as_str(),
+                    role_instance_id.as_str(),
+                    "2026-01-01T00:02:00Z"
+                ],
+            )
+            .expect("stale predecessor assignment should be reopened for the regression");
+        session_records::bind_session_context(
+            &connection,
+            &original_session_id,
+            session_records::SessionContextBinding {
+                project_id: Some("project-prune-stale-duplicate"),
+                session_kind: Some(session_records::SESSION_KIND_ROLE_INSTANCE),
+                worker_type: Some("role"),
+                worker_id: original_assignment.worker_id.as_deref(),
+                agent_id: None,
+                role_instance_id: Some(role_instance_id.as_str()),
+                task_id: Some(task.id.as_str()),
+                workflow_id: Some(workflow.id.as_str()),
+                lane_id: Some("lane-implement"),
+                assignment_id: Some(original_assignment.id.as_str()),
+                runtime_cwd: Some(std::path::Path::new(runtime_cwd.as_str())),
+            },
+        )
+        .expect("stale predecessor session should be rebound for the regression");
+        connection
+            .execute(
+                "UPDATE sessions SET hidden_reason = NULL, dismissed_at = NULL, session_status = 'active', list_visibility = 'active', lifecycle_state = 'active', updated_at = ?2 WHERE id = ?1",
+                params![original_session_id.as_str(), "2026-01-01T00:02:00Z"],
+            )
+            .expect("stale predecessor session should be visibly reopened for the regression");
+
+        let open_before = list_open_task_lane_assignments(&connection, &task.id)
+            .expect("open assignments should load before pruning");
+        assert_eq!(open_before.len(), 2);
+        assert!(open_before
+            .iter()
+            .any(|assignment| assignment.id == original_assignment.id
+                && assignment.status == ASSIGNMENT_STATUS_ACTIVE));
+        assert!(open_before
+            .iter()
+            .any(|assignment| assignment.id == replacement.id
+                && assignment.status == ASSIGNMENT_STATUS_ACTIVE));
+
+        let pruned = prune_stale_duplicate_open_assignments(
+            &mut connection,
+            &task.id,
+            "lane-implement",
+            Some("project-prune-stale-duplicate"),
+            "stale predecessor after task-session rotation",
+        )
+        .expect("stale duplicate pruning should succeed")
+        .expect("stale duplicate should be pruned");
+        assert_eq!(pruned.kept_assignment_id, replacement.id);
+        assert!(pruned
+            .canceled_assignment_ids
+            .iter()
+            .any(|assignment_id| assignment_id == &original_assignment.id));
+        assert!(pruned
+            .canceled_session_ids
+            .iter()
+            .any(|session_id| session_id == &original_session_id));
+
+        let current_after = get_current_lane_assignment(&connection, &task.id)
+            .expect("current assignment should load after pruning")
+            .expect("current assignment should exist after pruning");
+        assert_eq!(current_after.id, replacement.id);
+
+        let predecessor: (String, Option<String>, Option<String>, Option<String>) = connection
+            .query_row(
+                "SELECT status, session_id, runtime_cwd, role_instance_id FROM task_lane_assignments WHERE id = ?1",
+                [original_assignment.id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("predecessor assignment should reload");
+        assert_eq!(predecessor.0, ASSIGNMENT_STATUS_CANCELED);
+        assert!(predecessor.1.is_none());
+        assert!(predecessor.2.is_none());
+        assert!(predecessor.3.is_none());
+
+        let predecessor_session: (String, String, String, Option<String>) = connection
+            .query_row(
+                "SELECT session_status, list_visibility, lifecycle_state, assignment_id FROM sessions WHERE id = ?1",
+                [original_session_id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("predecessor session should reload");
+        assert_eq!(predecessor_session.0, "closed");
+        assert_eq!(predecessor_session.1, "closed");
+        assert_eq!(predecessor_session.2, "closed");
+        assert!(predecessor_session.3.is_none());
+    }
+
+    #[test]
     fn recover_missing_assignment_session_rejects_stale_role_assignment_without_creating_a_new_session(
     ) {
         let mut connection = in_memory_connection();
@@ -13976,5 +14391,116 @@ mod tests {
             ),
             "steer"
         );
+    }
+
+    #[test]
+    fn rotated_assignment_clears_superseded_runtime_claim_fields() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        ensure_default_project(&connection);
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Rotated assignment cleanup".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "in_progress".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "role".into(),
+                assignee_id: Some(role.slug.clone()),
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        let now = "2026-01-01T00:00:00Z";
+        let original = TaskLaneAssignment {
+            id: "assignment-original".into(),
+            task_id: task.id.clone(),
+            workflow_id: workflow.id.clone(),
+            lane_id: "lane-implement".into(),
+            worker_type: "role".into(),
+            worker_id: Some(role.id.clone()),
+            status: ASSIGNMENT_STATUS_ACTIVE.into(),
+            session_id: Some("session-old".into()),
+            runtime_cwd: Some("/tmp/runtime-old".into()),
+            role_queue_entry_id: Some("queue-1".into()),
+            role_instance_id: Some("instance-1".into()),
+            prompt: Some("Prompt".into()),
+            pending_outcome: None,
+            completion_summary: None,
+            completion_notes: None,
+            whip_count: 0,
+            unanswered_whip_count: 0,
+            last_whip_at: None,
+            started_at: now.into(),
+            completed_at: None,
+            created_at: now.into(),
+            updated_at: now.into(),
+        };
+        insert_assignment(&connection, &original).expect("original assignment should insert");
+
+        let replacement = rotate_open_assignment_session(
+            &connection,
+            &original,
+            "session-new",
+            Some("assignment-replacement"),
+            "2026-01-01T00:01:00Z",
+        )
+        .expect("assignment rotation should succeed");
+        assert_eq!(replacement.session_id.as_deref(), Some("session-new"));
+
+        let predecessor: (String, Option<String>, Option<String>, Option<String>) = connection
+            .query_row(
+                "SELECT status, session_id, runtime_cwd, role_instance_id FROM task_lane_assignments WHERE id = ?1",
+                [original.id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("predecessor assignment should reload");
+        assert_eq!(predecessor.0, ASSIGNMENT_STATUS_CANCELED);
+        assert!(predecessor.1.is_none());
+        assert!(predecessor.2.is_none());
+        assert!(predecessor.3.is_none());
     }
 }

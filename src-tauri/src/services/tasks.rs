@@ -730,7 +730,7 @@ fn search_task_comments_with_limit(
 
     let like_query = format!("%{}%", trimmed_query.to_lowercase());
     let mut statement = match limit {
-        Some(limit) => connection
+        Some(_limit) => connection
             .prepare(
                 r#"
                 SELECT id, task_id, parent_comment_id, author, origin_type, origin_id, message, interrupt_agent, repository_id, relative_path, line_start, line_end, column_start, column_end, selected_text, anchor_commit_hash, anchor_has_uncommitted_changes, anchor_kind, anchor_payload_json, diff_anchor_json, created_at, updated_at
