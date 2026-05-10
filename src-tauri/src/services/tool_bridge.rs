@@ -4177,9 +4177,8 @@ mod tests {
                     [now],
                 )
                 .expect("project should seed");
-            let _store = project_secrets::ScopedTestProjectSecretStore::install(Arc::new(
-                project_secrets::TestProjectSecretStore::new("available"),
-            ));
+            let store = Arc::new(project_secrets::TestProjectSecretStore::new("available"));
+            let _store = project_secrets::ScopedTestProjectSecretStore::install(store.clone());
             let config = dummy_bridge_config("project-secrets");
             let authorization = Some(&AuthorizationContext {
                 actor_type: "user".into(),
@@ -4228,6 +4227,7 @@ mod tests {
             )
             .expect("second project secret should succeed");
 
+            store.reset_stats();
             let listed = invoke_bridge_command(
                 &config,
                 &connection,
@@ -4304,6 +4304,7 @@ mod tests {
                     .map(Vec::len),
                 Some(1)
             );
+            assert_eq!(store.stats().get_value_calls, 0);
 
             let loaded = invoke_bridge_command(
                 &config,
@@ -4321,6 +4322,7 @@ mod tests {
                 loaded.get("value").and_then(Value::as_str),
                 Some("sk-test-1")
             );
+            assert_eq!(store.stats().get_value_calls, 1);
 
             let updated = invoke_bridge_command(
                 &config,

@@ -578,6 +578,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 last_rotated_at TEXT NOT NULL,
+                has_stored_value INTEGER NOT NULL DEFAULT 1,
                 FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
                 UNIQUE(project_id, secret_key)
             );
@@ -1150,6 +1151,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
     ensure_task_file_references_table_columns(connection)?;
     ensure_domain_events_tables(connection)?;
     ensure_task_schedule_tables(connection)?;
+    ensure_project_secret_metadata_table_columns(connection)?;
     ensure_remote_access_settings_columns(connection)?;
     migrate_workflow_worker_references_to_slugs(connection)?;
     ensure_workflow_transition_columns(connection)?;
@@ -2188,6 +2190,25 @@ fn ensure_task_schedule_tables(connection: &Connection) -> Result<(), String> {
             "#,
         )
         .map_err(|error| format!("Unable to ensure task schedule tables: {error}"))?;
+
+    Ok(())
+}
+
+fn ensure_project_secret_metadata_table_columns(connection: &Connection) -> Result<(), String> {
+    let columns = table_columns(connection, "project_secret_metadata")?;
+
+    if !columns.contains("has_stored_value") {
+        connection
+            .execute(
+                "ALTER TABLE project_secret_metadata ADD COLUMN has_stored_value INTEGER NOT NULL DEFAULT 1",
+                [],
+            )
+            .map_err(|error| {
+                format!(
+                    "Unable to add has_stored_value column to project_secret_metadata table: {error}"
+                )
+            })?;
+    }
 
     Ok(())
 }

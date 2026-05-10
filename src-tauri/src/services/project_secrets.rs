@@ -1,10 +1,13 @@
-use std::path::Path;
 #[cfg(test)]
 use std::{collections::HashMap, sync::Arc, sync::LazyLock, sync::Mutex, sync::MutexGuard};
 #[cfg(target_os = "linux")]
 use std::{
     io::Write,
     process::{Command, Stdio},
+};
+use std::{
+    path::Path,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use chrono::Utc;
@@ -22,6 +25,7 @@ use crate::{
 };
 
 const PROJECT_SECRET_SERVICE: &str = "io.hnsn.orchestra.project-secret.v1";
+const PROJECT_SECRET_PROBE_ACCOUNT: &str = "project-secret-presence-probe";
 const RESERVED_SECRET_KEYS: &[&str] = &["PATH", "HOME", "SHELL", "TERM"];
 const RESERVED_SECRET_PREFIXES: &[&str] = &[
     "ORCHESTRA_",
@@ -41,6 +45,7 @@ struct StoredProjectSecretMetadata {
     created_at: String,
     updated_at: String,
     last_rotated_at: String,
+    has_stored_value: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -64,11 +69,54 @@ struct SecretStoreError {
     message: String,
 }
 
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSecretStoreDebugStats {
+    pub availability_calls: usize,
+    pub probe_access_calls: usize,
+    pub get_value_calls: usize,
+    pub set_value_calls: usize,
+    pub delete_value_calls: usize,
+}
+
+static PROJECT_SECRET_STORE_AVAILABILITY_CALLS: AtomicUsize = AtomicUsize::new(0);
+static PROJECT_SECRET_STORE_PROBE_ACCESS_CALLS: AtomicUsize = AtomicUsize::new(0);
+static PROJECT_SECRET_STORE_GET_VALUE_CALLS: AtomicUsize = AtomicUsize::new(0);
+static PROJECT_SECRET_STORE_SET_VALUE_CALLS: AtomicUsize = AtomicUsize::new(0);
+static PROJECT_SECRET_STORE_DELETE_VALUE_CALLS: AtomicUsize = AtomicUsize::new(0);
+
 trait ProjectSecretStore: Send + Sync {
     fn availability(&self) -> ProjectSecretsAvailability;
+    fn probe_access(&self, service: &str) -> Result<(), SecretStoreError>;
     fn get_value(&self, service: &str, account: &str) -> Result<Option<String>, SecretStoreError>;
     fn set_value(&self, service: &str, account: &str, value: &str) -> Result<(), SecretStoreError>;
     fn delete_value(&self, service: &str, account: &str) -> Result<(), SecretStoreError>;
+}
+
+fn project_secret_store_debug_enabled() -> bool {
+    std::env::var("ORCHESTRA_DESKTOP_E2E").is_ok()
+}
+
+fn record_project_secret_store_call(counter: &AtomicUsize) {
+    if project_secret_store_debug_enabled() {
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub fn get_project_secret_store_debug_stats() -> Result<ProjectSecretStoreDebugStats, String> {
+    if !project_secret_store_debug_enabled() {
+        return Err(
+            "Project secret store debug stats are only available during desktop E2E runs.".into(),
+        );
+    }
+
+    Ok(ProjectSecretStoreDebugStats {
+        availability_calls: PROJECT_SECRET_STORE_AVAILABILITY_CALLS.load(Ordering::Relaxed),
+        probe_access_calls: PROJECT_SECRET_STORE_PROBE_ACCESS_CALLS.load(Ordering::Relaxed),
+        get_value_calls: PROJECT_SECRET_STORE_GET_VALUE_CALLS.load(Ordering::Relaxed),
+        set_value_calls: PROJECT_SECRET_STORE_SET_VALUE_CALLS.load(Ordering::Relaxed),
+        delete_value_calls: PROJECT_SECRET_STORE_DELETE_VALUE_CALLS.load(Ordering::Relaxed),
+    })
 }
 
 #[cfg(test)]
@@ -105,12 +153,23 @@ impl Drop for ScopedTestProjectSecretStore {
 }
 
 #[cfg(test)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct TestProjectSecretStoreStats {
+    pub(crate) availability_calls: usize,
+    pub(crate) probe_access_calls: usize,
+    pub(crate) get_value_calls: usize,
+    pub(crate) set_value_calls: usize,
+    pub(crate) delete_value_calls: usize,
+}
+
+#[cfg(test)]
 pub(crate) struct TestProjectSecretStore {
     availability: ProjectSecretsAvailability,
     values: Mutex<HashMap<String, String>>,
     get_error: Mutex<Option<SecretStoreError>>,
     set_error: Mutex<Option<SecretStoreError>>,
     delete_error: Mutex<Option<SecretStoreError>>,
+    stats: Mutex<TestProjectSecretStoreStats>,
 }
 
 #[cfg(test)]
@@ -122,21 +181,45 @@ impl TestProjectSecretStore {
             get_error: Mutex::new(None),
             set_error: Mutex::new(None),
             delete_error: Mutex::new(None),
+            stats: Mutex::new(TestProjectSecretStoreStats::default()),
         }
     }
 
     fn key(service: &str, account: &str) -> String {
         format!("{service}::{account}")
     }
+
+    fn record_call(&self, apply: impl FnOnce(&mut TestProjectSecretStoreStats)) {
+        let mut stats = self.stats.lock().expect("stats lock");
+        apply(&mut stats);
+    }
+
+    pub(crate) fn stats(&self) -> TestProjectSecretStoreStats {
+        self.stats.lock().expect("stats lock").clone()
+    }
+
+    pub(crate) fn reset_stats(&self) {
+        *self.stats.lock().expect("stats lock") = TestProjectSecretStoreStats::default();
+    }
 }
 
 #[cfg(test)]
 impl ProjectSecretStore for TestProjectSecretStore {
     fn availability(&self) -> ProjectSecretsAvailability {
+        self.record_call(|stats| stats.availability_calls += 1);
         self.availability.clone()
     }
 
+    fn probe_access(&self, _service: &str) -> Result<(), SecretStoreError> {
+        self.record_call(|stats| stats.probe_access_calls += 1);
+        if let Some(error) = self.get_error.lock().expect("get error lock").clone() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn get_value(&self, service: &str, account: &str) -> Result<Option<String>, SecretStoreError> {
+        self.record_call(|stats| stats.get_value_calls += 1);
         if let Some(error) = self.get_error.lock().expect("get error lock").clone() {
             return Err(error);
         }
@@ -149,6 +232,7 @@ impl ProjectSecretStore for TestProjectSecretStore {
     }
 
     fn set_value(&self, service: &str, account: &str, value: &str) -> Result<(), SecretStoreError> {
+        self.record_call(|stats| stats.set_value_calls += 1);
         if let Some(error) = self.set_error.lock().expect("set error lock").clone() {
             return Err(error);
         }
@@ -160,6 +244,7 @@ impl ProjectSecretStore for TestProjectSecretStore {
     }
 
     fn delete_value(&self, service: &str, account: &str) -> Result<(), SecretStoreError> {
+        self.record_call(|stats| stats.delete_value_calls += 1);
         if let Some(error) = self.delete_error.lock().expect("delete error lock").clone() {
             return Err(error);
         }
@@ -205,22 +290,8 @@ impl SecretToolProjectSecretStore {
             "rust-keyring".into(),
         ]
     }
-}
 
-#[cfg(target_os = "linux")]
-impl ProjectSecretStore for SecretToolProjectSecretStore {
-    fn availability(&self) -> ProjectSecretsAvailability {
-        if Self::available() {
-            availability("available", None)
-        } else {
-            availability(
-                "unsupported",
-                Some("secret-tool is not available on PATH".into()),
-            )
-        }
-    }
-
-    fn get_value(&self, service: &str, account: &str) -> Result<Option<String>, SecretStoreError> {
+    fn lookup_value(service: &str, account: &str) -> Result<Option<String>, SecretStoreError> {
         let output = Command::new("secret-tool")
             .arg("lookup")
             .args(Self::secret_tool_attributes(service, account))
@@ -245,8 +316,34 @@ impl ProjectSecretStore for SecretToolProjectSecretStore {
             Err(classify_store_error(stderr))
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+impl ProjectSecretStore for SecretToolProjectSecretStore {
+    fn availability(&self) -> ProjectSecretsAvailability {
+        record_project_secret_store_call(&PROJECT_SECRET_STORE_AVAILABILITY_CALLS);
+        if Self::available() {
+            availability("available", None)
+        } else {
+            availability(
+                "unsupported",
+                Some("secret-tool is not available on PATH".into()),
+            )
+        }
+    }
+
+    fn probe_access(&self, service: &str) -> Result<(), SecretStoreError> {
+        record_project_secret_store_call(&PROJECT_SECRET_STORE_PROBE_ACCESS_CALLS);
+        Self::lookup_value(service, PROJECT_SECRET_PROBE_ACCOUNT).map(|_| ())
+    }
+
+    fn get_value(&self, service: &str, account: &str) -> Result<Option<String>, SecretStoreError> {
+        record_project_secret_store_call(&PROJECT_SECRET_STORE_GET_VALUE_CALLS);
+        Self::lookup_value(service, account)
+    }
 
     fn set_value(&self, service: &str, account: &str, value: &str) -> Result<(), SecretStoreError> {
+        record_project_secret_store_call(&PROJECT_SECRET_STORE_SET_VALUE_CALLS);
         let mut child = Command::new("secret-tool")
             .arg("store")
             .arg("--label=Orchestra project secret")
@@ -279,6 +376,7 @@ impl ProjectSecretStore for SecretToolProjectSecretStore {
     }
 
     fn delete_value(&self, service: &str, account: &str) -> Result<(), SecretStoreError> {
+        record_project_secret_store_call(&PROJECT_SECRET_STORE_DELETE_VALUE_CALLS);
         let output = Command::new("secret-tool")
             .arg("clear")
             .args(Self::secret_tool_attributes(service, account))
@@ -301,13 +399,34 @@ impl ProjectSecretStore for SecretToolProjectSecretStore {
 
 impl ProjectSecretStore for KeyringProjectSecretStore {
     fn availability(&self) -> ProjectSecretsAvailability {
+        record_project_secret_store_call(&PROJECT_SECRET_STORE_AVAILABILITY_CALLS);
         match self.entry(PROJECT_SECRET_SERVICE, "availability-probe") {
             Ok(_) => availability("available", None),
             Err(error) => availability_status_for_error(&error),
         }
     }
 
+    fn probe_access(&self, service: &str) -> Result<(), SecretStoreError> {
+        record_project_secret_store_call(&PROJECT_SECRET_STORE_PROBE_ACCESS_CALLS);
+        let entry = self.entry(service, PROJECT_SECRET_PROBE_ACCOUNT)?;
+        match entry.get_password() {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let classified = classify_store_error(error.to_string());
+                if classified.message.to_lowercase().contains("no entry")
+                    || classified.message.to_lowercase().contains("not found")
+                    || classified.message.to_lowercase().contains("no matching")
+                {
+                    Ok(())
+                } else {
+                    Err(classified)
+                }
+            }
+        }
+    }
+
     fn get_value(&self, service: &str, account: &str) -> Result<Option<String>, SecretStoreError> {
+        record_project_secret_store_call(&PROJECT_SECRET_STORE_GET_VALUE_CALLS);
         let entry = self.entry(service, account)?;
         match entry.get_password() {
             Ok(value) => Ok(Some(value)),
@@ -326,6 +445,7 @@ impl ProjectSecretStore for KeyringProjectSecretStore {
     }
 
     fn set_value(&self, service: &str, account: &str, value: &str) -> Result<(), SecretStoreError> {
+        record_project_secret_store_call(&PROJECT_SECRET_STORE_SET_VALUE_CALLS);
         let entry = self.entry(service, account)?;
         entry
             .set_password(value)
@@ -333,6 +453,7 @@ impl ProjectSecretStore for KeyringProjectSecretStore {
     }
 
     fn delete_value(&self, service: &str, account: &str) -> Result<(), SecretStoreError> {
+        record_project_secret_store_call(&PROJECT_SECRET_STORE_DELETE_VALUE_CALLS);
         let entry = self.entry(service, account)?;
         match entry.delete_credential() {
             Ok(()) => Ok(()),
@@ -406,6 +527,22 @@ fn availability_status_for_error(error: &SecretStoreError) -> ProjectSecretsAvai
     }
 }
 
+fn listing_error_value_state(
+    availability_state: &ProjectSecretsAvailability,
+) -> Option<(String, Option<String>)> {
+    match availability_state.status.as_str() {
+        "locked" => Some((
+            "store_locked".to_string(),
+            availability_state.message.clone(),
+        )),
+        "unsupported" | "error" => Some((
+            "store_error".to_string(),
+            availability_state.message.clone(),
+        )),
+        _ => None,
+    }
+}
+
 pub fn get_project_secrets(project_slug: &str) -> Result<ProjectSecretsState, String> {
     let orchestra_root = default_orchestra_root()?;
     get_project_secrets_in(&orchestra_root, project_slug)
@@ -466,7 +603,7 @@ pub(crate) fn search_project_secrets_with_connection(
 
 fn get_project_secrets_with_store(
     connection: &Connection,
-    orchestra_root: Option<&Path>,
+    _orchestra_root: Option<&Path>,
     project_slug: &str,
     store: &dyn ProjectSecretStore,
 ) -> Result<ProjectSecretsState, String> {
@@ -474,28 +611,26 @@ fn get_project_secrets_with_store(
         .ok_or_else(|| format!("Project slug {project_slug} was not found"))?;
     let metadata = load_project_secret_metadata(connection, &project.id)?;
     let mut availability_state = store.availability();
+    let mut store_listing_error = listing_error_value_state(&availability_state);
+
+    if availability_state.status == "available" {
+        if let Err(error) = store.probe_access(PROJECT_SECRET_SERVICE) {
+            availability_state = availability_status_for_error(&error);
+            store_listing_error = listing_error_value_state(&availability_state);
+        }
+    }
+
     let secrets = metadata
         .into_iter()
         .map(|entry| {
-            let accounts = secure_store_accounts(orchestra_root, &project.id, &entry.secret_key);
             let (value_state, value_state_message) =
-                match load_value_from_accounts(store, &accounts) {
-                    Ok(Some(_)) => ("ready".to_string(), None),
-                    Ok(None) => ("missing_value".to_string(), None),
-                    Err(error) => {
-                        if availability_state.status == "available" {
-                            availability_state = availability_status_for_error(&error);
-                        }
-                        match error.kind {
-                            SecretStoreErrorKind::Locked => {
-                                ("store_locked".to_string(), Some(error.message))
-                            }
-                            SecretStoreErrorKind::Unsupported | SecretStoreErrorKind::Other => {
-                                ("store_error".to_string(), Some(error.message))
-                            }
-                        }
+                store_listing_error.clone().unwrap_or_else(|| {
+                    if entry.has_stored_value {
+                        ("ready".to_string(), None)
+                    } else {
+                        ("missing_value".to_string(), None)
                     }
-                };
+                });
             ProjectSecretMetadata {
                 id: entry.id,
                 project_id: entry.project_id,
@@ -515,6 +650,9 @@ fn get_project_secrets_with_store(
         project_slug: project.slug,
         availability: availability_state,
         secrets,
+        debug_stats: get_project_secret_store_debug_stats()
+            .ok()
+            .and_then(|stats| serde_json::to_value(stats).ok()),
     })
 }
 
@@ -624,9 +762,19 @@ fn get_project_secret_value_with_store(
         },
     )?;
     let accounts = secure_store_accounts(orchestra_root, &project.id, &normalized_key);
-    let value = load_value_from_accounts(store, &accounts)
-        .map_err(|error| error.message)?
-        .ok_or_else(|| format!("Project secret {normalized_key} is missing a stored value."))?;
+    let value = match load_value_from_accounts(store, &accounts) {
+        Ok(Some(value)) => {
+            set_project_secret_has_stored_value(connection, &project.id, &normalized_key, true)?;
+            value
+        }
+        Ok(None) => {
+            set_project_secret_has_stored_value(connection, &project.id, &normalized_key, false)?;
+            return Err(format!(
+                "Project secret {normalized_key} is missing a stored value."
+            ));
+        }
+        Err(error) => return Err(error.message),
+    };
     Ok(ProjectSecretValueResult {
         project_slug: project.slug,
         secret_key: normalized_key,
@@ -695,6 +843,11 @@ fn write_project_secret_with_store(
         .as_ref()
         .map(|entry| entry.created_at.clone())
         .unwrap_or_else(|| now.clone());
+    let has_stored_value = value
+        .as_ref()
+        .map(|_| true)
+        .or_else(|| existing.as_ref().map(|entry| entry.has_stored_value))
+        .unwrap_or(true);
     let last_rotated_at = if let Some(next_value) = value.as_deref() {
         store
             .set_value(PROJECT_SECRET_SERVICE, &primary_account, next_value)
@@ -722,12 +875,14 @@ fn write_project_secret_with_store(
                 description,
                 created_at,
                 updated_at,
-                last_rotated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                last_rotated_at,
+                has_stored_value
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             ON CONFLICT(project_id, secret_key) DO UPDATE SET
                 description = excluded.description,
                 updated_at = excluded.updated_at,
-                last_rotated_at = excluded.last_rotated_at
+                last_rotated_at = excluded.last_rotated_at,
+                has_stored_value = excluded.has_stored_value
             "#,
             params![
                 id,
@@ -736,7 +891,8 @@ fn write_project_secret_with_store(
                 description,
                 created_at,
                 now,
-                last_rotated_at
+                last_rotated_at,
+                has_stored_value
             ],
         )
         .map_err(|error| format!("Unable to save project secret metadata: {error}"))?;
@@ -774,7 +930,7 @@ fn load_project_secret_metadata(
     let mut statement = connection
         .prepare(
             r#"
-            SELECT id, project_id, secret_key, description, created_at, updated_at, last_rotated_at
+            SELECT id, project_id, secret_key, description, created_at, updated_at, last_rotated_at, has_stored_value
             FROM project_secret_metadata
             WHERE project_id = ?1
             ORDER BY secret_key ASC
@@ -791,6 +947,7 @@ fn load_project_secret_metadata(
                 created_at: row.get(4)?,
                 updated_at: row.get(5)?,
                 last_rotated_at: row.get(6)?,
+                has_stored_value: row.get::<_, bool>(7)?,
             })
         })
         .map_err(|error| format!("Unable to query project secrets: {error}"))?;
@@ -806,7 +963,7 @@ fn load_project_secret_metadata_entry(
     connection
         .query_row(
             r#"
-            SELECT id, project_id, secret_key, description, created_at, updated_at, last_rotated_at
+            SELECT id, project_id, secret_key, description, created_at, updated_at, last_rotated_at, has_stored_value
             FROM project_secret_metadata
             WHERE project_id = ?1 AND secret_key = ?2
             LIMIT 1
@@ -821,11 +978,31 @@ fn load_project_secret_metadata_entry(
                     created_at: row.get(4)?,
                     updated_at: row.get(5)?,
                     last_rotated_at: row.get(6)?,
+                    has_stored_value: row.get::<_, bool>(7)?,
                 })
             },
         )
         .optional()
         .map_err(|error| format!("Unable to query project secret {secret_key}: {error}"))
+}
+
+fn set_project_secret_has_stored_value(
+    connection: &Connection,
+    project_id: &str,
+    secret_key: &str,
+    has_stored_value: bool,
+) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE project_secret_metadata SET has_stored_value = ?3 WHERE project_id = ?1 AND secret_key = ?2",
+            params![project_id, secret_key, has_stored_value],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to update project secret value state cache for {secret_key}: {error}"
+            )
+        })?;
+    Ok(())
 }
 
 fn filter_project_secret_metadata(
@@ -1153,7 +1330,7 @@ mod tests {
 
         connection
             .execute(
-                "INSERT INTO project_secret_metadata (id, project_id, secret_key, description, created_at, updated_at, last_rotated_at) VALUES ('secret-1', 'project-1', 'OPENAI_API_KEY', 'Key', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z')",
+                "INSERT INTO project_secret_metadata (id, project_id, secret_key, description, created_at, updated_at, last_rotated_at, has_stored_value) VALUES ('secret-1', 'project-1', 'OPENAI_API_KEY', 'Key', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', 0)",
                 [],
             )
             .expect("metadata should insert");
@@ -1228,6 +1405,7 @@ mod tests {
         )
         .expect("second secret should create");
 
+        store.reset_stats();
         let state = search_project_secrets_with_store(
             &connection,
             Some(&root),
@@ -1243,6 +1421,59 @@ mod tests {
         .expect("filtered state should load");
         assert_eq!(state.secrets.len(), 1);
         assert_eq!(state.secrets[0].secret_key, "OPENAI_API_KEY");
+        assert_eq!(
+            store.stats(),
+            TestProjectSecretStoreStats {
+                availability_calls: 1,
+                probe_access_calls: 1,
+                get_value_calls: 0,
+                set_value_calls: 0,
+                delete_value_calls: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn explicit_secret_load_reconciles_cached_missing_value_state() {
+        let (connection, root) = connection_with_project();
+        let store = TestProjectSecretStore::new("available");
+
+        write_project_secret_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            ProjectSecretUpsertInput {
+                secret_key: "OPENAI_API_KEY".into(),
+                description: Some("Primary provider key".into()),
+                value: Some("sk-test-1".into()),
+            },
+            SecretWriteMode::Create,
+            &store,
+        )
+        .expect("secret should create");
+
+        let accounts = secure_store_accounts(Some(&root), "project-1", "OPENAI_API_KEY");
+        delete_value_from_accounts(&store, &accounts).expect("stored value should delete");
+
+        let cached_state =
+            get_project_secrets_with_store(&connection, Some(&root), "test-project", &store)
+                .expect("cached state should load");
+        assert_eq!(cached_state.secrets[0].value_state, "ready");
+
+        let error = get_project_secret_value_with_store(
+            &connection,
+            Some(&root),
+            "test-project",
+            "OPENAI_API_KEY",
+            &store,
+        )
+        .expect_err("explicit load should detect the missing secure-store value");
+        assert!(error.contains("missing a stored value"));
+
+        let reconciled_state =
+            get_project_secrets_with_store(&connection, Some(&root), "test-project", &store)
+                .expect("reconciled state should load");
+        assert_eq!(reconciled_state.secrets[0].value_state, "missing_value");
     }
 
     #[test]
@@ -1408,7 +1639,7 @@ mod tests {
         );
         connection
             .execute(
-                "INSERT INTO project_secret_metadata (id, project_id, secret_key, description, created_at, updated_at, last_rotated_at) VALUES ('secret-1', 'project-1', 'OPENAI_API_KEY', 'Key', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z')",
+                "INSERT INTO project_secret_metadata (id, project_id, secret_key, description, created_at, updated_at, last_rotated_at, has_stored_value) VALUES ('secret-1', 'project-1', 'OPENAI_API_KEY', 'Key', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', 1)",
                 [],
             )
             .expect("metadata should insert");
@@ -1439,7 +1670,7 @@ mod tests {
         );
         connection
             .execute(
-                "INSERT INTO project_secret_metadata (id, project_id, secret_key, description, created_at, updated_at, last_rotated_at) VALUES ('secret-1', 'project-1', 'OPENAI_API_KEY', NULL, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z')",
+                "INSERT INTO project_secret_metadata (id, project_id, secret_key, description, created_at, updated_at, last_rotated_at, has_stored_value) VALUES ('secret-1', 'project-1', 'OPENAI_API_KEY', NULL, '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z', 1)",
                 [],
             )
             .expect("metadata should insert");

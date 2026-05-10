@@ -1244,6 +1244,8 @@ pub struct ProjectSecretsState {
     pub project_slug: String,
     pub availability: ProjectSecretsAvailability,
     pub secrets: Vec<ProjectSecretMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub debug_stats: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
