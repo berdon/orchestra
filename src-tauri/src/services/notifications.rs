@@ -406,6 +406,7 @@ mod tests {
             todos: vec![],
             lane_runs: vec![],
             lane_summaries: vec![],
+            domain_events: vec![],
             active_lane_assignment: Some(TaskLaneAssignment {
                 id: "assignment-1".into(),
                 task_id: "task-1".into(),
@@ -425,6 +426,7 @@ mod tests {
                 ),
                 completion_notes: Some("Please verify the lane output before approving.".into()),
                 whip_count: 0,
+                unanswered_whip_count: 0,
                 last_whip_at: None,
                 started_at: "2026-04-24T00:00:00Z".into(),
                 completed_at: None,

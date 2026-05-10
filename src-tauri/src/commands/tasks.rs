@@ -1910,12 +1910,51 @@ pub async fn manual_task_whip(
         ));
     }
 
-    task_runtime::record_task_whip_sent(&connection, &assignment.id, assignment.whip_count)?;
+    let (next_whip_count, next_unanswered_whip_count) = task_runtime::record_task_whip_sent(
+        &connection,
+        &assignment.id,
+        assignment.whip_count,
+        assignment.unanswered_whip_count,
+    )?;
 
     if let Some(session_id) = assignment.session_id.clone() {
         emit_session_change(&app, "task.whip.sent", [session_id]);
     }
     let updated_task = tasks::get_task_context(&connection, &task_id)?;
+    let whip_candidate = task_runtime::TaskWhipCandidate {
+        assignment_id: assignment.id.clone(),
+        task_id: task_id.clone(),
+        project_id: task.project_id.clone(),
+        workflow_id: assignment.workflow_id.clone(),
+        lane_id: assignment.lane_id.clone(),
+        worker_type: assignment.worker_type.clone(),
+        worker_id: assignment.worker_id.clone().unwrap_or_default(),
+        role_instance_id: assignment.role_instance_id.clone(),
+        session_id: assignment.session_id.clone().unwrap_or_default(),
+        runtime_cwd: assignment.runtime_cwd.clone(),
+        task_number: task.number.clone(),
+        task_title: task.title.clone(),
+        whip_count: assignment.whip_count,
+        unanswered_whip_count: assignment.unanswered_whip_count,
+        last_whip_at: assignment.last_whip_at.clone(),
+        whip_max_attempts: task.whip_max_attempts,
+    };
+    task_runtime::record_task_whip_domain_event(
+        &connection,
+        &whip_candidate,
+        "task.whip.sent",
+        json!({
+            "taskId": task.id,
+            "assignmentId": assignment.id,
+            "sessionId": assignment.session_id,
+            "laneId": assignment.lane_id,
+            "workerType": assignment.worker_type,
+            "whipCount": next_whip_count,
+            "unansweredWhipCount": next_unanswered_whip_count,
+            "whipMaxAttempts": task.whip_max_attempts,
+            "manual": true,
+        }),
+    )?;
     state.log(
         "info",
         "task.whip.sent",

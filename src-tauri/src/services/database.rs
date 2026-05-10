@@ -1000,6 +1000,7 @@ pub(crate) fn apply_migrations(connection: &Connection) -> Result<(), String> {
                 completion_summary TEXT,
                 completion_notes TEXT,
                 whip_count INTEGER NOT NULL DEFAULT 0,
+                unanswered_whip_count INTEGER NOT NULL DEFAULT 0,
                 last_whip_at TEXT,
                 started_at TEXT NOT NULL,
                 completed_at TEXT,
@@ -2655,6 +2656,17 @@ fn ensure_task_lane_assignments_table_columns(connection: &Connection) -> Result
             })?;
     }
 
+    if !columns.contains("unanswered_whip_count") {
+        connection
+            .execute(
+                "ALTER TABLE task_lane_assignments ADD COLUMN unanswered_whip_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|error| {
+                format!("Unable to add unanswered_whip_count column to task_lane_assignments: {error}")
+            })?;
+    }
+
     if !columns.contains("last_whip_at") {
         connection
             .execute(
@@ -2672,6 +2684,13 @@ fn ensure_task_lane_assignments_table_columns(connection: &Connection) -> Result
             [],
         )
         .map_err(|error| format!("Unable to backfill whip_count for task_lane_assignments: {error}"))?;
+
+    connection
+        .execute(
+            "UPDATE task_lane_assignments SET unanswered_whip_count = 0 WHERE unanswered_whip_count IS NULL OR unanswered_whip_count < 0",
+            [],
+        )
+        .map_err(|error| format!("Unable to backfill unanswered_whip_count for task_lane_assignments: {error}"))?;
 
     Ok(())
 }

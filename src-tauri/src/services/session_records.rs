@@ -1762,6 +1762,7 @@ mod tests {
                 pending_outcome TEXT,
                 completion_notes TEXT,
                 whip_count INTEGER NOT NULL DEFAULT 0,
+                unanswered_whip_count INTEGER NOT NULL DEFAULT 0,
                 last_whip_at TEXT,
                 started_at TEXT NOT NULL,
                 completed_at TEXT,

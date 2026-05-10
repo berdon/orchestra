@@ -572,6 +572,15 @@ impl SessionRuntime {
                         response_text.chars().count()
                     ),
                 );
+                if !response_text.trim().is_empty() {
+                    if let Ok(connection) = crate::services::database::open_connection() {
+                        let _ =
+                            crate::services::task_runtime::clear_unanswered_task_whips_for_session(
+                                &connection,
+                                &self.session_id,
+                            );
+                    }
+                }
                 let _ = crate::services::channels::deliver_channel_response_for_run(
                     self.app.clone(),
                     self.app.state::<crate::state::AppState>().inner(),

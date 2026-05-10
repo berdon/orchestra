@@ -252,7 +252,7 @@ function taskToDraft(task: TaskDetail): TaskUpsertInput {
 
 interface TaskTimelineItem {
   id: string;
-  kind: "comment" | "attachment" | "file_reference" | "lane_run" | "dependency_in" | "dependency_out";
+  kind: "comment" | "attachment" | "file_reference" | "lane_run" | "domain_event" | "dependency_in" | "dependency_out";
   title: string;
   description: ReactNode;
   timestamp: string;
@@ -583,6 +583,50 @@ export function TasksPage({
       tone: laneRun.result === "success" ? "success" : laneRun.result === "failure" ? "error" : "neutral",
     }));
 
+    const domainEvents = (taskDetail.domainEvents ?? []).map<TaskTimelineItem>((event) => {
+      const payload = typeof event.payload === "object" && event.payload && !Array.isArray(event.payload)
+        ? event.payload as Record<string, unknown>
+        : {};
+      const whipCount = typeof payload.whipCount === "number" ? payload.whipCount : null;
+      const unansweredWhipCount = typeof payload.unansweredWhipCount === "number" ? payload.unansweredWhipCount : null;
+      const note = typeof payload.note === "string" ? payload.note : null;
+
+      if (event.topic === "task.whip.reset") {
+        return {
+          id: `domain-event-${event.id}`,
+          kind: "domain_event",
+          title: "Session reset after unanswered whips",
+          description: [
+            unansweredWhipCount === null ? null : `Unanswered whips: ${unansweredWhipCount}`,
+            note,
+          ].filter(Boolean).join(" · "),
+          timestamp: event.createdAt,
+          tone: "warning",
+        };
+      }
+      if (event.topic === "task.whip.escalated") {
+        return {
+          id: `domain-event-${event.id}`,
+          kind: "domain_event",
+          title: "Whip limit escalated to user intervention",
+          description: whipCount === null ? "Automatic intervention requested." : `Whips sent: ${whipCount}`,
+          timestamp: event.createdAt,
+          tone: "error",
+        };
+      }
+      return {
+        id: `domain-event-${event.id}`,
+        kind: "domain_event",
+        title: "Automatic whip sent",
+        description: [
+          whipCount === null ? null : `Whip ${whipCount}`,
+          unansweredWhipCount === null ? null : `unanswered ${unansweredWhipCount}`,
+        ].filter(Boolean).join(" · "),
+        timestamp: event.createdAt,
+        tone: "neutral",
+      };
+    });
+
     const blockedBy = taskDetail.blockedBy.map<TaskTimelineItem>((dependency) => ({
       id: `dependency-in-${dependency.id}`,
       kind: "dependency_in",
@@ -601,7 +645,7 @@ export function TasksPage({
       tone: "neutral",
     }));
 
-    return [...comments, ...attachments, ...fileReferences, ...laneRuns, ...blockedBy, ...blocking].sort(
+    return [...comments, ...attachments, ...fileReferences, ...laneRuns, ...domainEvents, ...blockedBy, ...blocking].sort(
       (left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp),
     );
   }, [entityLookup.sessions, onOpenSession, taskDetail]);

@@ -32,8 +32,8 @@ use crate::{
             detect_session_context, find_session_context_for_session, get_session_path,
             list_available_models,
         },
-        pi_setup, project_settings, projects, roles, session_records, system_notifications, tasks,
-        workflows,
+        pi_setup, project_settings, projects, roles, session_records, system_notifications,
+        task_runtime, tasks, workflows,
     },
     state::AppState,
 };
@@ -573,6 +573,28 @@ pub struct DebugTaskWhipScenario {
     pub role_id: String,
     pub task_id: String,
     pub session_id: String,
+}
+
+#[tauri::command]
+pub fn debug_expire_task_whip_cooldown(task_id: String) -> Result<(), String> {
+    let connection = database::open_connection()?;
+    let assignment = task_runtime::get_current_lane_assignment(&connection, &task_id)?
+        .ok_or_else(|| format!("Task {} does not have an active lane assignment", task_id))?;
+    let expired_at = (Utc::now()
+        - chrono::Duration::seconds(task_runtime::TASK_WHIP_COOLDOWN_SECS + 1))
+    .to_rfc3339();
+    connection
+        .execute(
+            "UPDATE task_lane_assignments SET last_whip_at = ?2, updated_at = ?2 WHERE id = ?1",
+            [&assignment.id, &expired_at],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to expire whip cooldown for assignment {}: {error}",
+                assignment.id
+            )
+        })?;
+    Ok(())
 }
 
 #[tauri::command]

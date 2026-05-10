@@ -127,4 +127,71 @@ describe("desktop task whip configuration", () => {
       await deleteWebdriverSession(sessionId);
     }
   }, 180_000);
+
+  it.skipIf(!isDesktopE2E)("suppresses rapid automatic re-whips, resets after repeated unanswered whips, and records whip activity outside task comments", async () => {
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+
+      const scenario = await invokeCommand<{
+        projectId: string;
+        projectName: string;
+        roleId: string;
+        taskId: string;
+        sessionId: string;
+      }>(sessionId, "debug_seed_idle_task_whip_scenario");
+      await executeScript(sessionId, `
+        window.dispatchEvent(new CustomEvent('orchestra:projects-changed'));
+        return true;
+      `);
+
+      await invokeCommand(sessionId, "run_dispatcher_tick");
+      const firstWhipTask = await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: scenario.taskId }),
+        (task) => (task.activeLaneAssignment?.whipCount ?? 0) >= 1,
+      );
+      const originalAssignmentId = firstWhipTask.activeLaneAssignment?.id;
+      const originalSessionId = firstWhipTask.activeLaneAssignment?.sessionId;
+      const baselineCommentCount = firstWhipTask.comments.length;
+      expect(firstWhipTask.activeLaneAssignment?.whipCount ?? 0).toBe(1);
+
+      if (originalSessionId) {
+        await waitForCondition(
+          () => invokeCommand<any>(sessionId, "get_session_record", { sessionId: originalSessionId }),
+          (record) => record.status === "idle",
+        );
+      }
+
+      await invokeCommand(sessionId, "run_dispatcher_tick");
+      const cooldownTask = await invokeCommand<any>(sessionId, "get_task", { taskId: scenario.taskId });
+      expect(cooldownTask.activeLaneAssignment?.whipCount ?? 0).toBe(1);
+
+      for (let index = 0; index < 3; index += 1) {
+        await invokeCommand(sessionId, "manual_task_whip", { taskId: scenario.taskId });
+      }
+      const unansweredTask = await invokeCommand<any>(sessionId, "get_task", { taskId: scenario.taskId });
+      expect(unansweredTask.activeLaneAssignment?.unansweredWhipCount ?? 0).toBeGreaterThanOrEqual(3);
+
+      await invokeCommand(sessionId, "debug_expire_task_whip_cooldown", { taskId: scenario.taskId });
+      await invokeCommand(sessionId, "run_dispatcher_tick");
+
+      const resetTask = await waitForCondition(
+        () => invokeCommand<any>(sessionId, "get_task", { taskId: scenario.taskId }),
+        (task) => Boolean(task.activeLaneAssignment?.sessionId && task.activeLaneAssignment.sessionId !== originalSessionId),
+      );
+      expect(resetTask.activeLaneAssignment?.id).not.toBe(originalAssignmentId);
+      expect(resetTask.activeLaneAssignment?.sessionId).not.toBe(originalSessionId);
+      expect(resetTask.activeLaneAssignment?.unansweredWhipCount ?? 0).toBe(0);
+      expect(resetTask.comments.length).toBe(baselineCommentCount);
+
+      const eventTopics = (resetTask.domainEvents ?? []).map((event: { topic: string }) => event.topic);
+      expect(eventTopics).toContain("task.whip.sent");
+      expect(eventTopics).toContain("task.whip.reset");
+      expect(resetTask.comments.some((comment: { author?: string; message?: string }) =>
+        comment.author === "Orchestra" && (comment.message ?? "").toLowerCase().includes("whip"),
+      )).toBe(false);
+    } finally {
+      await deleteWebdriverSession(sessionId);
+    }
+  }, 240_000);
 });

@@ -14,10 +14,10 @@ use uuid::Uuid;
 use crate::{
     models::{
         AgentTaskContext, AgentTaskContextBounds, AuthorizationContext, BoundedCollectionInfo,
-        TaskAttachmentManifest, TaskComment, TaskCommentAnchor, TaskCommentDeleteImpact,
-        TaskCommentDomAnchor, TaskCommentFileAnchor, TaskCommentInput, TaskCommentReceipt,
-        TaskDependency, TaskDetail, TaskDiffCommentAnchor, TaskLaneAssignment, TaskLaneRun,
-        TaskLaneSummary, TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
+        DomainEvent, TaskAttachmentManifest, TaskComment, TaskCommentAnchor,
+        TaskCommentDeleteImpact, TaskCommentDomAnchor, TaskCommentFileAnchor, TaskCommentInput,
+        TaskCommentReceipt, TaskDependency, TaskDetail, TaskDiffCommentAnchor, TaskLaneAssignment,
+        TaskLaneRun, TaskLaneSummary, TaskSummary, TaskTodo, TaskTodoInput, TaskUpsertInput,
     },
     services::{
         orchestra_paths::{default_orchestra_root, task_attachments_dir},
@@ -452,6 +452,7 @@ pub fn get_task(connection: &Connection, task_id: &str) -> Result<TaskDetail, St
         task.active_lane_assignment.as_ref(),
         &task.lane_runs,
     )?;
+    task.domain_events = load_task_domain_events(connection, task_id)?;
     Ok(task)
 }
 
@@ -627,6 +628,7 @@ fn load_task_detail_base(connection: &Connection, task_id: &str) -> Result<TaskD
                     todos: Vec::new(),
                     lane_runs: Vec::new(),
                     lane_summaries: Vec::new(),
+                    domain_events: Vec::new(),
                     active_lane_assignment: None,
                     created_at: row.get(29)?,
                     updated_at: row.get(30)?,
@@ -2819,6 +2821,49 @@ fn load_task_lane_runs(connection: &Connection, task_id: &str) -> Result<Vec<Tas
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("Unable to collect task lane runs for {task_id}: {error}"))
+}
+
+fn load_task_domain_events(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Vec<DomainEvent>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT sequence, id, project_id, topic, entity_type, entity_id, payload_json, created_at
+            FROM (
+                SELECT sequence, id, project_id, topic, entity_type, entity_id, payload_json, created_at
+                FROM domain_events
+                WHERE entity_type = 'task'
+                  AND entity_id = ?1
+                  AND topic LIKE 'task.whip.%'
+                ORDER BY sequence DESC
+                LIMIT 50
+            )
+            ORDER BY sequence ASC
+            "#,
+        )
+        .map_err(|error| format!("Unable to prepare task domain event query: {error}"))?;
+
+    let rows = statement
+        .query_map([task_id], |row| {
+            let payload_json = row.get::<_, String>(6)?;
+            let payload = serde_json::from_str(&payload_json).unwrap_or(serde_json::Value::Null);
+            Ok(DomainEvent {
+                sequence: row.get(0)?,
+                id: row.get(1)?,
+                project_id: row.get(2)?,
+                topic: row.get(3)?,
+                entity_type: row.get(4)?,
+                entity_id: row.get(5)?,
+                payload,
+                created_at: row.get(7)?,
+            })
+        })
+        .map_err(|error| format!("Unable to read task domain events for {task_id}: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to collect task domain events for {task_id}: {error}"))
 }
 
 fn load_task_lane_runs_limited(
@@ -6271,6 +6316,7 @@ mod tests {
             completion_summary: None,
             completion_notes: None,
             whip_count: 0,
+            unanswered_whip_count: 0,
             last_whip_at: None,
             started_at: now.clone(),
             completed_at: None,
@@ -6398,6 +6444,7 @@ mod tests {
             completion_summary: None,
             completion_notes: None,
             whip_count: 0,
+            unanswered_whip_count: 0,
             last_whip_at: None,
             started_at: now.clone(),
             completed_at: None,

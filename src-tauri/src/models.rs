@@ -2382,6 +2382,7 @@ pub struct TaskLaneAssignment {
     pub completion_summary: Option<String>,
     pub completion_notes: Option<String>,
     pub whip_count: i64,
+    pub unanswered_whip_count: i64,
     pub last_whip_at: Option<String>,
     pub started_at: String,
     pub completed_at: Option<String>,
@@ -2517,6 +2518,8 @@ pub struct TaskDetail {
     pub lane_runs: Vec<TaskLaneRun>,
     #[serde(default)]
     pub lane_summaries: Vec<TaskLaneSummary>,
+    #[serde(default)]
+    pub domain_events: Vec<DomainEvent>,
     pub active_lane_assignment: Option<TaskLaneAssignment>,
     pub created_at: String,
     pub updated_at: String,

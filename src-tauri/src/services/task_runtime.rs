@@ -11,9 +11,9 @@ use crate::{
         WorkflowLane,
     },
     services::{
-        agent_dispatch, agent_runtime, agents, live_sessions, messages, notifications, pi_sessions,
-        project_settings, projects, role_dispatch, role_runtime, roles, session_list,
-        session_records, task_repositories, task_worktree_cleanup, tasks, workflows,
+        agent_dispatch, agent_runtime, agents, domain_events, live_sessions, messages,
+        notifications, pi_sessions, project_settings, projects, role_dispatch, role_runtime, roles,
+        session_list, session_records, task_repositories, task_worktree_cleanup, tasks, workflows,
     },
     state::{generate_id, now_iso, AppState},
 };
@@ -27,6 +27,8 @@ const ASSIGNMENT_STATUS_COMPLETED: &str = "completed";
 const ASSIGNMENT_STATUS_FAILED: &str = "failed";
 const ASSIGNMENT_STATUS_CANCELED: &str = "canceled";
 const DEFAULT_TASK_WHIP_MAX_ATTEMPTS: i64 = 10;
+pub const TASK_WHIP_COOLDOWN_SECS: i64 = 60;
+pub const TASK_WHIP_UNANSWERED_RESET_THRESHOLD: i64 = 3;
 const MAX_LANE_SUMMARY_LENGTH: usize = 500;
 const TASK_WHIP_PROMPT: &str = "Keep working until you are done - when you are done use tool `complete_lane_as_success` (with the task ID, required lane summary, and optional notes) unless you believe either you or the task that was sent to you failed - then use tool `complete_lane_as_failure` (with task ID, required lane summary, and optional notes). If you believe you need to escalate to the user - use tool `request_user_intervention` (with task ID, required lane summary, and optional notes).";
 
@@ -150,6 +152,7 @@ pub fn get_active_lane_assignment(
                 tla.completion_summary,
                 tla.completion_notes,
                 tla.whip_count,
+                tla.unanswered_whip_count,
                 tla.last_whip_at,
                 tla.started_at,
                 tla.completed_at,
@@ -200,6 +203,7 @@ pub fn get_current_lane_assignment(
                 tla.completion_summary,
                 tla.completion_notes,
                 tla.whip_count,
+                tla.unanswered_whip_count,
                 tla.last_whip_at,
                 tla.started_at,
                 tla.completed_at,
@@ -265,6 +269,7 @@ pub fn find_open_assignment_for_task_lane(
                 completion_summary,
                 completion_notes,
                 whip_count,
+                unanswered_whip_count,
                 last_whip_at,
                 started_at,
                 completed_at,
@@ -509,6 +514,7 @@ pub fn get_assignment_by_id(
                 completion_summary,
                 completion_notes,
                 whip_count,
+                unanswered_whip_count,
                 last_whip_at,
                 started_at,
                 completed_at,
@@ -604,6 +610,7 @@ pub fn list_current_role_assignments(
                 completion_summary,
                 completion_notes,
                 whip_count,
+                unanswered_whip_count,
                 last_whip_at,
                 started_at,
                 completed_at,
@@ -654,6 +661,7 @@ pub fn get_active_assignment_for_session(
                 tla.completion_summary,
                 tla.completion_notes,
                 tla.whip_count,
+                tla.unanswered_whip_count,
                 tla.last_whip_at,
                 tla.started_at,
                 tla.completed_at,
@@ -734,8 +742,9 @@ pub fn rotate_open_assignment_session(
         pending_outcome: assignment.pending_outcome.clone(),
         completion_summary: assignment.completion_summary.clone(),
         completion_notes: assignment.completion_notes.clone(),
-        whip_count: assignment.whip_count,
-        last_whip_at: assignment.last_whip_at.clone(),
+        whip_count: 0,
+        unanswered_whip_count: 0,
+        last_whip_at: None,
         started_at: now.to_string(),
         completed_at: None,
         created_at: now.to_string(),
@@ -778,6 +787,7 @@ fn list_open_task_lane_assignments(
                 completion_summary,
                 completion_notes,
                 whip_count,
+                unanswered_whip_count,
                 last_whip_at,
                 started_at,
                 completed_at,
@@ -1655,6 +1665,7 @@ pub fn activate_queued_role_assignments(
                 tla.completion_summary,
                 tla.completion_notes,
                 tla.whip_count,
+                tla.unanswered_whip_count,
                 tla.last_whip_at,
                 tla.started_at,
                 tla.completed_at,
@@ -1890,12 +1901,13 @@ pub fn maybe_auto_dispatch_task(
     maybe_auto_dispatch_task_for_state(connection, project_root, session_dir, task_id, None)
 }
 
-pub fn maybe_auto_dispatch_task_for_state(
+fn maybe_auto_dispatch_task_for_state_with_options(
     connection: &mut Connection,
     project_root: &Path,
     session_dir: &Path,
     task_id: &str,
     state: Option<&AppState>,
+    options: TaskRuntimeRunnableOptions,
 ) -> Result<Option<TaskLaneAssignment>, String> {
     let task = tasks::get_task_context(connection, task_id)?;
     let workflow = match load_task_workflow(connection, &task) {
@@ -1903,12 +1915,56 @@ pub fn maybe_auto_dispatch_task_for_state(
         Err(_) => return Ok(None),
     };
     let lane = resolve_task_lane(&workflow, &task)?;
-    if !task_is_runnable_for_worker_runtime(connection, &task, Some(&workflow.id), &lane.id)? {
+    if !task_is_runnable_for_worker_runtime_with_options(
+        connection,
+        &task,
+        Some(&workflow.id),
+        &lane.id,
+        options,
+    )? {
         return Ok(None);
     }
 
     dispatch_task_lane_in_transaction(connection, project_root, session_dir, task_id, state)
         .map(Some)
+}
+
+pub fn maybe_auto_dispatch_task_for_state(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task_id: &str,
+    state: Option<&AppState>,
+) -> Result<Option<TaskLaneAssignment>, String> {
+    maybe_auto_dispatch_task_for_state_with_options(
+        connection,
+        project_root,
+        session_dir,
+        task_id,
+        state,
+        TaskRuntimeRunnableOptions {
+            allow_latest_canceled_assignment: false,
+        },
+    )
+}
+
+pub fn maybe_auto_redispatch_task_after_reset_for_state(
+    connection: &mut Connection,
+    project_root: &Path,
+    session_dir: &Path,
+    task_id: &str,
+    state: Option<&AppState>,
+) -> Result<Option<TaskLaneAssignment>, String> {
+    maybe_auto_dispatch_task_for_state_with_options(
+        connection,
+        project_root,
+        session_dir,
+        task_id,
+        state,
+        TaskRuntimeRunnableOptions {
+            allow_latest_canceled_assignment: true,
+        },
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -2071,8 +2127,10 @@ fn read_task_whip_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskWhi
         task_number: row.get(10)?,
         task_title: row.get(11)?,
         whip_count: row.get(12)?,
+        unanswered_whip_count: row.get(13)?,
+        last_whip_at: row.get(14)?,
         whip_max_attempts: {
-            let configured = row.get::<_, i64>(13)?;
+            let configured = row.get::<_, i64>(15)?;
             if configured < 1 {
                 DEFAULT_TASK_WHIP_MAX_ATTEMPTS
             } else {
@@ -2103,6 +2161,8 @@ fn load_task_whip_candidates(
                 t.number,
                 t.title,
                 tla.whip_count,
+                tla.unanswered_whip_count,
+                tla.last_whip_at,
                 t.whip_max_attempts
             FROM task_lane_assignments tla
             JOIN tasks t ON t.id = tla.task_id
@@ -2176,15 +2236,62 @@ pub fn record_task_whip_sent(
     connection: &Connection,
     assignment_id: &str,
     current_whip_count: i64,
-) -> Result<(), String> {
+    current_unanswered_whip_count: i64,
+) -> Result<(i64, i64), String> {
     let next_whip_count = current_whip_count + 1;
+    let next_unanswered_whip_count = current_unanswered_whip_count + 1;
     let now = now_iso();
     connection
         .execute(
-            "UPDATE task_lane_assignments SET whip_count = ?2, last_whip_at = ?3, updated_at = ?3 WHERE id = ?1",
-            params![assignment_id, next_whip_count, now],
+            "UPDATE task_lane_assignments SET whip_count = ?2, unanswered_whip_count = ?3, last_whip_at = ?4, updated_at = ?4 WHERE id = ?1",
+            params![assignment_id, next_whip_count, next_unanswered_whip_count, now],
         )
         .map_err(|error| format!("Unable to update whip state for assignment {}: {error}", assignment_id))?;
+    Ok((next_whip_count, next_unanswered_whip_count))
+}
+
+pub fn clear_unanswered_task_whips_for_session(
+    connection: &Connection,
+    session_id: &str,
+) -> Result<bool, String> {
+    let Some(assignment) = get_active_assignment_for_session(connection, session_id)? else {
+        return Ok(false);
+    };
+    if assignment.unanswered_whip_count == 0 {
+        return Ok(false);
+    }
+
+    let now = now_iso();
+    connection
+        .execute(
+            "UPDATE task_lane_assignments SET unanswered_whip_count = 0, updated_at = ?2 WHERE id = ?1",
+            params![assignment.id, now],
+        )
+        .map_err(|error| {
+            format!(
+                "Unable to clear unanswered whip state for assignment {}: {error}",
+                assignment.id
+            )
+        })?;
+    Ok(true)
+}
+
+pub fn record_task_whip_domain_event(
+    connection: &Connection,
+    candidate: &TaskWhipCandidate,
+    topic: &str,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    domain_events::record_event(
+        connection,
+        domain_events::DomainEventInput {
+            project_id: Some(candidate.project_id.clone()),
+            topic: topic.to_string(),
+            entity_type: "task".to_string(),
+            entity_id: Some(candidate.task_id.clone()),
+            payload,
+        },
+    )?;
     Ok(())
 }
 
@@ -2212,7 +2319,12 @@ pub fn send_task_whip(
         },
     )?;
 
-    record_task_whip_sent(connection, &candidate.assignment_id, candidate.whip_count)?;
+    record_task_whip_sent(
+        connection,
+        &candidate.assignment_id,
+        candidate.whip_count,
+        candidate.unanswered_whip_count,
+    )?;
 
     Ok(queue_entry)
 }
@@ -2227,37 +2339,6 @@ pub fn escalate_task_whip_limit_exceeded(
         "Automatic user intervention requested after {} whip attempts without lane completion.",
         candidate.whip_count
     );
-    let comment = tasks::add_task_comment(
-        connection,
-        &candidate.task_id,
-        crate::models::TaskCommentInput {
-            author: "Orchestra".into(),
-            origin_type: Some("system".into()),
-            origin_id: None,
-            message: note.clone(),
-            interrupt_agent: false,
-            parent_comment_id: None,
-            repository_id: None,
-            relative_path: None,
-            absolute_path: None,
-            line_start: None,
-            line_end: None,
-            column_start: None,
-            column_end: None,
-            selected_text: None,
-            anchor: None,
-            diff_anchor: None,
-        },
-    )?;
-    if let Some(assignment) = get_active_lane_assignment(connection, &candidate.task_id)? {
-        let comment_ids = vec![comment.id.clone()];
-        let _ = tasks::mark_task_comments_read(
-            connection,
-            &candidate.task_id,
-            &assignment,
-            Some(&comment_ids),
-        )?;
-    }
 
     request_user_intervention(
         connection,
@@ -2322,6 +2403,8 @@ pub struct TaskWhipCandidate {
     pub task_number: String,
     pub task_title: String,
     pub whip_count: i64,
+    pub unanswered_whip_count: i64,
+    pub last_whip_at: Option<String>,
     pub whip_max_attempts: i64,
 }
 
@@ -3534,6 +3617,7 @@ fn dispatch_role_lane(
         completion_summary: None,
         completion_notes: None,
         whip_count: 0,
+        unanswered_whip_count: 0,
         last_whip_at: None,
         started_at: now.to_string(),
         completed_at: None,
@@ -3733,6 +3817,7 @@ fn dispatch_agent_lane(
             completion_summary: None,
             completion_notes: None,
             whip_count: 0,
+            unanswered_whip_count: 0,
             last_whip_at: None,
             started_at: now.to_string(),
             completed_at: None,
@@ -3802,6 +3887,7 @@ fn dispatch_agent_lane(
         completion_summary: None,
         completion_notes: None,
         whip_count: 0,
+        unanswered_whip_count: 0,
         last_whip_at: None,
         started_at: now.to_string(),
         completed_at: None,
@@ -5421,13 +5507,14 @@ fn insert_assignment(
                 completion_summary,
                 completion_notes,
                 whip_count,
+                unanswered_whip_count,
                 last_whip_at,
                 started_at,
                 completed_at,
                 created_at,
                 updated_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
             "#,
             params![
                 assignment.id,
@@ -5446,6 +5533,7 @@ fn insert_assignment(
                 assignment.completion_summary,
                 assignment.completion_notes,
                 assignment.whip_count,
+                assignment.unanswered_whip_count,
                 assignment.last_whip_at,
                 assignment.started_at,
                 assignment.completed_at,
@@ -6328,11 +6416,12 @@ fn read_assignment(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskLaneAssignme
         completion_summary: row.get(13)?,
         completion_notes: row.get(14)?,
         whip_count: row.get(15)?,
-        last_whip_at: row.get(16)?,
-        started_at: row.get(17)?,
-        completed_at: row.get(18)?,
-        created_at: row.get(19)?,
-        updated_at: row.get(20)?,
+        unanswered_whip_count: row.get(16)?,
+        last_whip_at: row.get(17)?,
+        started_at: row.get(18)?,
+        completed_at: row.get(19)?,
+        created_at: row.get(20)?,
+        updated_at: row.get(21)?,
     })
 }
 
@@ -6589,6 +6678,7 @@ mod tests {
             todos: Vec::new(),
             lane_runs: Vec::new(),
             lane_summaries: Vec::new(),
+            domain_events: Vec::new(),
             active_lane_assignment: None,
             created_at: now.clone(),
             updated_at: now,
@@ -6617,6 +6707,7 @@ mod tests {
             completion_summary: None,
             completion_notes: None,
             whip_count: 0,
+            unanswered_whip_count: 0,
             last_whip_at: None,
             started_at: now.clone(),
             completed_at: None,
@@ -7006,6 +7097,7 @@ mod tests {
             todos: Vec::new(),
             lane_runs: Vec::new(),
             lane_summaries: Vec::new(),
+            domain_events: Vec::new(),
         };
         let workflow = WorkflowDefinition {
             id: "workflow-1".into(),
@@ -7154,6 +7246,7 @@ mod tests {
             todos: Vec::new(),
             lane_runs: Vec::new(),
             lane_summaries: Vec::new(),
+            domain_events: Vec::new(),
         };
         let workflow = WorkflowDefinition {
             id: "workflow-1".into(),
@@ -7278,6 +7371,7 @@ mod tests {
             todos: Vec::new(),
             lane_runs: Vec::new(),
             lane_summaries: Vec::new(),
+            domain_events: Vec::new(),
         };
         let workflow = WorkflowDefinition {
             id: "workflow-source-control".into(),
@@ -7405,6 +7499,7 @@ mod tests {
             todos: Vec::new(),
             lane_runs: Vec::new(),
             lane_summaries: Vec::new(),
+            domain_events: Vec::new(),
         };
         let workflow = WorkflowDefinition {
             id: "workflow-legacy-source-control".into(),
@@ -8720,6 +8815,7 @@ mod tests {
             completion_summary: Some("Implemented the feature but the user requested another pass before final completion.".into()),
             completion_notes: Some("This still needs more work".into()),
             whip_count: 0,
+            unanswered_whip_count: 0,
             last_whip_at: None,
             started_at: assignment_started_at.clone(),
             completed_at: None,
@@ -9142,6 +9238,7 @@ mod tests {
             completion_summary: None,
             completion_notes: None,
             whip_count: 0,
+            unanswered_whip_count: 0,
             last_whip_at: None,
             started_at: now_iso(),
             completed_at: None,
@@ -9257,6 +9354,7 @@ mod tests {
             completion_summary: None,
             completion_notes: None,
             whip_count: 0,
+            unanswered_whip_count: 0,
             last_whip_at: None,
             started_at: now_iso(),
             completed_at: None,
@@ -10217,11 +10315,63 @@ mod tests {
             .expect("assignment should reload")
             .expect("assignment should exist");
         assert_eq!(assignment.whip_count, 1);
+        assert_eq!(assignment.unanswered_whip_count, 1);
         assert!(assignment.last_whip_at.is_some());
 
         let candidates_after_queue = find_task_whip_candidates(&connection)
             .expect("whip candidates should resolve after queueing");
         assert!(candidates_after_queue.is_empty());
+    }
+
+    #[test]
+    fn clears_unanswered_task_whips_for_session_after_response() {
+        let mut connection = in_memory_connection();
+        let now = now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("project should insert");
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Response clears unanswered whips".into(),
+                description: None,
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "in_progress".into(),
+                priority: "P1".into(),
+                workflow_id: None,
+                current_lane_id: None,
+                assignee_type: "agent".into(),
+                assignee_id: Some("supervisor".into()),
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: Some(10),
+                archived: None,
+            },
+        )
+        .expect("task should create");
+        connection
+            .execute(
+                "INSERT INTO task_lane_assignments (id, task_id, workflow_id, lane_id, worker_type, worker_id, status, session_id, runtime_cwd, role_queue_entry_id, role_instance_id, prompt, whip_count, unanswered_whip_count, last_whip_at, started_at, completed_at, created_at, updated_at) VALUES ('assignment-response-whip', ?1, 'workflow-whip', 'lane-agent', 'agent', 'agent-response', 'active', 'session-response-whip', '/tmp/runtime-response-whip', NULL, NULL, 'Prompt', 2, 2, ?2, ?2, NULL, ?2, ?2)",
+                params![task.id.as_str(), now.as_str()],
+            )
+            .expect("assignment should insert");
+
+        let cleared = clear_unanswered_task_whips_for_session(&connection, "session-response-whip")
+            .expect("response should clear unanswered whips");
+        assert!(cleared);
+
+        let assignment = get_active_lane_assignment(&connection, &task.id)
+            .expect("assignment should reload")
+            .expect("assignment should exist");
+        assert_eq!(assignment.whip_count, 2);
+        assert_eq!(assignment.unanswered_whip_count, 0);
+        assert!(assignment.last_whip_at.is_some());
     }
 
     #[test]
@@ -10623,9 +10773,7 @@ mod tests {
                 .map(|assignment| assignment.status.as_str()),
             Some(ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION)
         );
-        assert!(updated.comments.iter().any(|comment| comment
-            .message
-            .contains("Automatic user intervention requested after 1 whip attempts")));
+        assert!(updated.comments.is_empty());
     }
 
     #[test]

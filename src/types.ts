@@ -1758,6 +1758,7 @@ export interface TaskLaneAssignment {
   completionSummary?: string | null;
   completionNotes?: string | null;
   whipCount?: number;
+  unansweredWhipCount?: number;
   lastWhipAt?: string | null;
   startedAt: string;
   completedAt?: string | null;
@@ -1855,6 +1856,7 @@ export interface TaskDetail extends TaskSummary {
   todos: TaskTodo[];
   laneRuns: TaskLaneRun[];
   laneSummaries: TaskLaneSummary[];
+  domainEvents?: DomainEvent[];
   activeLaneAssignment?: TaskLaneAssignment | null;
 }
 

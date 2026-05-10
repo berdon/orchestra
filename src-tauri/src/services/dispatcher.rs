@@ -396,6 +396,100 @@ fn auto_dispatch_work_ready_tasks(app: AppHandle, state: &AppState) -> Result<us
     Ok(dispatched)
 }
 
+fn whip_cooldown_active(last_whip_at: Option<&str>) -> bool {
+    last_whip_at
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|timestamp| {
+            Utc::now()
+                .signed_duration_since(timestamp.with_timezone(&Utc))
+                .num_seconds()
+                < task_runtime::TASK_WHIP_COOLDOWN_SECS
+        })
+        .unwrap_or(false)
+}
+
+fn unanswered_whips_require_reset(unanswered_whip_count: i64) -> bool {
+    unanswered_whip_count > task_runtime::TASK_WHIP_UNANSWERED_RESET_THRESHOLD
+}
+
+fn stop_live_session_runtime_for_dispatcher(
+    state: &AppState,
+    session_id: &str,
+) -> Result<bool, String> {
+    let had_runtime = if let Some(runtime) = state.remove_session_runtime(session_id)? {
+        runtime.abort_active_run();
+        true
+    } else {
+        false
+    };
+    state.clear_active_session_run(session_id)?;
+    Ok(had_runtime)
+}
+
+fn reset_task_after_unanswered_whips(
+    app: &AppHandle,
+    state: &AppState,
+    connection: &mut rusqlite::Connection,
+    context: &pi_sessions::SessionContext,
+    candidate: &task_runtime::TaskWhipCandidate,
+) -> Result<Option<String>, String> {
+    let note = format!(
+        "Reset session after {} unanswered whip attempts without worker output.",
+        candidate.unanswered_whip_count
+    );
+    let _ = stop_live_session_runtime_for_dispatcher(state, &candidate.session_id)?;
+    let _ = task_runtime::stop_task_activity(connection, &candidate.task_id, Some(note.clone()))?;
+    let _ = app_events::emit_session_change(app, "task.whip.reset", [candidate.session_id.clone()]);
+    if candidate.worker_type == "role" {
+        crate::services::live_sessions::schedule_session_retirement(
+            app.clone(),
+            candidate.session_id.clone(),
+            Duration::ZERO,
+            "task.whip.reset",
+        );
+    }
+
+    let restarted_assignment = task_runtime::maybe_auto_redispatch_task_after_reset_for_state(
+        connection,
+        &context.project_root,
+        &context.session_dir,
+        &candidate.task_id,
+        Some(state),
+    )?;
+    if let Some(assignment) = restarted_assignment.as_ref() {
+        task_runtime::start_assignment_run(
+            app.clone(),
+            state,
+            context.session_dir.clone(),
+            assignment,
+        )?;
+        if let Some(session_id) = assignment.session_id.clone() {
+            let _ = app_events::emit_session_change(app, "task.whip.reset", [session_id.clone()]);
+        }
+    }
+
+    task_runtime::record_task_whip_domain_event(
+        connection,
+        candidate,
+        "task.whip.reset",
+        serde_json::json!({
+            "taskId": candidate.task_id,
+            "assignmentId": candidate.assignment_id,
+            "sessionId": candidate.session_id,
+            "laneId": candidate.lane_id,
+            "workerType": candidate.worker_type,
+            "whipCount": candidate.whip_count,
+            "unansweredWhipCount": candidate.unanswered_whip_count,
+            "threshold": task_runtime::TASK_WHIP_UNANSWERED_RESET_THRESHOLD,
+            "replacementAssignmentId": restarted_assignment.as_ref().map(|assignment| assignment.id.clone()),
+            "replacementSessionId": restarted_assignment.as_ref().and_then(|assignment| assignment.session_id.clone()),
+            "note": note,
+        }),
+    )?;
+
+    Ok(restarted_assignment.and_then(|assignment| assignment.session_id))
+}
+
 fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String> {
     let connection = database::open_connection()?;
     let candidates = task_runtime::find_task_whip_candidates(&connection)?;
@@ -419,6 +513,31 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
             continue;
         };
 
+        if unanswered_whips_require_reset(candidate.unanswered_whip_count) {
+            let replacement_session_id = reset_task_after_unanswered_whips(
+                &app,
+                state,
+                &mut connection,
+                &context,
+                &candidate,
+            )?;
+            state.log(
+                "warn",
+                "task.whip.reset",
+                &format!(
+                    "Reset task {} after {} unanswered whip attempts",
+                    candidate.task_id, candidate.unanswered_whip_count
+                ),
+            );
+            let _ =
+                app_events::emit_task_change(&app, "task.whip.reset", [candidate.task_id.clone()]);
+            if let Some(session_id) = replacement_session_id {
+                let _ = app_events::emit_session_change(&app, "task.whip.reset", [session_id]);
+            }
+            actions += 1;
+            continue;
+        }
+
         if state.is_session_running(&candidate.session_id)? {
             state.log(
                 "info",
@@ -431,12 +550,40 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
             continue;
         }
 
+        if whip_cooldown_active(candidate.last_whip_at.as_deref()) {
+            state.log(
+                "info",
+                "task.whip.cooldown",
+                &format!(
+                    "Skipped whip for task {} because assignment {} is still inside the {}s cooldown window",
+                    candidate.task_id,
+                    candidate.assignment_id,
+                    task_runtime::TASK_WHIP_COOLDOWN_SECS,
+                ),
+            );
+            continue;
+        }
+
         if candidate.whip_count >= candidate.whip_max_attempts {
             let task = task_runtime::escalate_task_whip_limit_exceeded(
                 &mut connection,
                 &context.project_root,
                 &context.session_dir,
                 &candidate,
+            )?;
+            task_runtime::record_task_whip_domain_event(
+                &connection,
+                &candidate,
+                "task.whip.escalated",
+                serde_json::json!({
+                    "taskId": candidate.task_id,
+                    "assignmentId": candidate.assignment_id,
+                    "sessionId": candidate.session_id,
+                    "laneId": candidate.lane_id,
+                    "workerType": candidate.worker_type,
+                    "whipCount": candidate.whip_count,
+                    "whipMaxAttempts": candidate.whip_max_attempts,
+                }),
             )?;
             state.log(
                 "warn",
@@ -456,7 +603,7 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
             continue;
         }
 
-        if candidate.worker_type == "agent" {
+        let (next_whip_count, next_unanswered_whip_count) = if candidate.worker_type == "agent" {
             let _ = task_runtime::send_task_whip(&connection, &candidate)?;
             let _ = agent_dispatch::dispatch_agent_queue(
                 app.clone(),
@@ -466,6 +613,10 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
                 &candidate.project_id,
                 &candidate.worker_id,
             )?;
+            (
+                candidate.whip_count + 1,
+                candidate.unanswered_whip_count + 1,
+            )
         } else {
             let role_instance_id = candidate.role_instance_id.as_deref().ok_or_else(|| {
                 format!(
@@ -494,28 +645,40 @@ fn process_task_whips(app: AppHandle, state: &AppState) -> Result<usize, String>
                 &run_id,
                 &task_runtime::build_task_whip_message(&candidate.task_id),
             ) {
-                Ok(()) => {
-                    task_runtime::record_task_whip_sent(
-                        &connection,
-                        &candidate.assignment_id,
-                        candidate.whip_count,
-                    )?;
-                }
+                Ok(()) => task_runtime::record_task_whip_sent(
+                    &connection,
+                    &candidate.assignment_id,
+                    candidate.whip_count,
+                    candidate.unanswered_whip_count,
+                )?,
                 Err(error) => {
                     let _ = state.end_session_run(&candidate.session_id, &run_id);
                     let _ = role_dispatch::fail_role_run(&candidate.session_id, &error);
                     return Err(error);
                 }
             }
-        }
+        };
+        task_runtime::record_task_whip_domain_event(
+            &connection,
+            &candidate,
+            "task.whip.sent",
+            serde_json::json!({
+                "taskId": candidate.task_id,
+                "assignmentId": candidate.assignment_id,
+                "sessionId": candidate.session_id,
+                "laneId": candidate.lane_id,
+                "workerType": candidate.worker_type,
+                "whipCount": next_whip_count,
+                "unansweredWhipCount": next_unanswered_whip_count,
+                "whipMaxAttempts": candidate.whip_max_attempts,
+            }),
+        )?;
         state.log(
             "info",
             "task.whip.sent",
             &format!(
                 "Sent whip {} of {} for task {}",
-                candidate.whip_count + 1,
-                candidate.whip_max_attempts,
-                candidate.task_id
+                next_whip_count, candidate.whip_max_attempts, candidate.task_id
             ),
         );
         let _ = app_events::emit_task_change(&app, "task.whip.sent", [candidate.task_id.clone()]);
@@ -707,6 +870,16 @@ mod tests {
             whip_max_attempts: None,
             archived: Some(false),
         }
+    }
+
+    #[test]
+    fn unanswered_whip_reset_requires_more_than_threshold() {
+        assert!(!unanswered_whips_require_reset(
+            task_runtime::TASK_WHIP_UNANSWERED_RESET_THRESHOLD
+        ));
+        assert!(unanswered_whips_require_reset(
+            task_runtime::TASK_WHIP_UNANSWERED_RESET_THRESHOLD + 1
+        ));
     }
 
     #[test]

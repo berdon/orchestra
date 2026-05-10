@@ -245,6 +245,7 @@ fn list_task_assignments_with_runtime_cwds(
                 completion_summary,
                 completion_notes,
                 whip_count,
+                unanswered_whip_count,
                 last_whip_at,
                 started_at,
                 completed_at,
@@ -292,11 +293,12 @@ fn read_task_lane_assignment(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskLa
         completion_summary: row.get(13)?,
         completion_notes: row.get(14)?,
         whip_count: row.get(15)?,
-        last_whip_at: row.get(16)?,
-        started_at: row.get(17)?,
-        completed_at: row.get(18)?,
-        created_at: row.get(19)?,
-        updated_at: row.get(20)?,
+        unanswered_whip_count: row.get(16)?,
+        last_whip_at: row.get(17)?,
+        started_at: row.get(18)?,
+        completed_at: row.get(19)?,
+        created_at: row.get(20)?,
+        updated_at: row.get(21)?,
     })
 }
 

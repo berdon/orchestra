@@ -23,7 +23,7 @@ import { getTaskDependencyTreeBranchLabel, type TaskDependencyTreeNode } from ".
 
 interface TaskTimelineItem {
   id: string;
-  kind: "comment" | "attachment" | "file_reference" | "lane_run" | "dependency_in" | "dependency_out";
+  kind: "comment" | "attachment" | "file_reference" | "lane_run" | "domain_event" | "dependency_in" | "dependency_out";
   title: string;
   description: ReactNode;
   timestamp: string;
@@ -1296,6 +1296,7 @@ export function TaskDetailPage({
                   </span>
                   <span>Runtime cwd: {task.activeLaneAssignment.runtimeCwd ?? "—"}</span>
                   <span>Whips: {task.activeLaneAssignment.whipCount ?? 0} / {task.whipMaxAttempts ?? 10}</span>
+                  <span>Unanswered whips: {task.activeLaneAssignment.unansweredWhipCount ?? 0} / 3</span>
                   <span>Last whip: {task.activeLaneAssignment.lastWhipAt ?? "—"}</span>
                 </div>
                 {effectiveActiveLaneAssignmentStatus === "awaiting_user_approval" ? (

@@ -947,6 +947,7 @@ mod tests {
             completion_summary: None,
             completion_notes: None,
             whip_count: 0,
+            unanswered_whip_count: 0,
             last_whip_at: None,
             started_at: "2026-03-21T00:00:00Z".into(),
             completed_at: Some("2026-03-21T00:01:00Z".into()),
