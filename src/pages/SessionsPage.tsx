@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { memo, useCallback, useEffect, useState, type RefObject } from "react";
 
 import { ResourceStatusBanner } from "../components/ResourceStatusBanner";
 import { ResizableSidebarLayout } from "../components/ResizableSidebarLayout";
@@ -52,6 +52,26 @@ function getActivityTone(activityState?: SessionActivityState) {
   }
 }
 
+function getSessionListBadge(session: SessionRecord) {
+  if (session.terminalAttached) {
+    return { label: "Terminal attached", tone: "warning" as const };
+  }
+
+  const controlLabel = formatListControlLabel(session);
+  if (controlLabel) {
+    return { label: controlLabel, tone: "accent" as const };
+  }
+
+  if (!session.activityState || session.activityState === "idle") {
+    return null;
+  }
+
+  return {
+    label: formatActivityLabel(session.activityState, session.activeToolName),
+    tone: getActivityTone(session.activityState),
+  };
+}
+
 interface SessionListContentProps {
   sessions: SessionRecord[];
   loadingSessions: boolean;
@@ -95,6 +115,7 @@ const SessionListContent = memo(function SessionListContent({
         {sessions.map((session) => {
           const isActive = session.id === selectedSessionId;
           const showDeleteAction = touchFriendlySessionListActions || revealedDeleteSessionId === session.id;
+          const listBadge = getSessionListBadge(session);
           return (
             <div
               key={session.id}
@@ -125,11 +146,11 @@ const SessionListContent = memo(function SessionListContent({
               >
                 <div className="session-list-link__header">
                   <span className="session-list-link__meta">{getSessionListMetadata(session)}</span>
-                  <span className={`status-badge status-badge--${session.terminalAttached ? "warning" : formatListControlLabel(session) ? "accent" : getActivityTone(session.activityState)}`}>
-                    {session.terminalAttached
-                      ? "Terminal attached"
-                      : formatListControlLabel(session) ?? formatActivityLabel(session.activityState, session.activeToolName)}
-                  </span>
+                  {listBadge ? (
+                    <span className={`status-badge status-badge--${listBadge.tone}`}>
+                      {listBadge.label}
+                    </span>
+                  ) : null}
                 </div>
                 <span className="session-list-link__title">{getSessionListTitle(session)}</span>
               </a>
@@ -273,19 +294,12 @@ export function SessionsPage({
       ? window.matchMedia("(max-width: 1100px), (hover: none), (pointer: coarse)").matches
       : false),
   );
-  const revealTimerRef = useRef<number | null>(null);
   const canShowDebugInfo = (import.meta.env.DEV || navigator.webdriver) && Boolean(selectedSession?.debugInfo);
   const getTooltipProps = useExplanatoryTooltipProps();
 
   useEffect(() => {
     setShowDebugInfo(false);
   }, [selectedSession?.id]);
-
-  useEffect(() => () => {
-    if (revealTimerRef.current !== null) {
-      window.clearTimeout(revealTimerRef.current);
-    }
-  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -328,27 +342,12 @@ export function SessionsPage({
   }
 
   const scheduleDeleteReveal = useCallback((sessionId: string) => {
-    if (touchFriendlySessionListActions) {
-      setRevealedDeleteSessionId(sessionId);
-      return;
-    }
-    if (revealTimerRef.current !== null) {
-      window.clearTimeout(revealTimerRef.current);
-    }
-    setRevealedDeleteSessionId(null);
-    revealTimerRef.current = window.setTimeout(() => {
-      setRevealedDeleteSessionId(sessionId);
-      revealTimerRef.current = null;
-    }, 2000);
-  }, [touchFriendlySessionListActions]);
+    setRevealedDeleteSessionId(sessionId);
+  }, []);
 
   const hideDeleteReveal = useCallback(() => {
     if (touchFriendlySessionListActions) {
       return;
-    }
-    if (revealTimerRef.current !== null) {
-      window.clearTimeout(revealTimerRef.current);
-      revealTimerRef.current = null;
     }
     setRevealedDeleteSessionId(null);
   }, [touchFriendlySessionListActions]);

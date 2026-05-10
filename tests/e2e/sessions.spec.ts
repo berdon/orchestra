@@ -541,7 +541,7 @@ test("sessions switches to the page-local picker mode at 1024px so the detail pa
   expect(layout?.transcriptHeight ?? 0).toBeGreaterThan(180);
 });
 
-test("sessions list uses deterministic task ordering and delays the dismiss affordance until hover settles", async ({ page }) => {
+test("sessions list uses deterministic task ordering, reveals dismiss immediately on hover, and hides idle badges", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.clear();
     const timestamp = new Date().toISOString();
@@ -555,6 +555,7 @@ test("sessions list uses deterministic task ordering and delays the dismiss affo
           createdAt: timestamp,
           updatedAt: timestamp,
           subscribed: false,
+          activityState: "thinking",
           events: [],
           taskId: "task-10",
           taskNumber: "ORC-10",
@@ -569,6 +570,7 @@ test("sessions list uses deterministic task ordering and delays the dismiss affo
           createdAt: timestamp,
           updatedAt: timestamp,
           subscribed: false,
+          activityState: "idle",
           events: [],
           taskId: "task-2",
           taskNumber: "ORC-2",
@@ -585,10 +587,15 @@ test("sessions list uses deterministic task ordering and delays the dismiss affo
   await expect(page.locator('[data-role="session-link"]').first()).toContainText("Second task");
 
   const firstRow = page.locator('.session-list-row').first();
+  const secondRow = page.locator('.session-list-row').nth(1);
   const dismissButton = firstRow.locator('.session-delete-button');
+
+  await expect(firstRow.locator('.status-badge')).toHaveCount(0);
+  await expect(secondRow.locator('.status-badge')).toHaveText('Thinking');
   await expect(dismissButton).toHaveJSProperty('tabIndex', -1);
+
   await firstRow.hover();
-  await page.waitForTimeout(2100);
+
   await expect(firstRow).toHaveClass(/session-list-row--actions-visible/);
   await expect(dismissButton).toHaveJSProperty('tabIndex', 0);
 });

@@ -204,16 +204,12 @@ describe("desktop navigation layout", () => {
         sessionId,
         `
           const row = document.querySelector('.session-list-row');
-          const link = row?.querySelector('[data-role="session-link"]');
           row?.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, relatedTarget: document.body }));
           row?.dispatchEvent(new MouseEvent('mouseenter', { relatedTarget: document.body }));
-          if (link instanceof HTMLElement) {
-            link.focus();
-          }
           return true;
         `,
       );
-      await waitForSelector(sessionId, '.session-list-row--actions-visible .session-delete-button', 5000);
+      await waitForSelector(sessionId, '.session-list-row--actions-visible .session-delete-button', 750);
       const revealClass = await executeScript<string>(
         sessionId,
         `return document.querySelector('.session-list-row')?.className ?? '';`,
