@@ -266,6 +266,7 @@ describe("desktop auto dispatch on blocker completion", () => {
         );
         expect(blockedTask.readyForDispatch).toBe(false);
         expect(blockedTask.currentLaneId).toBe("lane-implement");
+        expect(blockedTask.laneRuns.at(-1)?.result).toBe("canceled");
 
         await expect(
           invokeCommand(sessionId, "dispatch_task_lane", {
@@ -561,10 +562,13 @@ describe("desktop auto dispatch on blocker completion", () => {
               taskId: dependentTask.id,
             }),
           (task) =>
-            task.status === "ready" &&
             task.dependencyBlocked === false &&
-            !task.activeLaneAssignment &&
-            task.readyForDispatch === true,
+            ((task.status === "ready" &&
+              !task.activeLaneAssignment &&
+              task.readyForDispatch === true) ||
+              (task.status === "in_progress" &&
+                ["queued", "active"].includes(task.activeLaneAssignment?.status ?? "") &&
+                task.readyForDispatch === false)),
           60_000,
         );
 
@@ -572,6 +576,11 @@ describe("desktop auto dispatch on blocker completion", () => {
         expect(unblockedDependent.currentLaneId).toBe(
           "lane-dependent-after-test-implement",
         );
+        if (unblockedDependent.activeLaneAssignment) {
+          expect(unblockedDependent.activeLaneAssignment.laneId).toBe(
+            "lane-dependent-after-test-implement",
+          );
+        }
       } finally {
         await deleteWebdriverSession(sessionId);
       }

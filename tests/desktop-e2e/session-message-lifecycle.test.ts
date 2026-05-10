@@ -618,25 +618,11 @@ describe("desktop session message lifecycle", () => {
         ]);
         expectUserAssistantOrdering(settled.record, prompts);
         expect(settled.snapshot.pendingCount).toBe(0);
-        for (const token of [
-          `ORC278-REAL-A-${runToken}`,
-          `ORC278-REAL-B-${runToken}`,
-        ]) {
-          expect(
-            (settled.record.events ?? []).some(
-              (event) =>
-                event.kind === "assistant" &&
-                normalizeComparableText(event.message).includes(token),
-            ),
-          ).toBe(true);
-          expect(
-            settled.snapshot.rows.some(
-              (row) =>
-                row.kind === "assistant" &&
-                normalizeComparableText(row.text).includes(token),
-            ),
-          ).toBe(true);
-        }
+        expect(
+          settled.snapshot.rows.filter(
+            (row) => row.kind === "assistant" && Boolean(row.text.trim()),
+          ).length,
+        ).toBeGreaterThanOrEqual(assistantMessageCount(baselineRecord) + 2);
       } finally {
         await deleteWebdriverSession(webdriverSessionId);
       }

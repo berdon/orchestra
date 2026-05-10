@@ -21,6 +21,7 @@ rsync -a --delete \
   --exclude .git \
   --exclude node_modules \
   --exclude .tmp \
+  --exclude src-tauri/target \
   /src/ "${WORKSPACE_DIR}/"
 cp -a /workspace/orchestra/node_modules "${WORKSPACE_DIR}/node_modules"
 if [[ -d /workspace/orchestra/mobile/node_modules ]]; then

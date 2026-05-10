@@ -3185,7 +3185,7 @@ test("task detail opens tracked repo files when clicking $file mentions in comme
   await expect(page.locator('[data-role="task-file-reference-repository"]')).toHaveValue(/repo-/);
 
   await page.locator('[data-role="task-detail-tab-todos"]').click();
-  await expect(page.locator('[data-role="task-detail-tabpanel-todos"]')).toContainText("No todos yet.");
+  await expect(page.locator('[data-role="task-detail-tabpanel-todos"]')).toContainText("Workflow required for lane todos");
 
   await page.locator('[data-role="task-detail-tab-attachments"]').click();
   await expect(page.locator('[data-role="task-detail-tabpanel-attachments"]')).toContainText("No attachments yet.");
@@ -3798,7 +3798,7 @@ test("task detail supports attachments, comments, recent activity, and review in
   await page.locator('[data-role="task-filter-attention"]').click();
   await expect(page.locator('[data-role="task-attention-queue"]')).toContainText("Review me");
   await page.locator('[data-role="task-filter-review"]').click();
-  await expect(page.locator('[data-role="draft-task-section"]')).toContainText("Review me");
+  await expect(page.locator('[data-role="task-missing-workflow-section"]')).toContainText("Review me");
 });
 
 test("task attachment downloads preserve filenames and contents in browser mode", async ({ page }, testInfo) => {
@@ -4068,6 +4068,54 @@ test("task detail shows open session for active or historical task sessions and 
       ]),
     );
     window.localStorage.setItem(
+      "orchestra.mock.workflows",
+      JSON.stringify([
+        {
+          id: "workflow-dev",
+          slug: "workflow-dev",
+          name: "Developer workflow",
+          description: "Workflow fixture for task session links.",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          lanes: [
+            {
+              id: "lane-plan",
+              key: "plan",
+              name: "Plan",
+              description: null,
+              order: 0,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: null,
+              requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
+              successTransitionType: "lane",
+              successTargetLaneId: "lane-implementation",
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+            {
+              id: "lane-implementation",
+              key: "implementation",
+              name: "Implementation",
+              description: null,
+              order: 1,
+              assignedEntityType: "role",
+              assignedEntityId: "developer",
+              entryPromptTemplate: null,
+              requireUserApprovalOnSuccess: false,
+              needsWorkTargetLaneId: null,
+              successTransitionType: "end",
+              successTargetLaneId: null,
+              failureTransitionType: "end",
+              failureTargetLaneId: null,
+            },
+          ],
+        },
+      ]),
+    );
+    window.localStorage.setItem(
       "orchestra.mock.tasks",
       JSON.stringify([
         {
@@ -4079,7 +4127,7 @@ test("task detail shows open session for active or historical task sessions and 
           type: "task",
           status: "in_progress",
           priority: "P1",
-          workflowId: null,
+          workflowId: "workflow-dev",
           currentLaneId: "lane-implementation",
           assigneeType: "role",
           assigneeId: "developer",
@@ -4170,7 +4218,7 @@ test("task detail shows open session for active or historical task sessions and 
           type: "task",
           status: "completed",
           priority: "P2",
-          workflowId: null,
+          workflowId: "workflow-dev",
           currentLaneId: null,
           assigneeType: "unassigned",
           assigneeId: null,
@@ -4237,7 +4285,7 @@ test("task detail shows open session for active or historical task sessions and 
           type: "task",
           status: "ready",
           priority: "P2",
-          workflowId: null,
+          workflowId: "workflow-dev",
           currentLaneId: "lane-implementation",
           assigneeType: "role",
           assigneeId: "developer",

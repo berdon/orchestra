@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-JOBS="${DESKTOP_E2E_JOBS:-2}"
+JOBS="${DESKTOP_E2E_JOBS:-1}"
 LOG_ROOT="${ROOT_DIR}/.tmp/desktop-e2e"
 mkdir -p "${LOG_ROOT}"
 SUITE_RUN_DIR="$(mktemp -d "${LOG_ROOT}/suite-podman-XXXXXX")"

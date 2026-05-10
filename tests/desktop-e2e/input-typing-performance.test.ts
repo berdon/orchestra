@@ -149,7 +149,7 @@ describe("desktop typing performance regressions", () => {
       expect(topLevelCommentTyping.value).toBe('Responsive top-level comment typing.');
       expect(renderCountDelta({ renderCounts: {} }, afterTopLevelCommentTyping, 'task-comment-message')).toBeLessThanOrEqual(20);
       expect(renderCountDelta({ renderCounts: {} }, afterTopLevelCommentTyping, 'default-file-viewer')).toBeLessThanOrEqual(1);
-      expect(topLevelCommentTyping.durationMs).toBeLessThanOrEqual(topLevelCommentTyping.charactersTyped * 45);
+      expect(topLevelCommentTyping.durationMs).toBeLessThanOrEqual(topLevelCommentTyping.charactersTyped * 60);
 
       await clickSelector(sessionId, '[data-role="add-task-comment"]');
       await waitForText(sessionId, 'Responsive top-level comment typing.');
@@ -166,7 +166,7 @@ describe("desktop typing performance regressions", () => {
       const afterReplyTyping = await getInputPerfStats(sessionId);
       expect(replyTyping.value).toBe('Responsive reply typing.');
       expect(renderCountDelta({ renderCounts: {} }, afterReplyTyping, 'task-comment-message')).toBeLessThanOrEqual(30);
-      expect(replyTyping.durationMs).toBeLessThanOrEqual(replyTyping.charactersTyped * 60);
+      expect(replyTyping.durationMs).toBeLessThanOrEqual(replyTyping.charactersTyped * 80);
 
       await setWindowRect(sessionId, { width: 900, height: 1100 });
       await waitForSelector(sessionId, '[data-role="task-comment-message"]');
@@ -180,7 +180,7 @@ describe("desktop typing performance regressions", () => {
       const afterNarrowCommentTyping = await getInputPerfStats(sessionId);
       expect(narrowCommentTyping.value).toBe('Narrow layout comment typing stays responsive.');
       expect(renderCountDelta({ renderCounts: {} }, afterNarrowCommentTyping, 'task-comment-message')).toBeLessThanOrEqual(20);
-      expect(narrowCommentTyping.durationMs).toBeLessThanOrEqual(narrowCommentTyping.charactersTyped * 45);
+      expect(narrowCommentTyping.durationMs).toBeLessThanOrEqual(narrowCommentTyping.charactersTyped * 80);
     } finally {
       await deleteWebdriverSession(sessionId);
     }

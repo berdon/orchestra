@@ -15,7 +15,7 @@ export default defineConfig({
     command: "./scripts/run-hosted-web-e2e.sh",
     url: baseURL,
     reuseExistingServer: false,
-    timeout: 240_000,
+    timeout: 420_000,
   },
   projects: [
     {

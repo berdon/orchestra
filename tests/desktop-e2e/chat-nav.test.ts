@@ -78,6 +78,7 @@ type SessionRecordLike = {
   id: string;
   status?: string;
   messageability?: "messageable" | "closed" | null;
+  events?: Array<{ message?: string | null }>;
 };
 
 describe("desktop agent chat navigation", () => {
@@ -335,9 +336,21 @@ describe("desktop agent chat navigation", () => {
       expect(await executeScript<string>(sessionId, `
         return document.querySelector('[data-role="session-chat-panel"]')?.getAttribute('data-session-id') || '';
       `)).toBe(activeAgentSessionId);
-      expect(await executeScript<string>(sessionId, `
-        return document.querySelector('[data-role="session-transcript"]')?.textContent || '';
-      `)).toContain('Session run stopped by operator.');
+
+      const stoppedUi = await waitForCondition(
+        async () => ({
+          record: await invokeCommand<SessionRecordLike>(sessionId, 'get_session_record', { sessionId: activeAgentSessionId }),
+          transcript: await executeScript<string>(sessionId, `
+            return document.querySelector('[data-role="session-transcript"]')?.textContent || '';
+          `),
+        }),
+        ({ record, transcript }) =>
+          (record.events ?? []).some((event) =>
+            (event.message ?? '').includes('Session run stopped by operator.'),
+          ) && transcript.includes('Session run stopped by operator.'),
+        60_000,
+      );
+      expect(stoppedUi.transcript).toContain('Session run stopped by operator.');
     } finally {
       await deleteWebdriverSession(sessionId);
     }

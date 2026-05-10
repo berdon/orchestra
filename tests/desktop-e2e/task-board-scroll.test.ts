@@ -1,5 +1,3 @@
-import { join } from "node:path";
-
 import { describe, expect, it } from "vitest";
 
 import {
@@ -27,8 +25,6 @@ describe("desktop task board lane scrolling", () => {
     try {
       await ensureReactReady(sessionId);
 
-      const repoPath = join(testHome!, "workspace", "scrollable-task-board", "repository");
-
       const project = await invokeCommand<{ id: string; name: string }>(sessionId, "create_project", {
         input: {
           name: "Scrollable Task Board",
@@ -36,16 +32,7 @@ describe("desktop task board lane scrolling", () => {
           description: "Desktop scroll test project.",
         },
       });
-      const repository = await invokeCommand<{ id: string }>(sessionId, "create_repository", {
-        projectId: project.id,
-        input: {
-          name: "Scrollable Repo",
-          repositoryPath: repoPath,
-          defaultBranch: "main",
-        },
-      });
       expect(project).toBeTruthy();
-      expect(repository).toBeTruthy();
 
       const workflow = await invokeCommand<any>(sessionId, "create_workflow", {
         input: {
@@ -82,8 +69,6 @@ describe("desktop task board lane scrolling", () => {
             status: "ready",
             priority: index % 2 === 0 ? "P1" : "P2",
             workflowId: workflow.id,
-            repositoryId: repository!.id,
-            repositoryIds: [repository!.id],
             assigneeType: "unassigned",
             assigneeId: null,
           },
