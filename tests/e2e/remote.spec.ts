@@ -45,6 +45,7 @@ test("remote settings panel enables remote access, creates pairing codes, and re
             connectedAt: timestamp,
             lastSeenAt: timestamp,
             subscribedSessionCount: 1,
+            foregrounded: true,
           },
         ],
       }),

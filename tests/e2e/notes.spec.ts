@@ -90,7 +90,7 @@ test("notes mobile preview, page scrolling, and floating header behavior stay al
     ],
   };
   const bootstrap = {
-    contractVersion: "2026-05-02",
+    contractVersion: "2026-05-10",
     bootstrappedAt: timestamp,
     hostKind: "remote_api",
     authMode: "same_origin_cookie",

@@ -181,6 +181,7 @@ export interface RemoteClientRecord {
   connectedAt: string;
   lastSeenAt: string;
   subscribedSessionCount: number;
+  foregrounded: boolean;
 }
 
 export interface RemoteAccessStatus {

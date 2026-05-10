@@ -416,6 +416,7 @@ struct ProjectSelectionMessage {
     message_type: String,
     project_id: Option<String>,
     session_id: Option<String>,
+    foregrounded: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -424,7 +425,7 @@ struct WsAuthQuery {
     token: Option<String>,
 }
 
-const ORCHESTRA_CLIENT_CONTRACT_VERSION: &str = "2026-05-02";
+const ORCHESTRA_CLIENT_CONTRACT_VERSION: &str = "2026-05-10";
 const REMOTE_AUTH_COOKIE_NAME: &str = "orchestra_remote_device_token";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7438,6 +7439,7 @@ fn normalize_ws_message_type(message_type: &str) -> &str {
         "subscribe_session" | "session.subscribe" => "session.subscribe",
         "unsubscribe_session" | "session.unsubscribe" => "session.unsubscribe",
         "select_project" | "project.select" => "project.select",
+        "client.presence" => "client.presence",
         "ping" => "ping",
         other => other,
     }
@@ -7550,6 +7552,12 @@ async fn handle_ws_socket(app: AppHandle, socket: WebSocket, auth: ResolvedRemot
                                         "subscriptionType": "project",
                                         "projectId": message.project_id,
                                     }).to_string())).await;
+                                }
+                                "client.presence" => {
+                                    let _ = state.set_remote_client_foregrounded(
+                                        &client_id,
+                                        message.foregrounded.unwrap_or(true),
+                                    );
                                 }
                                 "ping" => {
                                     let _ = sender.send(Message::Text(json!({"type":"pong"}).to_string())).await;

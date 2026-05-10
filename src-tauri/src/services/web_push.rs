@@ -143,7 +143,7 @@ fn load_eligible_web_push_targets(
     for row in rows {
         let (device_id, raw_token) =
             row.map_err(|error| format!("Unable to read remote web push target: {error}"))?;
-        if state.has_active_remote_client_for_device(&device_id)? {
+        if state.has_foreground_remote_client_for_device(&device_id)? {
             continue;
         }
         if let Some(subscription) = parse_stored_web_push_subscription(&raw_token) {
@@ -339,17 +339,17 @@ mod tests {
     }
 
     #[test]
-    fn load_targets_skips_active_clients_and_non_web_push_tokens() {
+    fn load_targets_skips_only_foreground_hosted_web_clients_and_non_web_push_tokens() {
         let connection = Connection::open_in_memory().expect("db should open");
         database::apply_migrations(&connection).expect("migrations should apply");
         seed_device(
             &connection,
-            "device-active",
+            "device-foreground",
             Some(&stored_subscription_json()),
         );
         seed_device(
             &connection,
-            "device-idle",
+            "device-background",
             Some(&stored_subscription_json()),
         );
         seed_device(&connection, "device-legacy", Some("native-token"));
@@ -360,17 +360,29 @@ mod tests {
         state
             .register_remote_client(
                 "client-1",
-                "browser",
-                Some("device-active".into()),
-                Some("Active Browser".into()),
+                "hosted_web",
+                Some("device-foreground".into()),
+                Some("Foreground Browser".into()),
                 None,
             )
             .expect("client should register");
+        state
+            .register_remote_client(
+                "client-2",
+                "hosted_web",
+                Some("device-background".into()),
+                Some("Background Browser".into()),
+                None,
+            )
+            .expect("second client should register");
+        state
+            .set_remote_client_foregrounded("client-2", false)
+            .expect("backgrounded state should update");
 
         let targets =
             load_eligible_web_push_targets(&connection, &state).expect("targets should load");
         assert_eq!(targets.len(), 1);
-        assert_eq!(targets[0].device_id, "device-idle");
+        assert_eq!(targets[0].device_id, "device-background");
     }
 
     #[test]

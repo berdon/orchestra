@@ -10,7 +10,7 @@ import {
 } from "../src/lib/webPush";
 
 const bootstrap: OrchestraClientBootstrap = {
-  contractVersion: "2026-05-02",
+  contractVersion: "2026-05-10",
   bootstrappedAt: "2026-05-05T00:00:00.000Z",
   hostKind: "remote_api",
   authMode: "same_origin_cookie",

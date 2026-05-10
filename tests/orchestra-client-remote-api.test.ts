@@ -8,6 +8,7 @@ class FakeWebSocket {
 
   readonly url: string;
   readonly sent: string[] = [];
+  readyState = 1;
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
@@ -23,10 +24,11 @@ class FakeWebSocket {
   }
 
   close() {
+    this.readyState = 3;
     this.onclose?.({} as CloseEvent);
   }
 
-  emitConnected(contractVersion = "2026-05-02") {
+  emitConnected(contractVersion = "2026-05-10") {
     this.onmessage?.({ data: JSON.stringify({ type: "connected", contractVersion }) } as MessageEvent);
   }
 
@@ -50,7 +52,7 @@ class FakeWebSocket {
 
 function createBootstrap(authMode: OrchestraClientBootstrap["authMode"] = "same_origin_cookie"): OrchestraClientBootstrap {
   return {
-    contractVersion: "2026-05-02",
+    contractVersion: "2026-05-10",
     bootstrappedAt: "2026-04-23T00:00:00.000Z",
     hostKind: "remote_api",
     authMode,
@@ -196,6 +198,42 @@ describe("remote api orchestra client", () => {
     expect(FakeWebSocket.instances[0]?.url).toBe("wss://orchestra.example.test/api/v1/ws?token=token-123");
     FakeWebSocket.instances[0]?.emitConnected();
     await expect(subscribePromise).resolves.toEqual(expect.any(Function));
+  });
+
+  test("reports hosted-web foreground presence over the websocket for push routing", async () => {
+    const fakeWindow = new EventTarget() as Window & typeof globalThis;
+    fakeWindow.setInterval = setInterval;
+    fakeWindow.clearInterval = clearInterval;
+    const fakeDocument = new EventTarget() as Document & {
+      visibilityState: DocumentVisibilityState;
+      _focused: boolean;
+    };
+    fakeDocument.visibilityState = "visible";
+    fakeDocument._focused = true;
+    fakeDocument.hasFocus = () => fakeDocument._focused;
+
+    vi.stubGlobal("window", fakeWindow);
+    vi.stubGlobal("document", fakeDocument);
+
+    const binding = createRemoteApiOrchestraClientBinding(createBootstrap("same_origin_cookie"), {
+      fetchImpl: vi.fn(async () => jsonResponse([])),
+      webSocketFactory: (url) => new FakeWebSocket(url) as unknown as WebSocket,
+    });
+
+    const unsubscribePromise = binding.client.events.subscribe(() => undefined);
+    const socket = FakeWebSocket.instances[0]!;
+    socket.emitConnected();
+    await unsubscribePromise;
+
+    expect(socket.sent).toContain(JSON.stringify({ type: "client.presence", foregrounded: true }));
+
+    fakeDocument.visibilityState = "hidden";
+    fakeDocument._focused = false;
+    fakeDocument.dispatchEvent(new Event("visibilitychange"));
+
+    await vi.waitFor(() => {
+      expect(socket.sent.at(-1)).toBe(JSON.stringify({ type: "client.presence", foregrounded: false }));
+    });
   });
 
   test("uploads task attachments through the remote multipart route", async () => {

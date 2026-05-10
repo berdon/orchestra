@@ -43,6 +43,7 @@ struct RemoteClientState {
     active_project_id: Option<String>,
     connected_at: String,
     last_seen_at: String,
+    foregrounded: bool,
     subscribed_sessions: HashSet<String>,
 }
 
@@ -73,6 +74,12 @@ pub fn now_iso() -> String {
 
 pub fn generate_id(prefix: &str) -> String {
     format!("{}-{}", prefix, chrono::Utc::now().timestamp_micros())
+}
+
+fn remote_client_receives_live_notifications(client: &RemoteClientState, device_id: &str) -> bool {
+    client.client_kind == "hosted_web"
+        && client.foregrounded
+        && client.device_id.as_deref() == Some(device_id)
 }
 
 fn normalize_log_level(_level: &str, target: &str) -> &'static str {
@@ -345,6 +352,7 @@ impl AppState {
                     active_project_id,
                     connected_at: now.clone(),
                     last_seen_at: now,
+                    foregrounded: true,
                     subscribed_sessions: HashSet::new(),
                 },
             );
@@ -389,6 +397,23 @@ impl AppState {
             .get_mut(client_id)
         {
             client.active_project_id = active_project_id;
+            client.last_seen_at = now_iso();
+        }
+        Ok(())
+    }
+
+    pub fn set_remote_client_foregrounded(
+        &self,
+        client_id: &str,
+        foregrounded: bool,
+    ) -> Result<(), String> {
+        if let Some(client) = self
+            .remote_clients
+            .lock()
+            .map_err(|_| "Unable to access remote client state".to_string())?
+            .get_mut(client_id)
+        {
+            client.foregrounded = foregrounded;
             client.last_seen_at = now_iso();
         }
         Ok(())
@@ -439,6 +464,7 @@ impl AppState {
                 connected_at: client.connected_at,
                 last_seen_at: client.last_seen_at,
                 subscribed_session_count: client.subscribed_sessions.len() as i64,
+                foregrounded: client.foregrounded,
             })
             .collect::<Vec<_>>();
         clients.sort_by(|left, right| right.last_seen_at.cmp(&left.last_seen_at));
@@ -481,14 +507,14 @@ impl AppState {
             .collect())
     }
 
-    pub fn has_active_remote_client_for_device(&self, device_id: &str) -> Result<bool, String> {
+    pub fn has_foreground_remote_client_for_device(&self, device_id: &str) -> Result<bool, String> {
         self.remote_clients
             .lock()
             .map_err(|_| "Unable to access remote client state".to_string())
             .map(|clients| {
                 clients
                     .values()
-                    .any(|client| client.device_id.as_deref() == Some(device_id))
+                    .any(|client| remote_client_receives_live_notifications(client, device_id))
             })
     }
 

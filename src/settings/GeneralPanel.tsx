@@ -240,7 +240,7 @@ export function GeneralPanel({
                 <div>
                   <p className="eyebrow">Desktop integration</p>
                   <h4>Local notifications</h4>
-                  <p className="supporting-copy">Enable local browser/macOS notifications for this client, manage permission access, and, in hosted web on HTTPS/localhost, register background web push for this paired browser.</p>
+                  <p className="supporting-copy">Enable local browser/macOS notifications for this client, manage permission access, and, in hosted web on HTTPS/localhost, register background web push for this paired browser. Orchestra suppresses duplicate push only while that same hosted-web client is foregrounded.</p>
                 </div>
                 <div className="action-cluster action-cluster--wrap">
                   <button
@@ -302,7 +302,7 @@ export function GeneralPanel({
               ) : systemNotificationPermission === "unsupported" ? (
                 <p className="supporting-copy">This client cannot deliver local notifications in the current environment.</p>
               ) : localNotificationsEnabled ? (
-                <p className="supporting-copy">If Orchestra is missing from Notification Center or browser prompts were dismissed, refresh the status, request permission again, and send a test notification. Background web push additionally requires a secure origin (HTTPS or localhost); some mobile browsers may also require an installed web app context.</p>
+                <p className="supporting-copy">If Orchestra is missing from Notification Center or browser prompts were dismissed, refresh the status, request permission again, and send a test notification. Background web push additionally requires a secure origin (HTTPS or localhost); some mobile browsers may also require an installed web app context. When this client moves to the background, Orchestra should fall back to Web Push instead of suppressing it as an active live client.</p>
               ) : (
                 <p className="supporting-copy">Local notifications are disabled for this client until you turn them back on here.</p>
               )}

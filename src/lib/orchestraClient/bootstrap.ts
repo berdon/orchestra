@@ -1,6 +1,6 @@
 import type { AppInfo } from "../../types";
 
-export const ORCHESTRA_CLIENT_CONTRACT_VERSION = "2026-05-02" as const;
+export const ORCHESTRA_CLIENT_CONTRACT_VERSION = "2026-05-10" as const;
 
 export type OrchestraClientContractVersion = typeof ORCHESTRA_CLIENT_CONTRACT_VERSION;
 export type OrchestraClientHostKind = "tauri" | "remote_api" | "mock";

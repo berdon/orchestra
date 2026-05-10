@@ -117,11 +117,18 @@ export class RemoteApiEventManager {
   private readonly pendingSessionConfirmations = new Map<string, PendingSessionConfirmation[]>();
   private readonly browserOnlineListener?: () => void;
   private readonly browserOfflineListener?: () => void;
+  private readonly visibilityChangeListener?: () => void;
+  private readonly focusListener?: () => void;
+  private readonly blurListener?: () => void;
+  private readonly pageShowListener?: () => void;
+  private readonly pageHideListener?: () => void;
   private socket: WebSocket | null = null;
   private pendingConnection: PendingConnection | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private presenceHeartbeatTimer: number | null = null;
   private sawConnectedFrame = false;
   private intentionallyClosed = false;
+  private lastSentForegrounded: boolean | null = null;
 
   constructor(
     transport: RemoteApiTransport,
@@ -157,8 +164,28 @@ export class RemoteApiEventManager {
         this.sawConnectedFrame = false;
         this.connectionController.markHostOffline(error);
       };
+      this.visibilityChangeListener = () => {
+        this.sendPresenceUpdate();
+      };
+      this.focusListener = () => {
+        this.sendPresenceUpdate();
+      };
+      this.blurListener = () => {
+        this.sendPresenceUpdate();
+      };
+      this.pageShowListener = () => {
+        this.sendPresenceUpdate(true);
+      };
+      this.pageHideListener = () => {
+        this.sendPresenceUpdate(true, false);
+      };
       window.addEventListener("online", this.browserOnlineListener);
       window.addEventListener("offline", this.browserOfflineListener);
+      window.addEventListener("focus", this.focusListener);
+      window.addEventListener("blur", this.blurListener);
+      window.addEventListener("pageshow", this.pageShowListener);
+      window.addEventListener("pagehide", this.pageHideListener);
+      document.addEventListener("visibilitychange", this.visibilityChangeListener);
     }
   }
 
@@ -273,8 +300,10 @@ export class RemoteApiEventManager {
 
   private handleSocketClosed(operation: string) {
     const wasIntentional = this.intentionallyClosed;
+    this.stopPresenceHeartbeat();
     this.socket = null;
     this.sawConnectedFrame = false;
+    this.lastSentForegrounded = null;
     const error = this.createSocketError(operation, "Remote WebSocket connection closed.");
     if (this.pendingConnection) {
       this.pendingConnection.reject(error);
@@ -320,6 +349,50 @@ export class RemoteApiEventManager {
     return this.handlers.size > 0 || this.activeSessionSubscriptions.size > 0;
   }
 
+  private computeForegrounded() {
+    if (typeof document === "undefined") {
+      return true;
+    }
+    const isVisible = document.visibilityState === "visible";
+    const hasFocus = typeof document.hasFocus === "function" ? document.hasFocus() : true;
+    return isVisible && hasFocus;
+  }
+
+  private sendPresenceUpdate(force = false, foregroundedOverride?: boolean) {
+    if (!this.socket || !this.sawConnectedFrame || this.socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    const foregrounded = foregroundedOverride ?? this.computeForegrounded();
+    if (!force && this.lastSentForegrounded === foregrounded) {
+      return;
+    }
+    this.lastSentForegrounded = foregrounded;
+    try {
+      this.socket.send(JSON.stringify({
+        type: "client.presence",
+        foregrounded,
+      }));
+    } catch {
+      // best effort presence hint for notification routing
+    }
+  }
+
+  private startPresenceHeartbeat() {
+    if (typeof window === "undefined" || this.presenceHeartbeatTimer) {
+      return;
+    }
+    this.presenceHeartbeatTimer = window.setInterval(() => {
+      this.sendPresenceUpdate(true);
+    }, 20_000);
+  }
+
+  private stopPresenceHeartbeat() {
+    if (this.presenceHeartbeatTimer) {
+      clearInterval(this.presenceHeartbeatTimer);
+      this.presenceHeartbeatTimer = null;
+    }
+  }
+
   private maybeCloseIdleSocket() {
     if (this.shouldKeepSocketAlive()) {
       return;
@@ -333,9 +406,11 @@ export class RemoteApiEventManager {
       return;
     }
     this.intentionallyClosed = true;
+    this.stopPresenceHeartbeat();
     this.socket.close();
     this.socket = null;
     this.sawConnectedFrame = false;
+    this.lastSentForegrounded = null;
     this.connectionController.markConnected();
   }
 
@@ -383,6 +458,8 @@ export class RemoteApiEventManager {
         if (this.pendingConnection) {
           this.pendingConnection.resolve();
         }
+        this.sendPresenceUpdate(true);
+        this.startPresenceHeartbeat();
         this.replaySessionSubscriptions();
         return;
       }
@@ -553,11 +630,27 @@ export class RemoteApiEventManager {
   }
 
   destroy() {
+    this.stopPresenceHeartbeat();
     if (this.browserOnlineListener) {
       window.removeEventListener("online", this.browserOnlineListener);
     }
     if (this.browserOfflineListener) {
       window.removeEventListener("offline", this.browserOfflineListener);
+    }
+    if (this.focusListener) {
+      window.removeEventListener("focus", this.focusListener);
+    }
+    if (this.blurListener) {
+      window.removeEventListener("blur", this.blurListener);
+    }
+    if (this.pageShowListener) {
+      window.removeEventListener("pageshow", this.pageShowListener);
+    }
+    if (this.pageHideListener) {
+      window.removeEventListener("pagehide", this.pageHideListener);
+    }
+    if (this.visibilityChangeListener) {
+      document.removeEventListener("visibilitychange", this.visibilityChangeListener);
     }
   }
 }

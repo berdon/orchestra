@@ -157,6 +157,7 @@ pub struct RemoteClientRecord {
     pub connected_at: String,
     pub last_seen_at: String,
     pub subscribed_session_count: i64,
+    pub foregrounded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

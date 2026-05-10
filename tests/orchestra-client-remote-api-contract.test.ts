@@ -13,6 +13,7 @@ class FakeWebSocket {
 
   readonly url: string;
   readonly sent: string[] = [];
+  readyState = 1;
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
@@ -47,10 +48,11 @@ class FakeWebSocket {
   }
 
   close() {
+    this.readyState = 3;
     this.onclose?.({} as CloseEvent);
   }
 
-  emitConnected(contractVersion = "2026-05-02") {
+  emitConnected(contractVersion = "2026-05-10") {
     this.onmessage?.({
       data: JSON.stringify({ type: "connected", contractVersion }),
     } as MessageEvent);
@@ -75,7 +77,7 @@ class FakeWebSocket {
 }
 
 const bootstrap: OrchestraClientBootstrap = {
-  contractVersion: "2026-05-02",
+  contractVersion: "2026-05-10",
   bootstrappedAt: "2026-04-23T00:00:00.000Z",
   hostKind: "remote_api",
   authMode: "same_origin_cookie",
@@ -381,7 +383,9 @@ async function createHarness(): Promise<OrchestraClientContractHarness> {
       ]);
 
       expect(FakeWebSocket.instances).toHaveLength(1);
-      expect(FakeWebSocket.instances[0]?.sent).toEqual([
+      expect(
+        FakeWebSocket.instances[0]?.sent.filter((entry) => entry.includes("session.")),
+      ).toEqual([
         JSON.stringify({ type: "session.subscribe", sessionId: "session-123" }),
         JSON.stringify({
           type: "session.unsubscribe",

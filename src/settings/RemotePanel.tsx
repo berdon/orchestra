@@ -407,6 +407,7 @@ export function RemotePanel() {
                         <th>Device</th>
                         <th>Connected</th>
                         <th>Last seen</th>
+                        <th>Foreground</th>
                         <th>Project</th>
                         <th>Session subs</th>
                       </tr>
@@ -417,6 +418,7 @@ export function RemotePanel() {
                           <td>{client.deviceLabel ?? client.clientId}</td>
                           <td>{formatDateTime(client.connectedAt)}</td>
                           <td>{formatDateTime(client.lastSeenAt)}</td>
+                          <td>{client.foregrounded ? "Foreground" : "Background"}</td>
                           <td>{client.activeProjectId ?? "—"}</td>
                           <td>{client.subscribedSessionCount}</td>
                         </tr>
