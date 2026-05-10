@@ -1,14 +1,14 @@
 # ORC-248 mobile/remote notification implementation notes
 
 ## tl;dr
-- Orchestra now has a real hosted-web background notification path via Web Push + service worker, in addition to the existing live-session `notification.intent` path.
+- Orchestra now has a real hosted-web Web Push path via service worker, and subscribed hosted-web browsers now use that push path as their single notification surface.
 - The root cause behind “it only notifies when the web app is open” was that the prior remote/browser path only delivered notification intents to active clients over the websocket/browser event channel.
-- A follow-up reliability issue on iPhone Home Screen hosted-web use was that the first Web Push pass suppressed push whenever the device still had any connected hosted-web client, even if that client had moved to the background. The fix now suppresses duplicate push only while that hosted-web client is foregrounded.
+- A follow-up reliability issue on iPhone Home Screen hosted-web use was that earlier routing still depended on live-client foreground/background state. The final fix removes that bifurcation for subscribed hosted-web browsers and always uses Web Push for them instead.
 - Task-attention trigger coverage now includes a new `task.assigned_to_user` intent for transitions where the current attention owner becomes the user outside the existing approval/intervention states.
 - Final semantics are now explicit:
-  - desktop/Tauri clients and foreground hosted-web clients receive live notification intents
-  - paired hosted-web browsers with a registered push subscription receive Web Push when that device does not currently have a foreground hosted-web client
-  - background hosted-web clients suppress their own live browser notification when a push subscription is active so the push path becomes the single hosted-web background notification surface
+  - desktop/Tauri clients receive live notification intents
+  - paired hosted-web browsers with a registered push subscription receive Web Push regardless of whether that page is currently foregrounded, backgrounded, or closed
+  - hosted-web browsers without a push subscription fall back to best-effort live connected-client notifications only
   - Telegram still receives task-attention notifications through the backend channel adapter
 
 ## Executive summary
@@ -39,27 +39,18 @@ The implementation adds:
 ### Delivery fan-out now works like this
 For each notification intent:
 - **Telegram**: backend adapter, existing channel-scope behavior
-- **Live local notifications**: `notification.intent` to connected desktop clients and to hosted-web clients that are still being used live
-- **Hosted-web background push**: Web Push to paired browser devices with a stored subscription and no foreground hosted-web client for that device
+- **Live local notifications**: `notification.intent` to connected desktop clients and to hosted-web clients that do not currently have a Web Push subscription
+- **Hosted-web Web Push**: Web Push to paired browser devices with a stored subscription, regardless of whether that page is currently foregrounded or backgrounded
 
-### Why Orchestra does not always use Web Push for hosted-web
-Hosted-web now has two intentional delivery modes:
-- **foreground hosted-web** uses the already-open live websocket path for immediate delivery without a service-worker round trip
-- **background/closed hosted-web** uses Web Push when a subscription is available
+### Why hosted-web now prefers Web Push when subscribed
+Hosted-web subscribed browsers now use a single notification mode:
+- **subscribed hosted-web** uses Web Push whether the page is foregrounded, backgrounded, or closed
+- **unsubscribed hosted-web** falls back to best-effort live connected-client delivery only
 
-That split exists to keep open-browser delivery immediate while still giving mobile/Home Screen and closed-browser sessions a reliable background path.
-
-To avoid duplicate hosted-web notifications in background-capable browsers, the hosted-web client now suppresses its own live browser notification whenever:
-- the session is backgrounded, and
-- the paired browser already has an active Web Push subscription
-
-If the browser does **not** have a push subscription, hosted-web falls back to best-effort live connected-client delivery only.
-
-### Why foreground client state still matters
-Live `notification.intent` delivery remains the correct path for an already-open Orchestra client. The Web Push adapter suppresses push only while the same hosted-web device is foregrounded, and the hosted-web client suppresses its own live browser notification once it is backgrounded and has an active push subscription. Together those rules keep foreground use immediate, background use reliable, and the background-hosted-web surface single-routed through Web Push instead of double-notifying.
+This removes the earlier foreground/background bifurcation and makes hosted-web behavior match one explicit product rule: if the browser has a registered push subscription, Orchestra notifies it through Web Push.
 
 ## Web Push registration / subscription semantics
-Hosted-web background push requires all of the following:
+Hosted-web Web Push requires all of the following:
 - the client is the hosted Orchestra web app (`remote_api` + same-origin browser session)
 - local notifications are enabled in Settings → General on that browser
 - browser notification permission is granted
@@ -92,7 +83,7 @@ The browser sync path now:
 Web Push is now real and implemented, but browser/platform rules still apply:
 - plain insecure HTTP LAN origins cannot register background Web Push
 - some mobile browsers may require an installed/home-screen web app context for background push
-- if no push subscription is registered, hosted-web background delivery is unavailable and Orchestra falls back to live connected-client notifications plus Telegram/channel delivery
+- if no push subscription is registered, hosted-web Web Push is unavailable and Orchestra falls back to live connected-client notifications plus Telegram/channel delivery
 
 These constraints are now product-visible rather than implicit.
 
@@ -112,7 +103,7 @@ Added/updated coverage for:
 - backend web-push subscription parsing, eligibility, and stale-subscription cleanup
 - notification broker fan-out behavior including the new adapter/result shape
 - user-owned lane handoff trigger reasoning (`task.assigned_to_user`)
-- hosted-web browser-side Web Push registration/suppression behavior
+- hosted-web browser-side Web Push registration and subscribed-vs-unsubscribed routing behavior
 - local notification rendering for the new task-attention intent
 
 ## Validation summary

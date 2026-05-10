@@ -34,11 +34,7 @@ export function hostedWebClientShouldDeliverLiveNotification({
     return true;
   }
 
-  if (typeof visibilityState === "undefined") {
-    return true;
-  }
-
-  return visibilityState === "visible" && hasFocus !== false;
+  return false;
 }
 
 export function useNotificationController({

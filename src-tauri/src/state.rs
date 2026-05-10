@@ -76,12 +76,6 @@ pub fn generate_id(prefix: &str) -> String {
     format!("{}-{}", prefix, chrono::Utc::now().timestamp_micros())
 }
 
-fn remote_client_receives_live_notifications(client: &RemoteClientState, device_id: &str) -> bool {
-    client.client_kind == "hosted_web"
-        && client.foregrounded
-        && client.device_id.as_deref() == Some(device_id)
-}
-
 fn normalize_log_level(_level: &str, target: &str) -> &'static str {
     if target == "sessions.rpc.event" {
         "debug"
@@ -505,17 +499,6 @@ impl AppState {
                 device
             })
             .collect())
-    }
-
-    pub fn has_foreground_remote_client_for_device(&self, device_id: &str) -> Result<bool, String> {
-        self.remote_clients
-            .lock()
-            .map_err(|_| "Unable to access remote client state".to_string())
-            .map(|clients| {
-                clients
-                    .values()
-                    .any(|client| remote_client_receives_live_notifications(client, device_id))
-            })
     }
 
     pub fn set_session_subscription(

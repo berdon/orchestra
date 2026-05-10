@@ -119,7 +119,7 @@ fn parse_stored_web_push_subscription(raw: &str) -> Option<SubscriptionInfo> {
 
 fn load_eligible_web_push_targets(
     connection: &Connection,
-    state: &AppState,
+    _state: &AppState,
 ) -> Result<Vec<WebPushTarget>, String> {
     let mut statement = connection
         .prepare(
@@ -143,9 +143,6 @@ fn load_eligible_web_push_targets(
     for row in rows {
         let (device_id, raw_token) =
             row.map_err(|error| format!("Unable to read remote web push target: {error}"))?;
-        if state.has_foreground_remote_client_for_device(&device_id)? {
-            continue;
-        }
         if let Some(subscription) = parse_stored_web_push_subscription(&raw_token) {
             targets.push(WebPushTarget {
                 device_id,
@@ -339,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn load_targets_skips_only_foreground_hosted_web_clients_and_non_web_push_tokens() {
+    fn load_targets_include_subscribed_hosted_web_devices_even_when_foreground() {
         let connection = Connection::open_in_memory().expect("db should open");
         database::apply_migrations(&connection).expect("migrations should apply");
         seed_device(
@@ -381,8 +378,9 @@ mod tests {
 
         let targets =
             load_eligible_web_push_targets(&connection, &state).expect("targets should load");
-        assert_eq!(targets.len(), 1);
+        assert_eq!(targets.len(), 2);
         assert_eq!(targets[0].device_id, "device-background");
+        assert_eq!(targets[1].device_id, "device-foreground");
     }
 
     #[test]

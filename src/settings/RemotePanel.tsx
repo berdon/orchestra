@@ -446,9 +446,9 @@ export function RemotePanel() {
                 <li>Optional: turn on Tailscale Serve to expose the hosted Orchestra web app and API on the same HTTPS origin. Orchestra only touches Tailscale while both remote access and this option are enabled.</li>
                 <li>Create a pairing code.</li>
                 <li>For browser access, open the Hosted Orchestra web app URL and enter the pairing code on the sign-in screen.</li>
-                <li>Hosted-web notification semantics are split intentionally: a foreground browser gets live notifications immediately, while a backgrounded or closed browser uses Web Push if this paired browser has a registered push subscription.</li>
+                <li>Hosted-web notification semantics are now simpler: if this paired browser has a registered push subscription, Orchestra uses Web Push as the notification surface even while the page is already open.</li>
                 <li>For background browser notifications, use HTTPS (for example via Tailscale Serve) or localhost, then enable local notifications in Settings → General so Orchestra can register Web Push on that browser.</li>
-                <li>Without a push subscription, hosted-web background delivery is only best-effort while the page remains connected.</li>
+                <li>Without a push subscription, hosted-web delivery falls back only to best-effort live connected-client notifications while the page remains connected.</li>
                 <li>For Android/iOS pairing, paste the Pairing API URL into the mobile app and enter the same code there.</li>
               </ol>
             </section>

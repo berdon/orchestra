@@ -19,6 +19,15 @@ function remoteWebPushState(status: RemoteWebPushState["status"]): RemoteWebPush
 }
 
 describe("notification routing", () => {
+  test("suppresses hosted-web live notifications whenever web push is subscribed", () => {
+    expect(hostedWebClientShouldDeliverLiveNotification({
+      bootstrap: hostedWebBootstrap,
+      remoteWebPushState: remoteWebPushState("subscribed"),
+      visibilityState: "visible",
+      hasFocus: true,
+    })).toBe(false);
+  });
+
   test("suppresses hosted-web live notifications while backgrounded when web push is subscribed", () => {
     expect(hostedWebClientShouldDeliverLiveNotification({
       bootstrap: hostedWebBootstrap,
@@ -26,15 +35,6 @@ describe("notification routing", () => {
       visibilityState: "hidden",
       hasFocus: false,
     })).toBe(false);
-  });
-
-  test("keeps hosted-web live notifications in the foreground even when web push is subscribed", () => {
-    expect(hostedWebClientShouldDeliverLiveNotification({
-      bootstrap: hostedWebBootstrap,
-      remoteWebPushState: remoteWebPushState("subscribed"),
-      visibilityState: "visible",
-      hasFocus: true,
-    })).toBe(true);
   });
 
   test("falls back to live hosted-web notifications when web push is not subscribed", () => {

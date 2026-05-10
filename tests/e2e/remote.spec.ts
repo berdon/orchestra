@@ -78,6 +78,6 @@ test("remote settings panel enables remote access, creates pairing codes, and re
   await expect(page.getByText("No active remote clients.")).toBeVisible();
 
   await page.locator('[data-role="remote-detail-tab-guide"]').click();
-  await expect(page.getByText("Hosted-web notification semantics are split intentionally")).toBeVisible();
-  await expect(page.getByText("Without a push subscription, hosted-web background delivery is only best-effort while the page remains connected.")).toBeVisible();
+  await expect(page.getByText("Hosted-web notification semantics are now simpler")).toBeVisible();
+  await expect(page.getByText("Without a push subscription, hosted-web delivery falls back only to best-effort live connected-client notifications while the page remains connected.")).toBeVisible();
 });
