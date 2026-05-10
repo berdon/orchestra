@@ -13,7 +13,7 @@ When an agent runtime goes idle and the active task lane is still incomplete, Or
 When a whip is sent, the agent receives the following follow-up prompt:
 
 ```text
-Keep working until you are done - when you are done use tool `complete_lane_as_success` (with the task ID and optional notes) unless you believe either you or the task that was sent to you failed - then use tool `complete_lane_as_failure` (with task ID and optional notes). If you believe you need to escalate to the user - use tool `request_user_intervention` (with task ID and optional notes).
+Keep working until you are done - when you are done use tool `complete_lane_as_success` (with the task ID, required lane summary, and optional notes) unless you truly failed - then use tool `complete_lane_as_failure` (with task ID, required lane summary, required `actuallyFailed`, and optional notes). Pass `actuallyFailed=false` only when you finished this slice but are not actually failed and want Orchestra to guide the next slice. If you truly need the user - use tool `request_user_intervention` (with task ID, required lane summary, required `actuallyBlocked`, and optional notes). Pass `actuallyBlocked=false` only when you finished this slice but are not actually blocked and want Orchestra to guide the next slice.
 ```
 
 The prompt should also include the canonical task id so the agent can call the completion tools correctly.

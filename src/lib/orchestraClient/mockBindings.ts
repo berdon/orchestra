@@ -189,11 +189,11 @@ async function completeTask(
     case "success":
       return completeLaneAsSuccess(taskId, summary, notes);
     case "failure":
-      return completeLaneAsFailure(taskId, summary, notes);
+      return completeLaneAsFailure(taskId, summary, true, notes);
     case "needs_user":
-      return requestUserIntervention(taskId, summary, notes);
+      return requestUserIntervention(taskId, summary, true, notes);
     default:
-      return requestUserIntervention(taskId, summary, notes);
+      return requestUserIntervention(taskId, summary, true, notes);
   }
 }
 

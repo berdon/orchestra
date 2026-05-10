@@ -51,7 +51,9 @@ class FakeWebSocket {
   }
 
   emitConnected(contractVersion = "2026-05-02") {
-    this.onmessage?.({ data: JSON.stringify({ type: "connected", contractVersion }) } as MessageEvent);
+    this.onmessage?.({
+      data: JSON.stringify({ type: "connected", contractVersion }),
+    } as MessageEvent);
   }
 
   emitSubscriptionConfirmed(sessionId: string, subscribed: boolean) {
@@ -87,7 +89,7 @@ const bootstrap: OrchestraClientBootstrap = {
     sharedInbox: true,
     sharedSessions: true,
     sharedSkills: true,
-      sharedNotes: true,
+    sharedNotes: true,
     taskSchedules: true,
     sessionStreaming: true,
     sessionControls: true,
@@ -115,7 +117,10 @@ const bootstrap: OrchestraClientBootstrap = {
       policies: { availability: "available" },
       channels: { availability: "available" },
       modelCatalog: { availability: "available" },
-      piExecutableDiagnostic: { availability: "unavailable", reason: "Desktop only" },
+      piExecutableDiagnostic: {
+        availability: "unavailable",
+        reason: "Desktop only",
+      },
     },
     skills: {
       read: { availability: "available" },
@@ -158,8 +163,14 @@ const bootstrap: OrchestraClientBootstrap = {
     host: {
       logsWindow: { availability: "unavailable", reason: "Desktop only" },
       agentTerminal: { availability: "unavailable", reason: "Desktop only" },
-      systemNotifications: { availability: "unavailable", reason: "Desktop only" },
-      bridgeDiagnostics: { availability: "unavailable", reason: "Desktop only" },
+      systemNotifications: {
+        availability: "unavailable",
+        reason: "Desktop only",
+      },
+      bridgeDiagnostics: {
+        availability: "unavailable",
+        reason: "Desktop only",
+      },
       runtimeLogs: { availability: "unavailable", reason: "Desktop only" },
       harnessSettings: { availability: "available" },
       remoteAccess: { availability: "unavailable", reason: "Desktop only" },
@@ -235,35 +246,41 @@ afterEach(() => {
 async function createHarness(): Promise<OrchestraClientContractHarness> {
   const requests: Array<{ method: string; url: string; body?: unknown }> = [];
 
-  const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const method = init?.method ?? "GET";
-    const url = String(input);
-    let body: unknown;
-    if (typeof init?.body === "string") {
-      body = JSON.parse(init.body);
-    }
-    requests.push({ method, url, body });
+  const fetchImpl = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      const url = String(input);
+      let body: unknown;
+      if (typeof init?.body === "string") {
+        body = JSON.parse(init.body);
+      }
+      requests.push({ method, url, body });
 
-    if (url.endsWith("/api/v1/tasks?includeArchived=false&tagMatch=all&sortBy=updatedAt&sortDirection=desc")) {
-      return jsonResponse([]);
-    }
-    if (url.endsWith("/api/v1/tasks/task-123/complete/success")) {
-      return jsonResponse(taskDetail);
-    }
-    if (url.endsWith("/api/v1/tasks/task-123/complete/failure")) {
-      return jsonResponse(taskDetail);
-    }
-    if (url.endsWith("/api/v1/tasks/task-123/complete/needs-user")) {
-      return jsonResponse(taskDetail);
-    }
-    if (url.endsWith("/api/v1/sessions/session-123/subscribe")) {
-      return jsonResponse(sessionRecord);
-    }
-    if (url.endsWith("/api/v1/sessions/session-123/unsubscribe")) {
-      return jsonResponse({ ...sessionRecord, subscribed: false });
-    }
-    throw new Error(`Unexpected fetch: ${method} ${url}`);
-  });
+      if (
+        url.endsWith(
+          "/api/v1/tasks?includeArchived=false&tagMatch=all&sortBy=updatedAt&sortDirection=desc",
+        )
+      ) {
+        return jsonResponse([]);
+      }
+      if (url.endsWith("/api/v1/tasks/task-123/complete/success")) {
+        return jsonResponse(taskDetail);
+      }
+      if (url.endsWith("/api/v1/tasks/task-123/complete/failure")) {
+        return jsonResponse(taskDetail);
+      }
+      if (url.endsWith("/api/v1/tasks/task-123/complete/needs-user")) {
+        return jsonResponse(taskDetail);
+      }
+      if (url.endsWith("/api/v1/sessions/session-123/subscribe")) {
+        return jsonResponse(sessionRecord);
+      }
+      if (url.endsWith("/api/v1/sessions/session-123/unsubscribe")) {
+        return jsonResponse({ ...sessionRecord, subscribed: false });
+      }
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    },
+  );
 
   const binding = createRemoteApiOrchestraClientBinding(bootstrap, {
     fetchImpl,
@@ -290,9 +307,25 @@ async function createHarness(): Promise<OrchestraClientContractHarness> {
       ]);
     },
     async verifyCompletionOutcomes() {
-      await expect(client.tasks.complete("task-123", "success", "Looks good", "Ship it")).resolves.toEqual(taskDetail);
-      await expect(client.tasks.complete("task-123", "failure", "Needs work", "Please rework the lane")).resolves.toEqual(taskDetail);
-      await expect(client.tasks.complete("task-123", "needs_user", "Need review", "User input required")).resolves.toEqual(taskDetail);
+      await expect(
+        client.tasks.complete("task-123", "success", "Looks good", "Ship it"),
+      ).resolves.toEqual(taskDetail);
+      await expect(
+        client.tasks.complete(
+          "task-123",
+          "failure",
+          "Needs work",
+          "Please rework the lane",
+        ),
+      ).resolves.toEqual(taskDetail);
+      await expect(
+        client.tasks.complete(
+          "task-123",
+          "needs_user",
+          "Need review",
+          "User input required",
+        ),
+      ).resolves.toEqual(taskDetail);
 
       expect(requests).toEqual([
         {
@@ -303,21 +336,33 @@ async function createHarness(): Promise<OrchestraClientContractHarness> {
         {
           method: "POST",
           url: "https://orchestra.example.test/api/v1/tasks/task-123/complete/failure",
-          body: { summary: "Needs work", notes: "Please rework the lane" },
+          body: {
+            summary: "Needs work",
+            actuallyFailed: true,
+            notes: "Please rework the lane",
+          },
         },
         {
           method: "POST",
           url: "https://orchestra.example.test/api/v1/tasks/task-123/complete/needs-user",
-          body: { summary: "Need review", notes: "User input required" },
+          body: {
+            summary: "Need review",
+            actuallyBlocked: true,
+            notes: "User input required",
+          },
         },
       ]);
     },
     async verifySessionSubscriptionSemantics() {
-      await expect(client.sessions.subscribe("session-123")).resolves.toMatchObject({
+      await expect(
+        client.sessions.subscribe("session-123"),
+      ).resolves.toMatchObject({
         id: "session-123",
         subscribed: true,
       });
-      await expect(client.sessions.unsubscribe("session-123")).resolves.toMatchObject({
+      await expect(
+        client.sessions.unsubscribe("session-123"),
+      ).resolves.toMatchObject({
         id: "session-123",
         subscribed: false,
       });
@@ -338,14 +383,19 @@ async function createHarness(): Promise<OrchestraClientContractHarness> {
       expect(FakeWebSocket.instances).toHaveLength(1);
       expect(FakeWebSocket.instances[0]?.sent).toEqual([
         JSON.stringify({ type: "session.subscribe", sessionId: "session-123" }),
-        JSON.stringify({ type: "session.unsubscribe", sessionId: "session-123" }),
+        JSON.stringify({
+          type: "session.unsubscribe",
+          sessionId: "session-123",
+        }),
       ]);
     },
     async emitSharedEvents() {
       await client.sessions.subscribe("session-123");
       const socket = FakeWebSocket.instances[0];
       if (!socket) {
-        throw new Error("Expected remote websocket to be connected before emitting events.");
+        throw new Error(
+          "Expected remote websocket to be connected before emitting events.",
+        );
       }
       socket.emitEvent({
         id: "remote-event-task",

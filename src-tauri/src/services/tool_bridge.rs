@@ -2496,6 +2496,7 @@ fn invoke_bridge_command(
         "complete_lane_as_failure" => {
             let task_id = require_string(&payload, "taskId")?;
             let summary = require_string(&payload, "summary")?;
+            let actually_failed = require_bool(&payload, "actuallyFailed")?;
             let notes = payload
                 .get("notes")
                 .and_then(Value::as_str)
@@ -2509,16 +2510,30 @@ fn invoke_bridge_command(
             let mut writable = database::open_connection()?;
             let previous_assignment =
                 crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
-            let task = crate::services::task_runtime::complete_lane_as_failure_with_app(
+            let result = crate::services::task_runtime::complete_lane_as_failure_with_app(
                 &mut writable,
                 &context.project_root,
                 &context.session_dir,
                 &task_id,
                 Some(summary),
+                actually_failed,
                 notes,
                 None,
                 authorization,
             )?;
+            let task = result.task;
+            if !result.transitioned {
+                if let Some(app) = config.clone_app_handle() {
+                    let _ = crate::services::app_events::emit_task_change(
+                        &app,
+                        "task.transition.continue_working",
+                        [task.id.clone()],
+                    );
+                }
+                return serde_json::to_value(task).map_err(|error| {
+                    format!("Unable to serialize continue-working task lane: {error}")
+                });
+            }
             let auto_dispatches =
                 crate::services::task_runtime::collect_post_completion_auto_dispatches(
                     &mut writable,
@@ -2572,6 +2587,7 @@ fn invoke_bridge_command(
         "request_user_intervention" => {
             let task_id = require_string(&payload, "taskId")?;
             let summary = require_string(&payload, "summary")?;
+            let actually_blocked = require_bool(&payload, "actuallyBlocked")?;
             let notes = payload
                 .get("notes")
                 .and_then(Value::as_str)
@@ -2585,16 +2601,30 @@ fn invoke_bridge_command(
             let mut writable = database::open_connection()?;
             let previous_assignment =
                 crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
-            let task = crate::services::task_runtime::request_user_intervention_with_app(
+            let result = crate::services::task_runtime::request_user_intervention_with_app(
                 &mut writable,
                 &context.project_root,
                 &context.session_dir,
                 &task_id,
                 Some(summary),
+                actually_blocked,
                 notes,
                 None,
                 authorization,
             )?;
+            let task = result.task;
+            if !result.transitioned {
+                if let Some(app) = config.clone_app_handle() {
+                    let _ = crate::services::app_events::emit_task_change(
+                        &app,
+                        "task.transition.continue_working",
+                        [task.id.clone()],
+                    );
+                }
+                return serde_json::to_value(task).map_err(|error| {
+                    format!("Unable to serialize continue-working task lane: {error}")
+                });
+            }
             if let Some(session_id) =
                 crate::services::task_runtime::transitioned_assignment_session_to_retire(
                     previous_assignment.as_ref(),
@@ -3188,6 +3218,13 @@ fn require_string(payload: &Value, key: &str) -> Result<String, String> {
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .ok_or_else(|| format!("Missing required string field: {key}"))
+}
+
+fn require_bool(payload: &Value, key: &str) -> Result<bool, String> {
+    payload
+        .get(key)
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format!("Missing required boolean field: {key}"))
 }
 
 #[cfg(test)]

@@ -1256,7 +1256,7 @@ pub async fn complete_lane_as_success(
     summary: String,
     notes: Option<String>,
 ) -> Result<TaskDetail, String> {
-    complete_lane_command(app, state, task_id, summary, notes, "success").await
+    complete_lane_command(app, state, task_id, summary, notes, "success", None).await
 }
 
 #[tauri::command]
@@ -1265,9 +1265,19 @@ pub async fn complete_lane_as_failure(
     state: State<'_, AppState>,
     task_id: String,
     summary: String,
+    actually_failed: bool,
     notes: Option<String>,
 ) -> Result<TaskDetail, String> {
-    complete_lane_command(app, state, task_id, summary, notes, "failure").await
+    complete_lane_command(
+        app,
+        state,
+        task_id,
+        summary,
+        notes,
+        "failure",
+        Some(actually_failed),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1276,9 +1286,19 @@ pub async fn request_user_intervention(
     state: State<'_, AppState>,
     task_id: String,
     summary: String,
+    actually_blocked: bool,
     notes: Option<String>,
 ) -> Result<TaskDetail, String> {
-    complete_lane_command(app, state, task_id, summary, notes, "needs_user").await
+    complete_lane_command(
+        app,
+        state,
+        task_id,
+        summary,
+        notes,
+        "needs_user",
+        Some(actually_blocked),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1971,6 +1991,7 @@ async fn complete_lane_command(
     summary: String,
     notes: Option<String>,
     outcome: &str,
+    actually_transitioned: Option<bool>,
 ) -> Result<TaskDetail, String> {
     let result = async {
         let task_id_for_context = task_id.clone();
@@ -1981,38 +2002,67 @@ async fn complete_lane_command(
         .map_err(|error| format!("Unable to join lane completion context task: {error}"))??;
         let mut connection = database::open_connection()?;
         let previous_assignment = task_runtime::get_current_lane_assignment(&connection, &task_id)?;
-        let mut task = match outcome {
-            "success" => task_runtime::complete_lane_as_success_with_app(
-                &mut connection,
-                &context.project_root,
-                &context.session_dir,
-                &task_id,
-                Some(summary.clone()),
-                notes.clone(),
-                Some(&app),
-                None,
-            )?,
-            "failure" => task_runtime::complete_lane_as_failure_with_app(
-                &mut connection,
-                &context.project_root,
-                &context.session_dir,
-                &task_id,
-                Some(summary.clone()),
-                notes.clone(),
-                Some(&app),
-                None,
-            )?,
-            _ => task_runtime::request_user_intervention_with_app(
-                &mut connection,
-                &context.project_root,
-                &context.session_dir,
-                &task_id,
-                Some(summary.clone()),
-                notes.clone(),
-                Some(&app),
-                None,
-            )?,
+        let (mut task, transitioned) = match outcome {
+            "success" => (
+                task_runtime::complete_lane_as_success_with_app(
+                    &mut connection,
+                    &context.project_root,
+                    &context.session_dir,
+                    &task_id,
+                    Some(summary.clone()),
+                    notes.clone(),
+                    Some(&app),
+                    None,
+                )?,
+                true,
+            ),
+            "failure" => {
+                let result = task_runtime::complete_lane_as_failure_with_app(
+                    &mut connection,
+                    &context.project_root,
+                    &context.session_dir,
+                    &task_id,
+                    Some(summary.clone()),
+                    actually_transitioned.ok_or_else(|| {
+                        "actuallyFailed is required for complete_lane_as_failure".to_string()
+                    })?,
+                    notes.clone(),
+                    Some(&app),
+                    None,
+                )?;
+                (result.task, result.transitioned)
+            }
+            _ => {
+                let result = task_runtime::request_user_intervention_with_app(
+                    &mut connection,
+                    &context.project_root,
+                    &context.session_dir,
+                    &task_id,
+                    Some(summary.clone()),
+                    actually_transitioned.ok_or_else(|| {
+                        "actuallyBlocked is required for request_user_intervention".to_string()
+                    })?,
+                    notes.clone(),
+                    Some(&app),
+                    None,
+                )?;
+                (result.task, result.transitioned)
+            }
         };
+
+        if !transitioned {
+            return Ok::<
+                (
+                    TaskDetail,
+                    Vec<String>,
+                    Option<String>,
+                    Option<String>,
+                    bool,
+                ),
+                String,
+            >((task, vec![task_id.clone()], None, None, false));
+        }
+
         let mut changed_task_ids = tasks::collect_task_refresh_ids(&connection, &task.id)?;
         let cleaned_blocked_task_ids = cleanup_blocked_task_runtime_claims(
             &app,
@@ -2100,41 +2150,63 @@ async fn complete_lane_command(
             }
         });
 
-        Ok::<(TaskDetail, Vec<String>, Option<String>, Option<String>), String>((
+        Ok::<
+            (
+                TaskDetail,
+                Vec<String>,
+                Option<String>,
+                Option<String>,
+                bool,
+            ),
+            String,
+        >((
             task,
             changed_task_ids,
             retired_session_id,
             archived_session_id,
+            true,
         ))
     }
     .await;
 
     match result {
-        Ok((task, changed_task_ids, retired_session_id, archived_session_id)) => {
-            state.log(
-                "info",
-                "task.transition",
-                &format!("Completed task lane {} with outcome {}", task_id, outcome),
-            );
-            emit_task_change(
-                &app,
-                task_runtime::task_transition_event_reason(outcome, &task),
-                changed_task_ids,
-            );
-            if let Some(session_id) = archived_session_id {
-                emit_session_change(
+        Ok((task, changed_task_ids, retired_session_id, archived_session_id, transitioned)) => {
+            if transitioned {
+                state.log(
+                    "info",
+                    "task.transition",
+                    &format!("Completed task lane {} with outcome {}", task_id, outcome),
+                );
+                emit_task_change(
                     &app,
-                    &format!("task.transition.{outcome}.archive"),
-                    [session_id],
+                    task_runtime::task_transition_event_reason(outcome, &task),
+                    changed_task_ids,
                 );
-            }
-            if let Some(session_id) = retired_session_id {
-                crate::services::live_sessions::schedule_session_retirement(
-                    app.clone(),
-                    session_id,
-                    Duration::ZERO,
-                    format!("task.transition.{outcome}"),
+                if let Some(session_id) = archived_session_id {
+                    emit_session_change(
+                        &app,
+                        &format!("task.transition.{outcome}.archive"),
+                        [session_id],
+                    );
+                }
+                if let Some(session_id) = retired_session_id {
+                    crate::services::live_sessions::schedule_session_retirement(
+                        app.clone(),
+                        session_id,
+                        Duration::ZERO,
+                        format!("task.transition.{outcome}"),
+                    );
+                }
+            } else {
+                state.log(
+                    "info",
+                    "task.transition.continue_working",
+                    &format!(
+                        "Kept task lane {} in progress after {} requested continue-working guidance",
+                        task_id, outcome
+                    ),
                 );
+                emit_task_change(&app, "task.transition.continue_working", changed_task_ids);
             }
             Ok(task)
         }

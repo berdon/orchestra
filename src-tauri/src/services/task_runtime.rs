@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, OptionalExtension};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
 use crate::{
@@ -30,7 +30,32 @@ const DEFAULT_TASK_WHIP_MAX_ATTEMPTS: i64 = 10;
 pub const TASK_WHIP_COOLDOWN_SECS: i64 = 60;
 pub const TASK_WHIP_UNANSWERED_RESET_THRESHOLD: i64 = 3;
 const MAX_LANE_SUMMARY_LENGTH: usize = 500;
-const TASK_WHIP_PROMPT: &str = "Keep working until you are done - when you are done use tool `complete_lane_as_success` (with the task ID, required lane summary, and optional notes) unless you believe either you or the task that was sent to you failed - then use tool `complete_lane_as_failure` (with task ID, required lane summary, and optional notes). If you believe you need to escalate to the user - use tool `request_user_intervention` (with task ID, required lane summary, and optional notes).";
+const TASK_WHIP_PROMPT: &str = "Keep working until you are done - when you are done use tool `complete_lane_as_success` (with the task ID, required lane summary, and optional notes) unless you truly failed - then use tool `complete_lane_as_failure` (with task ID, required lane summary, required `actuallyFailed`, and optional notes). Pass `actuallyFailed=false` only when you finished this slice but are not actually failed and want Orchestra to guide the next slice. If you truly need the user - use tool `request_user_intervention` (with task ID, required lane summary, required `actuallyBlocked`, and optional notes). Pass `actuallyBlocked=false` only when you finished this slice but are not actually blocked and want Orchestra to guide the next slice.";
+const CONTINUE_WORKING_WITH_UNFINISHED_TODOS_PROMPT: &str =
+    "Great work finishing the next slice, keep going in the next todo until you have finished it!";
+const CONTINUE_WORKING_WITHOUT_UNFINISHED_TODOS_PROMPT: &str = "Great work finishing this next slice, create todos for the remaining work then keep working until you finish the next todos";
+
+#[derive(Debug, Clone)]
+pub struct LaneCompletionResult {
+    pub task: TaskDetail,
+    pub transitioned: bool,
+}
+
+impl LaneCompletionResult {
+    fn transitioned(task: TaskDetail) -> Self {
+        Self {
+            task,
+            transitioned: true,
+        }
+    }
+
+    fn continue_working(task: TaskDetail) -> Self {
+        Self {
+            task,
+            transitioned: false,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct StaleTaskAssignmentCandidate {
@@ -2346,6 +2371,7 @@ pub fn escalate_task_whip_limit_exceeded(
         session_dir,
         &candidate.task_id,
         Some(note),
+        true,
         None,
     )
 }
@@ -3421,10 +3447,12 @@ pub fn complete_lane_as_success_with_app(
         task_id,
         "success",
         summary,
+        None,
         notes,
         app,
         authorization,
     )
+    .map(|result| result.task)
 }
 
 pub fn complete_lane_as_failure(
@@ -3433,6 +3461,7 @@ pub fn complete_lane_as_failure(
     session_dir: &Path,
     task_id: &str,
     notes: Option<String>,
+    actually_failed: bool,
     authorization: Option<&AuthorizationContext>,
 ) -> Result<TaskDetail, String> {
     complete_lane_as_failure_with_app(
@@ -3441,10 +3470,12 @@ pub fn complete_lane_as_failure(
         session_dir,
         task_id,
         notes.clone(),
+        actually_failed,
         notes,
         None,
         authorization,
     )
+    .map(|result| result.task)
 }
 
 pub fn complete_lane_as_failure_with_app(
@@ -3453,10 +3484,11 @@ pub fn complete_lane_as_failure_with_app(
     session_dir: &Path,
     task_id: &str,
     summary: Option<String>,
+    actually_failed: bool,
     notes: Option<String>,
     app: Option<&AppHandle>,
     authorization: Option<&AuthorizationContext>,
-) -> Result<TaskDetail, String> {
+) -> Result<LaneCompletionResult, String> {
     complete_lane(
         connection,
         project_root,
@@ -3464,6 +3496,7 @@ pub fn complete_lane_as_failure_with_app(
         task_id,
         "failure",
         summary,
+        Some(actually_failed),
         notes,
         app,
         authorization,
@@ -3476,6 +3509,7 @@ pub fn request_user_intervention(
     session_dir: &Path,
     task_id: &str,
     notes: Option<String>,
+    actually_blocked: bool,
     authorization: Option<&AuthorizationContext>,
 ) -> Result<TaskDetail, String> {
     request_user_intervention_with_app(
@@ -3484,10 +3518,12 @@ pub fn request_user_intervention(
         session_dir,
         task_id,
         notes.clone(),
+        actually_blocked,
         notes,
         None,
         authorization,
     )
+    .map(|result| result.task)
 }
 
 pub fn request_user_intervention_with_app(
@@ -3496,10 +3532,11 @@ pub fn request_user_intervention_with_app(
     session_dir: &Path,
     task_id: &str,
     summary: Option<String>,
+    actually_blocked: bool,
     notes: Option<String>,
     app: Option<&AppHandle>,
     authorization: Option<&AuthorizationContext>,
-) -> Result<TaskDetail, String> {
+) -> Result<LaneCompletionResult, String> {
     complete_lane(
         connection,
         project_root,
@@ -3507,6 +3544,7 @@ pub fn request_user_intervention_with_app(
         task_id,
         "needs_user",
         summary,
+        Some(actually_blocked),
         notes,
         app,
         authorization,
@@ -4002,6 +4040,53 @@ fn validate_completion_attention_guards(
     ))
 }
 
+fn continue_working_follow_up_prompt(has_unfinished_todos: bool) -> &'static str {
+    if has_unfinished_todos {
+        CONTINUE_WORKING_WITH_UNFINISHED_TODOS_PROMPT
+    } else {
+        CONTINUE_WORKING_WITHOUT_UNFINISHED_TODOS_PROMPT
+    }
+}
+
+fn continue_active_worker_after_slice_completion(
+    connection: &mut Connection,
+    session_dir: &Path,
+    task: &TaskDetail,
+    lane: &WorkflowLane,
+    assignment: &TaskLaneAssignment,
+    app: Option<&AppHandle>,
+) -> Result<LaneCompletionResult, String> {
+    if !matches!(assignment.worker_type.as_str(), "agent" | "role") {
+        return Err(format!(
+            "Task {} can only continue working after a slice-complete failure/intervention request when the active lane is owned by an agent or role.",
+            task.id
+        ));
+    }
+
+    let app = app.ok_or_else(|| {
+        format!(
+            "Task {} could not continue working because no app handle was available to send the required follow-up instruction.",
+            task.id
+        )
+    })?;
+    let state = app.state::<AppState>();
+    sync_task_lane_owner(connection, task, lane, "in_progress")?;
+
+    let unfinished_todos = tasks::list_unfinished_task_todos(connection, &task.id, None)?;
+    let prompt = continue_working_follow_up_prompt(!unfinished_todos.is_empty());
+    start_assignment_follow_up(
+        app.clone(),
+        &state,
+        session_dir.to_path_buf(),
+        assignment,
+        prompt,
+    )?;
+
+    Ok(LaneCompletionResult::continue_working(
+        tasks::get_task_context(connection, &task.id)?,
+    ))
+}
+
 fn complete_lane(
     connection: &mut Connection,
     project_root: &Path,
@@ -4009,10 +4094,11 @@ fn complete_lane(
     task_id: &str,
     outcome: &str,
     summary: Option<String>,
+    actually_transitioned: Option<bool>,
     notes: Option<String>,
     app: Option<&AppHandle>,
     authorization: Option<&AuthorizationContext>,
-) -> Result<TaskDetail, String> {
+) -> Result<LaneCompletionResult, String> {
     let active_assignment = get_active_lane_assignment(connection, task_id)?;
     let current_assignment = get_current_lane_assignment(connection, task_id)?;
     let task = tasks::get_task_context(connection, task_id)?;
@@ -4071,6 +4157,17 @@ fn complete_lane(
     let normalized_notes = normalize_optional(notes);
 
     if let Some(assignment) = active_assignment.as_ref() {
+        if matches!(outcome, "failure" | "needs_user") && actually_transitioned == Some(false) {
+            return continue_active_worker_after_slice_completion(
+                connection,
+                session_dir,
+                &task,
+                &lane,
+                assignment,
+                app,
+            );
+        }
+
         if task.status == "blocked" || task.dependency_blocked {
             update_open_lane_run_with_summary(
                 connection,
@@ -4101,7 +4198,7 @@ fn complete_lane(
                 assignment,
                 &updated.status,
             )?;
-            return Ok(updated);
+            return Ok(LaneCompletionResult::transitioned(updated));
         }
 
         if outcome == "success"
@@ -4136,7 +4233,7 @@ fn complete_lane(
                 "awaiting_user_approval",
                 normalized_notes.as_deref(),
             );
-            return Ok(updated);
+            return Ok(LaneCompletionResult::transitioned(updated));
         }
 
         if outcome == "needs_user" && matches!(assignment.worker_type.as_str(), "agent" | "role") {
@@ -4168,7 +4265,7 @@ fn complete_lane(
                 "awaiting_user_intervention",
                 normalized_notes.as_deref(),
             );
-            return Ok(updated);
+            return Ok(LaneCompletionResult::transitioned(updated));
         }
 
         update_open_lane_run_with_summary(
@@ -4224,7 +4321,7 @@ fn complete_lane(
             normalized_notes.as_deref(),
         );
     }
-    Ok(updated)
+    Ok(LaneCompletionResult::transitioned(updated))
 }
 
 pub fn approve_task_review(
@@ -5854,8 +5951,8 @@ fn orchestra_tool_help_block() -> String {
         "- add_task_attachment(task_id, input): Call this tool for artifacts that matter to execution or review, such as notes, logs, screenshots, examples, or generated outputs. Prefer input.filePath for readable session-local files; use input.base64Data when the bytes are already in memory. Relative filePath values resolve from the session cwd.",
         "- remove_task_attachment(attachment_id): Call this tool only to clean up an attachment that is incorrect, outdated, or should not remain attached.",
         "- complete_lane_as_success(task_id, summary, notes?): Call this tool when you finished the lane's goal and the task should follow the workflow's success transition. The lane summary is required.",
-        "- complete_lane_as_failure(task_id, summary, notes?): Call this tool when you attempted the lane but the correct workflow outcome is failure, so Orchestra should follow the failure transition. The lane summary is required.",
-        "- request_user_intervention(task_id, summary, notes?): Call this tool when you are blocked, missing information or permissions, hit a failing transition/completion step, or need a human decision before proceeding. The lane summary is required.",
+        "- complete_lane_as_failure(task_id, summary, actuallyFailed, notes?): Call this tool when you truly attempted the lane and the correct workflow outcome is failure, so Orchestra should follow the failure transition. Pass actuallyFailed=true when you are truly failed. Pass actuallyFailed=false only when you finished the current slice, are not actually failed, and want Orchestra to keep the lane in progress and coach the next step. The lane summary is required.",
+        "- request_user_intervention(task_id, summary, actuallyBlocked, notes?): Call this tool when you are truly blocked, missing information or permissions, hit a failing transition/completion step, or need a human decision before proceeding. Pass actuallyBlocked=true when you are truly blocked. Pass actuallyBlocked=false only when you finished the current slice, are not actually blocked, and want Orchestra to keep the lane in progress and coach the next step. The lane summary is required.",
     ]
     .join("\n")
 }
@@ -6447,6 +6544,31 @@ mod tests {
         },
     };
 
+    static TASK_RUNTIME_TEST_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> =
+        std::sync::OnceLock::new();
+
+    #[ctor::ctor]
+    fn initialize_task_runtime_test_app_handle() {
+        let tool_bridge = crate::services::tool_bridge::dummy_tool_bridge_config(
+            "task-runtime-tests-main-thread",
+        );
+        let app = tauri::Builder::default()
+            .manage(crate::state::AppState::new(tool_bridge.clone()))
+            .build(crate::tauri_context())
+            .expect("main-thread task runtime test app should build");
+        let leaked_app = Box::leak(Box::new(app));
+        let app_handle = leaked_app.handle().clone();
+        tool_bridge.attach_app_handle(app_handle.clone());
+        let _ = TASK_RUNTIME_TEST_APP_HANDLE.set(app_handle);
+    }
+
+    fn test_app_handle() -> tauri::AppHandle {
+        TASK_RUNTIME_TEST_APP_HANDLE
+            .get()
+            .expect("main-thread task runtime test app should exist")
+            .clone()
+    }
+
     fn in_memory_connection() -> Connection {
         let connection = Connection::open_in_memory().expect("open in-memory db");
         database::apply_migrations(&connection).expect("apply migrations");
@@ -7026,11 +7148,18 @@ mod tests {
         assert!(
             prompt.contains("- complete_lane_as_success(task_id, summary, notes?): Call this tool")
         );
+        assert!(prompt.contains(
+            "- complete_lane_as_failure(task_id, summary, actuallyFailed, notes?): Call this tool"
+        ));
         assert!(
-            prompt.contains("- complete_lane_as_failure(task_id, summary, notes?): Call this tool")
+            prompt.contains("Pass actuallyFailed=false only when you finished the current slice")
         );
-        assert!(prompt
-            .contains("- request_user_intervention(task_id, summary, notes?): Call this tool"));
+        assert!(prompt.contains(
+            "- request_user_intervention(task_id, summary, actuallyBlocked, notes?): Call this tool"
+        ));
+        assert!(
+            prompt.contains("Pass actuallyBlocked=false only when you finished the current slice")
+        );
         assert!(prompt
             .contains("You must end this lane by invoking exactly one Orchestra completion tool"));
         assert!(prompt.contains("Every completion tool requires a concise lane summary"));
@@ -8054,6 +8183,7 @@ mod tests {
             &session_dir,
             &task.id,
             Some("Need help from the user".into()),
+            true,
             None,
         )
         .expect("lane should pause for user intervention");
@@ -10213,6 +10343,7 @@ mod tests {
             &session_dir,
             &task.id,
             Some("Need help from the user".into()),
+            true,
             Some(&authorization),
         )
         .expect("user intervention should not be blocked by success-only checks");
@@ -10225,6 +10356,302 @@ mod tests {
                 .map(|entry| entry.status.as_str()),
             Some(ASSIGNMENT_STATUS_AWAITING_USER_INTERVENTION)
         );
+    }
+
+    #[test]
+    fn complete_lane_as_failure_false_keeps_the_lane_active_when_task_todos_remain() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let project_root = init_test_repo("task-runtime-failure-false-with-todos");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        ensure_default_project(&connection);
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Failure false with todos".into(),
+                description: Some("Keep working instead of transitioning.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("role lane should dispatch");
+        let todo = tasks::add_task_todo(
+            &mut connection,
+            &task.id,
+            crate::models::TaskTodoInput {
+                lane_id: Some(assignment.lane_id.clone()),
+                description: "Keep implementing the next slice".into(),
+            },
+        )
+        .expect("todo should add");
+        let app = test_app_handle();
+
+        let result = complete_lane_as_failure_with_app(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("Finished this slice".into()),
+            false,
+            Some("Keep going".into()),
+            Some(&app),
+            None,
+        )
+        .expect("lane should stay active");
+        assert!(!result.transitioned);
+        assert_eq!(result.task.status, "in_progress");
+        assert_eq!(
+            result
+                .task
+                .active_lane_assignment
+                .as_ref()
+                .map(|assignment| assignment.status.as_str()),
+            Some(ASSIGNMENT_STATUS_ACTIVE)
+        );
+        assert!(result
+            .task
+            .lane_runs
+            .last()
+            .is_some_and(|run| run.completed_at.is_none()));
+        let unfinished = tasks::list_unfinished_task_todos(&connection, &task.id, None)
+            .expect("unfinished todos should list");
+        assert_eq!(unfinished.len(), 1);
+        assert_eq!(unfinished[0].id, todo.id);
+    }
+
+    #[test]
+    fn request_user_intervention_false_keeps_the_lane_active_when_no_task_todos_remain() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let project_root = init_test_repo("task-runtime-intervention-false-no-todos");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        ensure_default_project(&connection);
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Intervention false with no todos".into(),
+                description: Some("Keep working instead of pausing for user review.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("role lane should dispatch");
+        let app = test_app_handle();
+
+        let result = request_user_intervention_with_app(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("Finished this slice".into()),
+            false,
+            Some("Keep going".into()),
+            Some(&app),
+            None,
+        )
+        .expect("lane should stay active");
+        assert!(!result.transitioned);
+        assert_eq!(result.task.status, "in_progress");
+        assert_eq!(
+            result
+                .task
+                .active_lane_assignment
+                .as_ref()
+                .map(|assignment| assignment.status.as_str()),
+            Some(ASSIGNMENT_STATUS_ACTIVE)
+        );
+        assert!(result
+            .task
+            .lane_runs
+            .last()
+            .is_some_and(|run| run.completed_at.is_none()));
+        let unfinished = tasks::list_unfinished_task_todos(&connection, &task.id, None)
+            .expect("unfinished todos should list");
+        assert!(unfinished.is_empty());
+    }
+
+    #[test]
+    fn complete_lane_as_failure_true_still_uses_the_failure_transition() {
+        let mut connection = in_memory_connection();
+        let role = roles::create_role(
+            &mut connection,
+            RoleUpsertInput {
+                name: "Developer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                thinking_level: Some("medium".into()),
+                capacity: 1,
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("role should create");
+        let agent = agents::create_agent(
+            &mut connection,
+            AgentUpsertInput {
+                name: "Reviewer".into(),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: Vec::new(),
+            },
+        )
+        .expect("agent should create");
+        let workflow = create_workflow_with_lanes(&mut connection, &role.slug, &agent.slug);
+        let project_root = init_test_repo("task-runtime-failure-true-transition");
+        let session_dir = project_root.parent().unwrap().join("sessions");
+        ensure_default_project(&connection);
+        let task = tasks::create_task(
+            &mut connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: "Failure true transition".into(),
+                description: Some("Use the real failure transition.".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P1".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some("lane-implement".into()),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        dispatch_task_lane(&mut connection, &project_root, &session_dir, &task.id)
+            .expect("role lane should dispatch");
+        let app = test_app_handle();
+
+        let result = complete_lane_as_failure_with_app(
+            &mut connection,
+            &project_root,
+            &session_dir,
+            &task.id,
+            Some("This truly failed".into()),
+            true,
+            Some("Return to planning".into()),
+            Some(&app),
+            None,
+        )
+        .expect("failure transition should succeed");
+        assert!(result.transitioned);
+        assert_eq!(result.task.current_lane_id.as_deref(), Some("lane-plan"));
+        assert_eq!(result.task.status, "in_review");
+        assert_eq!(result.task.assignee_type, "user");
     }
 
     #[test]
@@ -12037,6 +12464,7 @@ mod tests {
             &session_dir,
             &task.id,
             Some("Need human review".into()),
+            true,
             None,
         )
         .expect("task should move to user review");
@@ -12056,6 +12484,7 @@ mod tests {
             &session_dir,
             &task.id,
             Some("Needs more work".into()),
+            true,
             None,
         )
         .expect_err("paused user intervention work should require dedicated review actions");

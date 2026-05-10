@@ -936,6 +936,40 @@ function completionTransitionExamples(taskId = "task-123") {
   ];
 }
 
+function failureTransitionExamples(taskId = "task-123") {
+  return [
+    {
+      taskId,
+      summary: "The build is blocked on a reproducible infrastructure failure.",
+      actuallyFailed: true,
+      notes: "The required dependency mirror is unavailable.",
+    },
+    {
+      taskId,
+      summary: "Finished this slice and need Orchestra to steer the next one.",
+      actuallyFailed: false,
+      notes: "Keep the lane in progress and guide the next todo.",
+    },
+  ];
+}
+
+function interventionTransitionExamples(taskId = "task-123") {
+  return [
+    {
+      taskId,
+      summary: "Need a user decision before I can continue.",
+      actuallyBlocked: true,
+      notes: "Please confirm which implementation path to take.",
+    },
+    {
+      taskId,
+      summary: "Finished this slice and need Orchestra to steer the next one.",
+      actuallyBlocked: false,
+      notes: "Keep the lane in progress and coach the next todo.",
+    },
+  ];
+}
+
 function transitionExamples(taskId = "task-123") {
   return [{ taskId, notes: "Implementation complete. Tests passed." }];
 }
@@ -3663,13 +3697,7 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
     };
   }
 
-  if (
-    [
-      "complete_lane_as_success",
-      "complete_lane_as_failure",
-      "request_user_intervention",
-    ].includes(tool.name)
-  ) {
+  if (tool.name === "complete_lane_as_success") {
     return {
       name: tool.name,
       label: `Orchestra · ${tool.name}`,
@@ -3697,6 +3725,108 @@ export function createBridgeTool(tool: OrchestraToolDefinition) {
         const payload = {
           taskId: params.taskId,
           summary: params.summary,
+          ...(params.notes !== undefined ? { notes: params.notes } : {}),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "complete_lane_as_failure") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, required summary, required actuallyFailed, and optionally notes. Pass actuallyFailed=false only when you are not truly failed, finished the current slice, and want Orchestra to keep the lane in progress while coaching the next step.`,
+      helpExamples: failureTransitionExamples(),
+      parameters: Type.Object({
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        summary: Type.String({
+          description:
+            "Required concise lane summary describing what happened in this lane.",
+        }),
+        actuallyFailed: Type.Boolean({
+          description:
+            "Required. Pass true when the lane truly failed. Pass false only when you finished the current slice, are not actually failed, and want Orchestra to keep the lane in progress while coaching the next step.",
+        }),
+        notes: Type.Optional(
+          Type.String({
+            description:
+              "Optional notes describing the outcome, status, or reason for the transition.",
+          }),
+        ),
+      }),
+      async execute(
+        _toolCallId: string,
+        params: {
+          taskId: string;
+          summary: string;
+          actuallyFailed: boolean;
+          notes?: string;
+        },
+      ) {
+        const payload = {
+          taskId: params.taskId,
+          summary: params.summary,
+          actuallyFailed: params.actuallyFailed,
+          ...(params.notes !== undefined ? { notes: params.notes } : {}),
+        };
+        const result = await invokeBridge(tool.name, payload);
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
+          details: { command: tool.name, payload, result },
+        };
+      },
+    };
+  }
+
+  if (tool.name === "request_user_intervention") {
+    return {
+      name: tool.name,
+      label: `Orchestra · ${tool.name}`,
+      description: `${tool.description} Requires permission: ${tool.requiredPermission}. Provide taskId, required summary, required actuallyBlocked, and optionally notes. Pass actuallyBlocked=false only when you are not truly blocked, finished the current slice, and want Orchestra to keep the lane in progress while coaching the next step.`,
+      helpExamples: interventionTransitionExamples(),
+      parameters: Type.Object({
+        taskId: Type.String({
+          description: "Canonical Orchestra task id, e.g. task-123",
+        }),
+        summary: Type.String({
+          description:
+            "Required concise lane summary describing what happened in this lane.",
+        }),
+        actuallyBlocked: Type.Boolean({
+          description:
+            "Required. Pass true when you are truly blocked or need user intervention. Pass false only when you finished the current slice, are not actually blocked, and want Orchestra to keep the lane in progress while coaching the next step.",
+        }),
+        notes: Type.Optional(
+          Type.String({
+            description:
+              "Optional notes describing the outcome, status, or reason for the transition.",
+          }),
+        ),
+      }),
+      async execute(
+        _toolCallId: string,
+        params: {
+          taskId: string;
+          summary: string;
+          actuallyBlocked: boolean;
+          notes?: string;
+        },
+      ) {
+        const payload = {
+          taskId: params.taskId,
+          summary: params.summary,
+          actuallyBlocked: params.actuallyBlocked,
           ...(params.notes !== undefined ? { notes: params.notes } : {}),
         };
         const result = await invokeBridge(tool.name, payload);

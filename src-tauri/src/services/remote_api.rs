@@ -191,6 +191,22 @@ struct LaneCompletionInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct FailureLaneCompletionInput {
+    summary: String,
+    actually_failed: bool,
+    notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InterventionLaneCompletionInput {
+    summary: String,
+    actually_blocked: bool,
+    notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct NoteLocationInput {
     location: NoteLocation,
 }
@@ -6723,7 +6739,7 @@ async fn post_task_complete_failure(
     AxumState(context): AxumState<RemoteApiContext>,
     headers: HeaderMap,
     Path(task_id): Path<String>,
-    input: Json<LaneCompletionInput>,
+    input: Json<FailureLaneCompletionInput>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     let Json(input) = input;
@@ -6732,6 +6748,7 @@ async fn post_task_complete_failure(
         context.app.state::<AppState>(),
         task_id,
         input.summary,
+        input.actually_failed,
         input.notes,
     )
     .await
@@ -6743,7 +6760,7 @@ async fn post_task_request_user_intervention(
     AxumState(context): AxumState<RemoteApiContext>,
     headers: HeaderMap,
     Path(task_id): Path<String>,
-    input: Json<LaneCompletionInput>,
+    input: Json<InterventionLaneCompletionInput>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     require_remote_auth_only(&context.app, &headers)?;
     let Json(input) = input;
@@ -6752,6 +6769,7 @@ async fn post_task_request_user_intervention(
         context.app.state::<AppState>(),
         task_id,
         input.summary,
+        input.actually_blocked,
         input.notes,
     )
     .await

@@ -520,6 +520,7 @@ describe("blocked task runtime mock parity", () => {
     const paused = await requestUserIntervention(
       task.id,
       "Need help from the user.",
+      true,
       "intervention guard test",
     );
     expect(paused.status).toBe("in_review");
@@ -527,6 +528,228 @@ describe("blocked task runtime mock parity", () => {
     expect(paused.activeLaneAssignment?.status).toBe(
       "awaiting_user_intervention",
     );
+  });
+
+  test("mock mode keeps the lane active and coaches the next todo when failure false is used", async () => {
+    const { createProject } = await import("../src/lib/projects");
+    const { createRole } = await import("../src/lib/roles");
+    const {
+      addTaskTodo,
+      completeLaneAsFailure,
+      createTask,
+      createWorkflow,
+      dispatchTaskLane,
+      getSessionRecord,
+    } = await import("../src/lib/tauri");
+
+    await createProject({
+      name: "Mock Slice Continue Failure Project",
+      description: "mock project",
+      taskPrefix: "MSF",
+    });
+    const role = await createRole({
+      name: "Mock Slice Continue Failure Role",
+      description: "Role for slice continue failure coverage.",
+      systemPrompt: "Work the task.",
+      capacity: 1,
+    });
+    const workflow = await createWorkflow({
+      name: "Mock Slice Continue Failure Flow",
+      description: "Single role lane flow.",
+      lanes: [
+        {
+          id: "lane-implement",
+          key: "implement",
+          name: "Implement",
+          order: 0,
+          assignedEntityType: "role",
+          assignedEntityId: role.slug,
+          entryPromptTemplate: "Implement the work.",
+          useSeparateWorktree: false,
+          requireUserApprovalOnSuccess: false,
+          needsWorkTargetLaneId: null,
+          successTransitionType: "end",
+          successTargetLaneId: null,
+          failureTransitionType: "end",
+          failureTargetLaneId: null,
+        },
+      ],
+    });
+    const task = await createTask({
+      title: "Mock slice continue failure task",
+      description: "Stay active after a slice-complete failure=false call.",
+      type: "task",
+      status: "ready",
+      priority: "P1",
+      workflowId: workflow.id,
+      currentLaneId: "lane-implement",
+      assigneeType: "unassigned",
+      assigneeId: null,
+    });
+
+    const dispatched = await dispatchTaskLane(task.id);
+    const sessionId = dispatched.activeLaneAssignment?.sessionId;
+    expect(sessionId).toBeTruthy();
+    await addTaskTodo(task.id, {
+      laneId: dispatched.currentLaneId!,
+      description: "Implement the next slice",
+    });
+
+    const continued = await completeLaneAsFailure(
+      task.id,
+      "Finished this slice.",
+      false,
+      "Guide the next todo.",
+    );
+    expect(continued.status).toBe("in_progress");
+    expect(continued.activeLaneAssignment?.status).toBe("active");
+    expect(continued.laneRuns.at(-1)?.completedAt ?? null).toBeNull();
+    const session = await getSessionRecord(sessionId!);
+    expect(session.events.at(-1)?.message).toBe(
+      "Great work finishing the next slice, keep going in the next todo until you have finished it!",
+    );
+  });
+
+  test("mock mode keeps the lane active and asks for more todos when intervention false is used", async () => {
+    const { createProject } = await import("../src/lib/projects");
+    const { createRole } = await import("../src/lib/roles");
+    const {
+      createTask,
+      createWorkflow,
+      dispatchTaskLane,
+      getSessionRecord,
+      requestUserIntervention,
+    } = await import("../src/lib/tauri");
+
+    await createProject({
+      name: "Mock Slice Continue Intervention Project",
+      description: "mock project",
+      taskPrefix: "MSI",
+    });
+    const role = await createRole({
+      name: "Mock Slice Continue Intervention Role",
+      description: "Role for slice continue intervention coverage.",
+      systemPrompt: "Work the task.",
+      capacity: 1,
+    });
+    const workflow = await createWorkflow({
+      name: "Mock Slice Continue Intervention Flow",
+      description: "Single role lane flow.",
+      lanes: [
+        {
+          id: "lane-implement",
+          key: "implement",
+          name: "Implement",
+          order: 0,
+          assignedEntityType: "role",
+          assignedEntityId: role.slug,
+          entryPromptTemplate: "Implement the work.",
+          useSeparateWorktree: false,
+          requireUserApprovalOnSuccess: false,
+          needsWorkTargetLaneId: null,
+          successTransitionType: "end",
+          successTargetLaneId: null,
+          failureTransitionType: "end",
+          failureTargetLaneId: null,
+        },
+      ],
+    });
+    const task = await createTask({
+      title: "Mock slice continue intervention task",
+      description: "Stay active after a slice-complete blocked=false call.",
+      type: "task",
+      status: "ready",
+      priority: "P1",
+      workflowId: workflow.id,
+      currentLaneId: "lane-implement",
+      assigneeType: "unassigned",
+      assigneeId: null,
+    });
+
+    const dispatched = await dispatchTaskLane(task.id);
+    const sessionId = dispatched.activeLaneAssignment?.sessionId;
+    expect(sessionId).toBeTruthy();
+
+    const continued = await requestUserIntervention(
+      task.id,
+      "Finished this slice.",
+      false,
+      "Coach the next todo.",
+    );
+    expect(continued.status).toBe("in_progress");
+    expect(continued.activeLaneAssignment?.status).toBe("active");
+    expect(continued.laneRuns.at(-1)?.completedAt ?? null).toBeNull();
+    const session = await getSessionRecord(sessionId!);
+    expect(session.events.at(-1)?.message).toBe(
+      "Great work finishing this next slice, create todos for the remaining work then keep working until you finish the next todos",
+    );
+  });
+
+  test("mock mode still performs a real failure transition when actuallyFailed is true", async () => {
+    const { createProject } = await import("../src/lib/projects");
+    const { createRole } = await import("../src/lib/roles");
+    const {
+      completeLaneAsFailure,
+      createTask,
+      createWorkflow,
+      dispatchTaskLane,
+    } = await import("../src/lib/tauri");
+
+    await createProject({
+      name: "Mock True Failure Project",
+      description: "mock project",
+      taskPrefix: "MTF",
+    });
+    const role = await createRole({
+      name: "Mock True Failure Role",
+      description: "Role for true failure coverage.",
+      systemPrompt: "Work the task.",
+      capacity: 1,
+    });
+    const workflow = await createWorkflow({
+      name: "Mock True Failure Flow",
+      description: "Single role lane flow.",
+      lanes: [
+        {
+          id: "lane-implement",
+          key: "implement",
+          name: "Implement",
+          order: 0,
+          assignedEntityType: "role",
+          assignedEntityId: role.slug,
+          entryPromptTemplate: "Implement the work.",
+          useSeparateWorktree: false,
+          requireUserApprovalOnSuccess: false,
+          needsWorkTargetLaneId: null,
+          successTransitionType: "end",
+          successTargetLaneId: null,
+          failureTransitionType: "end",
+          failureTargetLaneId: null,
+        },
+      ],
+    });
+    const task = await createTask({
+      title: "Mock true failure task",
+      description: "Real failure should still transition.",
+      type: "task",
+      status: "ready",
+      priority: "P1",
+      workflowId: workflow.id,
+      currentLaneId: "lane-implement",
+      assigneeType: "unassigned",
+      assigneeId: null,
+    });
+
+    await dispatchTaskLane(task.id);
+    const failed = await completeLaneAsFailure(
+      task.id,
+      "This truly failed.",
+      true,
+      "Escalate the failure.",
+    );
+    expect(failed.status).toBe("blocked");
+    expect(failed.assigneeType).toBe("user");
+    expect(failed.activeLaneAssignment).toBeNull();
   });
 
   test("mock mode rejects dispatch for initially blocked tasks", async () => {

@@ -130,6 +130,10 @@ const PI_MODELS_JSON_STORAGE_KEY = "orchestra.mock.pi-models-json";
 const TASK_SCHEDULE_STORAGE_KEY = "orchestra.mock.task-schedules";
 const DOMAIN_EVENT_STORAGE_KEY = "orchestra.mock.domain-events";
 const NO_PROJECT_STORAGE_KEY = "no-project";
+const CONTINUE_WORKING_WITH_UNFINISHED_TODOS_PROMPT =
+  "Great work finishing the next slice, keep going in the next todo until you have finished it!";
+const CONTINUE_WORKING_WITHOUT_UNFINISHED_TODOS_PROMPT =
+  "Great work finishing this next slice, create todos for the remaining work then keep working until you finish the next todos";
 
 type OrchestraWindowGlobals = Window & {
   __ORCHESTRA_WINDOW_KIND__?: string;
@@ -6281,6 +6285,7 @@ async function completeMockTaskLane(
   outcome: "success" | "failure" | "needs_user",
   summary: string,
   notes?: string,
+  actuallyTransitioned = true,
 ): Promise<TaskDetail> {
   const tasks = ensureMockTasks();
   const task = tasks.find((entry) => entry.id === taskId);
@@ -6326,6 +6331,60 @@ async function completeMockTaskLane(
     }
     throw new Error(
       `Task ${taskId} cannot complete as success yet because it has ${joinMockCompletionAttentionItems(blockers)}. ${nextSteps.join(" ")} Clear those items and then try the completion tool again.`,
+    );
+  }
+
+  if (
+    !actuallyTransitioned &&
+    outcome !== "success" &&
+    task.activeLaneAssignment &&
+    ["agent", "role"].includes(task.activeLaneAssignment.workerType)
+  ) {
+    const unfinishedTaskTodos = listMockTaskTodos(taskId, undefined, false);
+    const followUpPrompt =
+      unfinishedTaskTodos.length > 0
+        ? CONTINUE_WORKING_WITH_UNFINISHED_TODOS_PROMPT
+        : CONTINUE_WORKING_WITHOUT_UNFINISHED_TODOS_PROMPT;
+
+    saveMockTasks(
+      tasks.map((entry) =>
+        entry.id === taskId
+          ? {
+              ...entry,
+              status: "in_progress",
+              assigneeType: lane.assignedEntityType,
+              assigneeId: lane.assignedEntityId ?? null,
+              updatedAt,
+            }
+          : entry,
+      ),
+    );
+
+    updateMockSession(task.activeLaneAssignment.sessionId, (current) => ({
+      ...current,
+      status: "active",
+      updatedAt,
+      events: [...current.events, createEvent("system", followUpPrompt)],
+    }));
+    emitMockSessionChange({
+      sessionIds: [task.activeLaneAssignment.sessionId],
+      reason: "task.transition.continue_working",
+    });
+    emitMockTaskChange({
+      taskIds: [taskId],
+      reason: "task.transition.continue_working",
+    });
+    appendMockLog(
+      "info",
+      "task.transition.continue_working",
+      `Kept task ${taskId} in progress after ${outcome} requested continue-working guidance`,
+    );
+    return getTask(taskId);
+  }
+
+  if (!actuallyTransitioned && outcome !== "success") {
+    throw new Error(
+      `Task ${taskId} can only continue working after a slice-complete failure/intervention request when the active lane is owned by an agent or role.`,
     );
   }
 
@@ -7223,25 +7282,37 @@ export async function completeLaneAsSuccess(
 export async function completeLaneAsFailure(
   taskId: string,
   summary: string,
+  actuallyFailed: boolean,
   notes?: string,
 ): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
-    return completeMockTaskLane(taskId, "failure", summary, notes);
+    return completeMockTaskLane(taskId, "failure", summary, notes, actuallyFailed);
   }
 
-  return invoke<TaskDetail>("complete_lane_as_failure", { taskId, summary, notes });
+  return invoke<TaskDetail>("complete_lane_as_failure", {
+    taskId,
+    summary,
+    actuallyFailed,
+    notes,
+  });
 }
 
 export async function requestUserIntervention(
   taskId: string,
   summary: string,
+  actuallyBlocked: boolean,
   notes?: string,
 ): Promise<TaskDetail> {
   if (!isTauriAvailable()) {
-    return completeMockTaskLane(taskId, "needs_user", summary, notes);
+    return completeMockTaskLane(taskId, "needs_user", summary, notes, actuallyBlocked);
   }
 
-  return invoke<TaskDetail>("request_user_intervention", { taskId, summary, notes });
+  return invoke<TaskDetail>("request_user_intervention", {
+    taskId,
+    summary,
+    actuallyBlocked,
+    notes,
+  });
 }
 
 export async function approveTaskReview(taskId: string): Promise<TaskDetail> {

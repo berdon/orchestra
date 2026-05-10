@@ -20,6 +20,16 @@ describe("orchestra tools extension bridge tool setup", () => {
         requiredPermission: "tasks.transition",
       },
       {
+        name: "complete_lane_as_failure",
+        description: "Complete the current lane as failure",
+        requiredPermission: "tasks.transition",
+      },
+      {
+        name: "request_user_intervention",
+        description: "Request user intervention for the current lane",
+        requiredPermission: "tasks.transition",
+      },
+      {
         name: "reassign_task_to_lane",
         description: "Move a task into a specific workflow lane",
         requiredPermission: "tasks.transition",
@@ -434,6 +444,36 @@ describe("orchestra tools extension bridge tool setup", () => {
       notes: "Ship it",
     });
 
+    const failureTool = registeredTools.find(
+      (tool) => tool.name === "complete_lane_as_failure",
+    );
+    expect(failureTool.parameters.required).toContain("actuallyFailed");
+    expect(failureTool.parameters.properties.actuallyFailed).toBeTruthy();
+    expect(
+      failureTool.parameters.properties.actuallyFailed.description,
+    ).toContain("Pass false only when you finished the current slice");
+    await failureTool.execute("tool-call-failure", {
+      taskId: "task-1",
+      summary: "Need to keep working.",
+      actuallyFailed: false,
+      notes: "Guide the next todo.",
+    });
+
+    const interventionTool = registeredTools.find(
+      (tool) => tool.name === "request_user_intervention",
+    );
+    expect(interventionTool.parameters.required).toContain("actuallyBlocked");
+    expect(interventionTool.parameters.properties.actuallyBlocked).toBeTruthy();
+    expect(
+      interventionTool.parameters.properties.actuallyBlocked.description,
+    ).toContain("Pass false only when you finished the current slice");
+    await interventionTool.execute("tool-call-intervention", {
+      taskId: "task-1",
+      summary: "Need to keep working.",
+      actuallyBlocked: false,
+      notes: "Coach the next todo.",
+    });
+
     const relaneTool = registeredTools.find(
       (tool) => tool.name === "reassign_task_to_lane",
     );
@@ -670,7 +710,7 @@ describe("orchestra tools extension bridge tool setup", () => {
         repositoryId: "repo-1",
       });
 
-    expect(fetchMock).toHaveBeenCalledTimes(21);
+    expect(fetchMock).toHaveBeenCalledTimes(23);
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.command).toBe("complete_lane_as_success");
     expect(request.payload).toEqual({
@@ -678,8 +718,28 @@ describe("orchestra tools extension bridge tool setup", () => {
       summary: "Implementation complete and ready to hand off.",
       notes: "Ship it",
     });
-    const relaneRequest = JSON.parse(
+    const failureRequest = JSON.parse(
       String(fetchMock.mock.calls[1]?.[1]?.body),
+    );
+    expect(failureRequest.command).toBe("complete_lane_as_failure");
+    expect(failureRequest.payload).toEqual({
+      taskId: "task-1",
+      summary: "Need to keep working.",
+      actuallyFailed: false,
+      notes: "Guide the next todo.",
+    });
+    const interventionRequest = JSON.parse(
+      String(fetchMock.mock.calls[2]?.[1]?.body),
+    );
+    expect(interventionRequest.command).toBe("request_user_intervention");
+    expect(interventionRequest.payload).toEqual({
+      taskId: "task-1",
+      summary: "Need to keep working.",
+      actuallyBlocked: false,
+      notes: "Coach the next todo.",
+    });
+    const relaneRequest = JSON.parse(
+      String(fetchMock.mock.calls[3]?.[1]?.body),
     );
     expect(relaneRequest.command).toBe("reassign_task_to_lane");
     expect(relaneRequest.payload).toEqual({
@@ -688,12 +748,12 @@ describe("orchestra tools extension bridge tool setup", () => {
       notes: "Return this task to planning",
     });
     const taskContextRequest = JSON.parse(
-      String(fetchMock.mock.calls[2]?.[1]?.body),
+      String(fetchMock.mock.calls[4]?.[1]?.body),
     );
     expect(taskContextRequest.command).toBe("get_task_context");
     expect(taskContextRequest.payload).toEqual({ taskId: "task-1" });
     const repoFileRequest = JSON.parse(
-      String(fetchMock.mock.calls[3]?.[1]?.body),
+      String(fetchMock.mock.calls[5]?.[1]?.body),
     );
     expect(repoFileRequest.command).toBe("add_task_file_reference");
     expect(repoFileRequest.payload).toEqual({
@@ -704,7 +764,7 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     });
     const commentRequest = JSON.parse(
-      String(fetchMock.mock.calls[4]?.[1]?.body),
+      String(fetchMock.mock.calls[6]?.[1]?.body),
     );
     expect(commentRequest.command).toBe("comment_on_task");
     expect(commentRequest.payload).toEqual({
@@ -717,12 +777,12 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     });
     const listTaskTodosRequest = JSON.parse(
-      String(fetchMock.mock.calls[5]?.[1]?.body),
+      String(fetchMock.mock.calls[7]?.[1]?.body),
     );
     expect(listTaskTodosRequest.command).toBe("list_task_todos");
     expect(listTaskTodosRequest.payload).toEqual({ taskId: "task-1" });
     const listUnfinishedTodosRequest = JSON.parse(
-      String(fetchMock.mock.calls[6]?.[1]?.body),
+      String(fetchMock.mock.calls[8]?.[1]?.body),
     );
     expect(listUnfinishedTodosRequest.command).toBe(
       "list_unfinished_task_todos",
@@ -732,7 +792,7 @@ describe("orchestra tools extension bridge tool setup", () => {
       laneId: "lane-implement",
     });
     const addTaskTodoRequest = JSON.parse(
-      String(fetchMock.mock.calls[7]?.[1]?.body),
+      String(fetchMock.mock.calls[9]?.[1]?.body),
     );
     expect(addTaskTodoRequest.command).toBe("add_task_todo");
     expect(addTaskTodoRequest.payload).toEqual({
@@ -743,22 +803,22 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     });
     const markTaskTodoFinishedRequest = JSON.parse(
-      String(fetchMock.mock.calls[8]?.[1]?.body),
+      String(fetchMock.mock.calls[10]?.[1]?.body),
     );
     expect(markTaskTodoFinishedRequest.command).toBe("mark_task_todo_finished");
     expect(markTaskTodoFinishedRequest.payload).toEqual({ todoId: "todo-1" });
     const listProjectsRequest = JSON.parse(
-      String(fetchMock.mock.calls[9]?.[1]?.body),
+      String(fetchMock.mock.calls[11]?.[1]?.body),
     );
     expect(listProjectsRequest.command).toBe("list_projects");
     expect(listProjectsRequest.payload).toEqual({});
     const getProjectRequest = JSON.parse(
-      String(fetchMock.mock.calls[10]?.[1]?.body),
+      String(fetchMock.mock.calls[12]?.[1]?.body),
     );
     expect(getProjectRequest.command).toBe("get_project");
     expect(getProjectRequest.payload).toEqual({ projectId: "project-1" });
     const createProjectRequest = JSON.parse(
-      String(fetchMock.mock.calls[11]?.[1]?.body),
+      String(fetchMock.mock.calls[13]?.[1]?.body),
     );
     expect(createProjectRequest.command).toBe("create_project");
     expect(createProjectRequest.payload).toEqual({
@@ -768,7 +828,7 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     });
     const updateProjectRequest = JSON.parse(
-      String(fetchMock.mock.calls[12]?.[1]?.body),
+      String(fetchMock.mock.calls[14]?.[1]?.body),
     );
     expect(updateProjectRequest.command).toBe("update_project");
     expect(updateProjectRequest.payload).toEqual({
@@ -779,22 +839,22 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     });
     const deleteProjectRequest = JSON.parse(
-      String(fetchMock.mock.calls[13]?.[1]?.body),
+      String(fetchMock.mock.calls[15]?.[1]?.body),
     );
     expect(deleteProjectRequest.command).toBe("delete_project");
     expect(deleteProjectRequest.payload).toEqual({ projectId: "project-2" });
     const listRepositoriesRequest = JSON.parse(
-      String(fetchMock.mock.calls[14]?.[1]?.body),
+      String(fetchMock.mock.calls[16]?.[1]?.body),
     );
     expect(listRepositoriesRequest.command).toBe("list_repositories");
     expect(listRepositoriesRequest.payload).toEqual({ projectId: "project-1" });
     const getRepositoryRequest = JSON.parse(
-      String(fetchMock.mock.calls[15]?.[1]?.body),
+      String(fetchMock.mock.calls[17]?.[1]?.body),
     );
     expect(getRepositoryRequest.command).toBe("get_repository");
     expect(getRepositoryRequest.payload).toEqual({ repositoryId: "repo-1" });
     const createRepositoryRequest = JSON.parse(
-      String(fetchMock.mock.calls[16]?.[1]?.body),
+      String(fetchMock.mock.calls[18]?.[1]?.body),
     );
     expect(createRepositoryRequest.command).toBe("create_repository");
     expect(createRepositoryRequest.payload).toEqual({
@@ -807,7 +867,7 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     });
     const updateRepositoryRequest = JSON.parse(
-      String(fetchMock.mock.calls[17]?.[1]?.body),
+      String(fetchMock.mock.calls[19]?.[1]?.body),
     );
     expect(updateRepositoryRequest.command).toBe("update_repository");
     expect(updateRepositoryRequest.payload).toEqual({
@@ -820,12 +880,12 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     });
     const deleteRepositoryRequest = JSON.parse(
-      String(fetchMock.mock.calls[18]?.[1]?.body),
+      String(fetchMock.mock.calls[20]?.[1]?.body),
     );
     expect(deleteRepositoryRequest.command).toBe("delete_repository");
     expect(deleteRepositoryRequest.payload).toEqual({ repositoryId: "repo-2" });
     const attachRepositoryRemoteRequest = JSON.parse(
-      String(fetchMock.mock.calls[19]?.[1]?.body),
+      String(fetchMock.mock.calls[21]?.[1]?.body),
     );
     expect(attachRepositoryRemoteRequest.command).toBe(
       "attach_repository_remote",
@@ -838,7 +898,7 @@ describe("orchestra tools extension bridge tool setup", () => {
       },
     });
     const setProjectDefaultRepositoryRequest = JSON.parse(
-      String(fetchMock.mock.calls[20]?.[1]?.body),
+      String(fetchMock.mock.calls[22]?.[1]?.body),
     );
     expect(setProjectDefaultRepositoryRequest.command).toBe(
       "set_project_default_repository",

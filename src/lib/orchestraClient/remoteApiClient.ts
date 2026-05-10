@@ -126,12 +126,32 @@ interface LaneCompletionInput extends NotesInput {
   summary: string;
 }
 
+interface FailureLaneCompletionInput extends LaneCompletionInput {
+  actuallyFailed: boolean;
+}
+
+interface InterventionLaneCompletionInput extends LaneCompletionInput {
+  actuallyBlocked: boolean;
+}
+
 function createNotesBody(notes?: string): NotesInput | undefined {
   return notes ? { notes } : undefined;
 }
 
-function createLaneCompletionBody(summary: string, notes?: string): LaneCompletionInput {
-  return notes ? { summary, notes } : { summary };
+function createLaneCompletionBody(
+  outcome: OrchestraTaskCompletionOutcome,
+  summary: string,
+  notes?: string,
+): LaneCompletionInput | FailureLaneCompletionInput | InterventionLaneCompletionInput {
+  const base = notes ? { summary, notes } : { summary };
+  switch (outcome) {
+    case "failure":
+      return { ...base, actuallyFailed: true };
+    case "needs_user":
+      return { ...base, actuallyBlocked: true };
+    default:
+      return base;
+  }
 }
 
 function createUnsupportedRemoteHostAdminMethod(name: string) {
@@ -1445,7 +1465,7 @@ export function createRemoteApiOrchestraClientBinding(
         return transport.requestJson<TaskDetail>(`tasks.complete.${outcome}`, {
           method: "POST",
           path: `/api/v1/tasks/${encodeURIComponent(taskId)}/complete/${mapCompletionOutcomeToPath(outcome)}`,
-          body: createLaneCompletionBody(summary, notes),
+          body: createLaneCompletionBody(outcome, summary, notes),
         });
       },
       approveReview: (taskId) => {

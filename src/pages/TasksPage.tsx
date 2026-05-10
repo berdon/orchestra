@@ -1645,7 +1645,7 @@ export function TasksPage({
       if (activeSessionId) {
         await orchestraClient.sessions.sendMessage(
           activeSessionId,
-          `Keep working until you are done - when you are done use tool \`complete_lane_as_success\` (with the task ID, required lane summary, and optional notes) unless you believe either you or the task that was sent to you failed - then use tool \`complete_lane_as_failure\` (with task ID, required lane summary, and optional notes). If you believe you need to escalate to the user - use tool \`request_user_intervention\` (with task ID, required lane summary, and optional notes).\n\nCanonical task ID: ${route.taskId}`,
+          `Keep working until you are done - when you are done use tool \`complete_lane_as_success\` (with the task ID, required lane summary, and optional notes) unless you truly failed - then use tool \`complete_lane_as_failure\` (with task ID, required lane summary, required \`actuallyFailed\`, and optional notes). Pass \`actuallyFailed=false\` only when you finished this slice but are not actually failed and want Orchestra to guide the next slice. If you truly need the user - use tool \`request_user_intervention\` (with task ID, required lane summary, required \`actuallyBlocked\`, and optional notes). Pass \`actuallyBlocked=false\` only when you finished this slice but are not actually blocked and want Orchestra to guide the next slice.\n\nCanonical task ID: ${route.taskId}`,
           `manual-whip-${Date.now()}`,
         );
       }
@@ -1691,7 +1691,7 @@ export function TasksPage({
       if (activeSessionId) {
         await orchestraClient.sessions.sendMessage(
           activeSessionId,
-          "Keep working this ticket and use complete_lane_as_success, complete_lane_as_failure, or request_user_intervention with a concise lane summary when you are ready to transition.",
+          "Keep working this ticket and use complete_lane_as_success, complete_lane_as_failure (with actuallyFailed), or request_user_intervention (with actuallyBlocked) with a concise lane summary when you are ready to transition.",
           `retry-task-${taskDetail.id}-${Date.now()}`,
         );
         return;

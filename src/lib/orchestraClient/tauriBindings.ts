@@ -204,11 +204,26 @@ async function completeTask(
     case "success":
       return invokeTauri<TaskDetail>("complete_lane_as_success", { taskId, summary, notes });
     case "failure":
-      return invokeTauri<TaskDetail>("complete_lane_as_failure", { taskId, summary, notes });
+      return invokeTauri<TaskDetail>("complete_lane_as_failure", {
+        taskId,
+        summary,
+        actuallyFailed: true,
+        notes,
+      });
     case "needs_user":
-      return invokeTauri<TaskDetail>("request_user_intervention", { taskId, summary, notes });
+      return invokeTauri<TaskDetail>("request_user_intervention", {
+        taskId,
+        summary,
+        actuallyBlocked: true,
+        notes,
+      });
     default:
-      return invokeTauri<TaskDetail>("request_user_intervention", { taskId, summary, notes });
+      return invokeTauri<TaskDetail>("request_user_intervention", {
+        taskId,
+        summary,
+        actuallyBlocked: true,
+        notes,
+      });
   }
 }
 

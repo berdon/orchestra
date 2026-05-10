@@ -517,6 +517,7 @@ describe("desktop approval-gated workflow lanes", () => {
       await invokeCommand(sessionId, 'request_user_intervention', {
         taskId: createdTask!.id,
         summary: 'Blocked on a user decision before I can continue.',
+        actuallyBlocked: true,
         notes: 'Need the user to weigh in before continuing.',
       });
 
@@ -645,6 +646,7 @@ describe("desktop approval-gated workflow lanes", () => {
       await invokeCommand(sessionId, 'request_user_intervention', {
         taskId: createdTask!.id,
         summary: 'Pausing this lane for user intervention during the regression flow.',
+        actuallyBlocked: true,
         notes: 'Pause so the desktop regression can send a direct session message.',
       });
 
