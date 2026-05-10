@@ -17,6 +17,79 @@ async function expectProjectSectionLoaded(page: { locator: (selector: string) =>
   await expect(page.locator(panelSelector)).not.toContainText("Loading");
 }
 
+function projectSecretCardSelector(secretKey: string) {
+  return `[data-role="project-secret-card"][data-secret-key="${secretKey}"]`;
+}
+
+function projectSecretStatusSelector(secretKey: string) {
+  return `${projectSecretCardSelector(secretKey)} [data-role="project-secret-status"]`;
+}
+
+async function expectProjectSecretReady(
+  page: { locator: (selector: string) => any },
+  secretKey: string,
+  description: string,
+) {
+  const card = page.locator(projectSecretCardSelector(secretKey));
+  const status = page.locator(projectSecretStatusSelector(secretKey));
+  await expect(card).toBeVisible();
+  await expect(card).toContainText(secretKey);
+  await expect(card).toContainText(description);
+  await expect(card).not.toContainText("Missing value");
+  await expect(status).toHaveText("Ready");
+  await expect(status).toHaveAttribute("data-value-state", "ready");
+}
+
+async function exerciseHostedWebProjectSecretCrudFlow(
+  page: any,
+  options?: { mobile?: boolean },
+) {
+  const secretKey = "OPENAI_API_KEY";
+  const initialDescription = "Primary provider key";
+  const rotatedDescription = "Rotated provider key";
+
+  await page.goto("/?page=settings&settingsTab=projects");
+  if (options?.mobile) {
+    await expectProjectSectionLoaded(
+      page,
+      "secrets",
+      '[data-role="project-detail-tabpanel-secrets"]',
+      '[data-role="project-secrets-status"]',
+    );
+  } else {
+    await page.locator('[data-role="project-detail-tab-secrets"]').click();
+    await expect(page.locator('[data-role="project-detail-tabpanel-secrets"]')).toBeVisible();
+  }
+
+  await expect(page.locator('[data-role="project-secrets-status"]')).toContainText("Available");
+  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("No project secrets yet.");
+
+  await page.locator('[data-role="project-secret-key"]').fill(secretKey);
+  await page.locator('[data-role="project-secret-description"]').fill(initialDescription);
+  await page.locator('[data-role="project-secret-value"]').fill("sk-live-1");
+  await page.locator('[data-role="save-project-secret"]').click();
+
+  await expectProjectSecretReady(page, secretKey, initialDescription);
+  await expect(page.locator('[data-role="project-secret-key"]')).toHaveValue("");
+  await expect(page.locator('[data-role="project-secret-value"]')).toHaveValue("");
+  await expect(page.getByText("sk-live-1", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Edit / rotate" }).click();
+  await expect(page.locator('[data-role="project-secret-key"][disabled]')).toHaveValue(secretKey);
+  await expect(page.locator('[data-role="project-secret-description"]')).toHaveValue(initialDescription);
+  await expect(page.locator('[data-role="project-secret-value"]')).toHaveValue("");
+
+  await page.locator('[data-role="project-secret-description"]').fill(rotatedDescription);
+  await page.locator('[data-role="project-secret-value"]').fill("sk-live-2");
+  await page.locator('[data-role="save-project-secret"]').click();
+
+  await expectProjectSecretReady(page, secretKey, rotatedDescription);
+  await expect(page.getByText("sk-live-2", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Delete secret" }).click();
+  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("No project secrets yet.");
+}
+
 function createHostedWebSecretsApiMock(options?: {
   failures?: Partial<Record<"taskAutomation" | "sourceControlGlobal" | "sourceControlProject" | "secrets", number>>;
 }) {
@@ -603,7 +676,7 @@ test("project settings hides the floating tab dock on mobile scroll down and res
   expect(dockLayout.rightGap).toBeGreaterThanOrEqual(0);
 });
 
-test("project settings secrets tab supports hosted-web CRUD and rotation flows without revealing values", async ({ page }) => {
+test("project settings secrets tab supports hosted-web desktop CRUD and row status flows without revealing values", async ({ page }) => {
   const api = createHostedWebSecretsApiMock();
   await page.addInitScript(() => {
     window.localStorage.clear();
@@ -612,40 +685,23 @@ test("project settings secrets tab supports hosted-web CRUD and rotation flows w
   });
   await page.route("**/api/v1/**", (route) => api.handle(route));
 
-  await page.goto("/?page=settings&settingsTab=projects");
-  await page.locator('[data-role="project-detail-tab-secrets"]').click();
+  await exerciseHostedWebProjectSecretCrudFlow(page);
 
-  await expect(page.locator('[data-role="project-secrets-status"]')).toContainText("Available");
-  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("No project secrets yet.");
+  expect(api.secrets).toEqual([]);
+});
 
-  await page.locator('[data-role="project-secret-key"]').fill("OPENAI_API_KEY");
-  await page.locator('[data-role="project-secret-description"]').fill("Primary provider key");
-  await page.locator('[data-role="project-secret-value"]').fill("sk-live-1");
-  await page.locator('[data-role="save-project-secret"]').click();
+test("project settings secrets tab supports hosted-web mobile CRUD and row status flows without revealing values", async ({ page }) => {
+  const api = createHostedWebSecretsApiMock();
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+    window.__ORCHESTRA_HOST_MODE__ = "hosted_web";
+    window.confirm = () => true;
+  });
+  await page.route("**/api/v1/**", (route) => api.handle(route));
 
-  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("OPENAI_API_KEY");
-  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("Primary provider key");
-  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("Ready");
-  await expect(page.locator('[data-role="project-secret-key"]')).toHaveValue("");
-  await expect(page.locator('[data-role="project-secret-value"]')).toHaveValue("");
-  await expect(page.getByText("sk-live-1", { exact: true })).toHaveCount(0);
-  expect(api.secrets[0]?.value).toBe("sk-live-1");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await exerciseHostedWebProjectSecretCrudFlow(page, { mobile: true });
 
-  await page.getByRole("button", { name: "Edit / rotate" }).click();
-  await expect(page.locator('[data-role="project-secret-key"]')).toBeDisabled();
-  await expect(page.locator('[data-role="project-secret-description"]')).toHaveValue("Primary provider key");
-  await expect(page.locator('[data-role="project-secret-value"]')).toHaveValue("");
-
-  await page.locator('[data-role="project-secret-description"]').fill("Rotated provider key");
-  await page.locator('[data-role="project-secret-value"]').fill("sk-live-2");
-  await page.locator('[data-role="save-project-secret"]').click();
-
-  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("Rotated provider key");
-  await expect(page.getByText("sk-live-2", { exact: true })).toHaveCount(0);
-  expect(api.secrets[0]?.value).toBe("sk-live-2");
-
-  await page.getByRole("button", { name: "Delete secret" }).click();
-  await expect(page.locator('[data-role="project-secrets-list"]')).toContainText("No project secrets yet.");
   expect(api.secrets).toEqual([]);
 });
 
