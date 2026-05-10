@@ -21,6 +21,16 @@ interface MarkdownContentProps {
 const MENTION_PATTERN = /[@$](?:[a-z0-9._-]+:)?[a-z0-9._/-]+/gi;
 const TRAILING_PUNCTUATION = /[),.!?;:]+$/;
 
+type MarkdownListItem = {
+  type?: string;
+  text?: string;
+  raw?: string;
+  task?: boolean;
+  checked?: boolean;
+  loose?: boolean;
+  tokens?: MarkdownToken[];
+};
+
 type MarkdownToken = {
   type: string;
   text?: string;
@@ -30,9 +40,15 @@ type MarkdownToken = {
   lang?: string;
   depth?: number;
   ordered?: boolean;
-  items?: Array<{ text?: string; tokens?: MarkdownToken[] }>;
+  start?: number | string;
+  loose?: boolean;
+  items?: MarkdownListItem[];
   tokens?: MarkdownToken[];
 };
+
+interface RenderBlockOptions {
+  compactParagraphs?: boolean;
+}
 
 function escapeHtml(value: string) {
   return value
@@ -169,20 +185,37 @@ function renderInlineTokens(
   });
 }
 
-function renderMarkdown(
-  message: string,
+function renderInlineTokenContent(
+  token: MarkdownToken,
+  key: string,
   mentionResolver?: MarkdownMentionResolver,
   mentionLinkDataRole?: string,
 ) {
-  const tokens = marked.lexer(message, { gfm: true, breaks: true }) as MarkdownToken[];
+  if (token.tokens?.length) {
+    return renderInlineTokens(token.tokens, key, mentionResolver, mentionLinkDataRole);
+  }
+
+  return renderTextWithMentions(token.text ?? token.raw ?? "", key, mentionResolver, mentionLinkDataRole);
+}
+
+function renderBlockTokens(
+  tokens: MarkdownToken[] | undefined,
+  keyPrefix: string,
+  mentionResolver?: MarkdownMentionResolver,
+  mentionLinkDataRole?: string,
+  options: RenderBlockOptions = {},
+): ReactNode[] {
+  if (!tokens?.length) {
+    return [];
+  }
 
   return tokens.map((token, index) => {
-    const key = `markdown-${index}`;
+    const key = `${keyPrefix}-${index}`;
 
     switch (token.type) {
       case "heading": {
         const level = Math.min(Math.max(token.depth ?? 1, 1), 6);
-        const content = renderInlineTokens(token.tokens, key, mentionResolver, mentionLinkDataRole);
+        const content = renderInlineTokenContent(token, key, mentionResolver, mentionLinkDataRole);
         switch (level) {
           case 1:
             return <h1 key={key} className="transcript-markdown-heading">{content}</h1>;
@@ -198,24 +231,45 @@ function renderMarkdown(
             return <h6 key={key} className="transcript-markdown-heading">{content}</h6>;
         }
       }
-      case "paragraph":
-        return <p key={key} className="transcript-event__paragraph">{renderInlineTokens(token.tokens, key, mentionResolver, mentionLinkDataRole)}</p>;
+      case "paragraph": {
+        const content = renderInlineTokenContent(token, key, mentionResolver, mentionLinkDataRole);
+        if (options.compactParagraphs) {
+          return <Fragment key={key}>{content}</Fragment>;
+        }
+        return <p key={key} className="transcript-event__paragraph">{content}</p>;
+      }
+      case "text": {
+        const content = renderInlineTokenContent(token, key, mentionResolver, mentionLinkDataRole);
+        if (options.compactParagraphs) {
+          return <Fragment key={key}>{content}</Fragment>;
+        }
+        return <p key={key} className="transcript-event__paragraph">{content}</p>;
+      }
       case "space":
         return null;
       case "hr":
         return <hr key={key} className="transcript-markdown-rule" />;
-      case "blockquote":
-        return <blockquote key={key} className="transcript-markdown-blockquote">{renderInlineTokens(token.tokens, key, mentionResolver, mentionLinkDataRole)}</blockquote>;
+      case "blockquote": {
+        const content = renderBlockTokens(token.tokens, key, mentionResolver, mentionLinkDataRole);
+        return <blockquote key={key} className="transcript-markdown-blockquote">{content}</blockquote>;
+      }
       case "list": {
         const ListTag = token.ordered ? "ol" : "ul";
         const listClassName = token.ordered
           ? "transcript-markdown-list transcript-markdown-list--ordered"
           : "transcript-markdown-list transcript-markdown-list--unordered";
+        const listStart = typeof token.start === "number"
+          ? token.start
+          : Number(token.start ?? 1) || 1;
         return (
           <ListTag key={key} className={listClassName}>
             {token.items?.map((item, itemIndex) => (
-              <li key={`${key}-item-${itemIndex}`} value={token.ordered ? itemIndex + 1 : undefined}>
-                {renderInlineTokens(item.tokens, `${key}-item-${itemIndex}`, mentionResolver, mentionLinkDataRole)}
+              <li key={`${key}-item-${itemIndex}`} value={token.ordered ? listStart + itemIndex : undefined}>
+                {item.tokens?.length
+                  ? renderBlockTokens(item.tokens, `${key}-item-${itemIndex}`, mentionResolver, mentionLinkDataRole, {
+                    compactParagraphs: !item.loose,
+                  })
+                  : renderTextWithMentions(item.text ?? "", `${key}-item-${itemIndex}`, mentionResolver, mentionLinkDataRole)}
               </li>
             ))}
           </ListTag>
@@ -236,6 +290,15 @@ function renderMarkdown(
         return <pre key={key} className="transcript-fallback-pre">{token.raw ?? token.text ?? ""}</pre>;
     }
   });
+}
+
+function renderMarkdown(
+  message: string,
+  mentionResolver?: MarkdownMentionResolver,
+  mentionLinkDataRole?: string,
+) {
+  const tokens = marked.lexer(message, { gfm: true, breaks: true }) as MarkdownToken[];
+  return renderBlockTokens(tokens, "markdown", mentionResolver, mentionLinkDataRole);
 }
 
 export const MarkdownContent = memo(function MarkdownContent({

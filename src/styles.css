@@ -5662,10 +5662,6 @@ strong {
   overflow-wrap: anywhere;
 }
 
-.skills-markdown-preview-shell {
-  overflow: auto;
-}
-
 .skills-markdown-preview-shell .transcript-render {
   margin: 0;
 }

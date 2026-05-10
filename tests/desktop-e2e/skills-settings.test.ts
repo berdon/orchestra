@@ -145,6 +145,103 @@ describe("desktop skills settings", () => {
     }
   }, 120_000);
 
+  it.skipIf(!isDesktopE2E)("renders markdown lists in the skill preview", async () => {
+    expect(testHome).toBeTruthy();
+    resetSkillsFixture(testHome!);
+
+    const externalSkillDir = join(testHome!, ".agents", "skills", "markdown-list-preview");
+    mkdirSync(externalSkillDir, { recursive: true });
+    writeFileSync(join(externalSkillDir, "SKILL.md"), [
+      "# Markdown preview skill",
+      "",
+      "Intro paragraph before the list.",
+      "",
+      "- Unordered first",
+      "- Unordered second",
+      "  - Nested detail",
+      "",
+      "1. Ordered first",
+      "2. Ordered second",
+      "",
+      "Trailing paragraph after the list.",
+      "",
+    ].join("\n"));
+
+    const sessionId = await createReadyWebdriverSession();
+    try {
+      await ensureReactReady(sessionId);
+
+      await clickByText(sessionId, "button", "Settings");
+      await waitForSelector(sessionId, '[data-role="settings-tab-skills"]');
+      await clickByText(sessionId, '[role="tab"]', "Skills");
+      await waitForText(sessionId, "Managed skills catalog");
+
+      await clickSelector(sessionId, '[data-role="refresh-external-skills"]');
+      await waitForText(sessionId, 'markdown-list-preview');
+      await clickByText(sessionId, '[data-role="skills-list"] button', 'markdown-list-preview');
+      await clickSelector(sessionId, '[data-role="skill-detail-tab-preview"]');
+      await waitForText(sessionId, 'Read-only markdown');
+      await expect.poll(async () => executeScript<boolean>(sessionId, `
+        const preview = document.querySelector('[data-role="skill-markdown-preview"]');
+        return preview instanceof HTMLElement && preview.offsetParent !== null;
+      `)).toBe(true);
+
+      const previewState = await executeScript<{
+        headingText: string | null;
+        paragraphs: string[];
+        unorderedItems: string[];
+        nestedItems: string[];
+        orderedItems: string[];
+        secondOrderedValue: string | null;
+        unorderedListStyleType: string | null;
+        shellOverflowX: string | null;
+        shellOverflowY: string | null;
+      } | null>(sessionId, `
+        const preview = document.querySelector('[data-role="skill-markdown-preview"]');
+        if (!(preview instanceof HTMLElement)) {
+          return null;
+        }
+        const unorderedList = preview.querySelector(':scope > ul');
+        const orderedList = preview.querySelector(':scope > ol');
+        const shell = preview.closest('.skills-markdown-preview-shell');
+        const textFromFirstChild = (node) => {
+          if (!(node instanceof HTMLLIElement)) {
+            return '';
+          }
+          return node.firstChild?.textContent?.trim() || node.textContent?.trim() || '';
+        };
+        return {
+          headingText: preview.querySelector(':scope > h1')?.textContent?.trim() ?? null,
+          paragraphs: Array.from(preview.querySelectorAll(':scope > p')).map((node) => node.textContent?.trim() ?? ''),
+          unorderedItems: unorderedList ? Array.from(unorderedList.querySelectorAll(':scope > li')).map(textFromFirstChild) : [],
+          nestedItems: unorderedList ? Array.from((unorderedList.querySelector(':scope > li ul')?.querySelectorAll(':scope > li')) ?? []).map((node) => node.textContent?.trim() ?? '') : [],
+          orderedItems: orderedList ? Array.from(orderedList.querySelectorAll(':scope > li')).map((node) => node.textContent?.trim() ?? '') : [],
+          secondOrderedValue: orderedList?.querySelectorAll(':scope > li')?.[1]?.getAttribute('value') ?? null,
+          unorderedListStyleType: unorderedList instanceof HTMLElement ? getComputedStyle(unorderedList).listStyleType : null,
+          shellOverflowX: shell instanceof HTMLElement ? getComputedStyle(shell).overflowX : null,
+          shellOverflowY: shell instanceof HTMLElement ? getComputedStyle(shell).overflowY : null,
+        };
+      `);
+
+      expect(previewState).toBeTruthy();
+      expect(previewState?.headingText).toBe('Markdown preview skill');
+      expect(previewState?.paragraphs).toEqual([
+        'Intro paragraph before the list.',
+        'Trailing paragraph after the list.',
+      ]);
+      expect(previewState?.unorderedItems).toEqual(['Unordered first', 'Unordered second']);
+      expect(previewState?.nestedItems).toEqual(['Nested detail']);
+      expect(previewState?.orderedItems).toEqual(['Ordered first', 'Ordered second']);
+      expect(previewState?.secondOrderedValue).toBe('2');
+      expect(previewState?.unorderedListStyleType).toBe('disc');
+      expect(previewState?.shellOverflowX).not.toBe('auto');
+      expect(previewState?.shellOverflowY).not.toBe('auto');
+    } finally {
+      await deleteWebdriverSession(sessionId);
+      await sleep(250);
+    }
+  }, 180_000);
+
   it.skipIf(!isDesktopE2E)("manages local skills and renders external source and status details", async () => {
     expect(testHome).toBeTruthy();
     resetSkillsFixture(testHome!);
