@@ -198,6 +198,14 @@ run_inner() {
     rm -f "${ORCHESTRA_FAKE_PI_RESUME_CONTINUATION_LOG_PATH}"
     echo "[desktop-e2e-runner] using fake Pi resume-continuation fixture ${ORCHESTRA_PI_EXECUTABLE}"
   fi
+  if [[ "${TEST_FILE}" == "tests/desktop-e2e/session-idle-send-recovery.test.ts" ]]; then
+    export ORCHESTRA_PI_EXECUTABLE="${ROOT_DIR}/tests/desktop-e2e/fixtures/fake-pi-stale-prompt-fixture.mjs"
+    export ORCHESTRA_FAKE_PI_STALE_PROMPT_LOG_PATH="${RUN_DIR}/stale-prompt-fixture.log"
+    export ORCHESTRA_SESSION_DELIVERY_START_TIMEOUT_MS="2500"
+    export ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_SETTINGS=0
+    rm -f "${ORCHESTRA_FAKE_PI_STALE_PROMPT_LOG_PATH}"
+    echo "[desktop-e2e-runner] using fake Pi stale-prompt fixture ${ORCHESTRA_PI_EXECUTABLE}"
+  fi
   local import_legacy_auth="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_AUTH:-1}"
   local import_legacy_models="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_MODELS:-1}"
   local import_legacy_settings="${ORCHESTRA_DESKTOP_E2E_IMPORT_LEGACY_SETTINGS:-0}"

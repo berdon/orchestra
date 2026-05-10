@@ -1045,7 +1045,7 @@ export function reduceSessionTranscriptEvent(
 
   if (eventType === "delivery_error") {
     const rpcEvent = isObject(payload.event) ? payload.event : null;
-    const message = asString(rpcEvent?.message) || "Message was accepted but the session did not begin processing it. Stop the session and retry.";
+    const message = asString(rpcEvent?.message) || "Message was accepted but the session never started processing it. Orchestra reset the stale runtime so you can retry your message.";
     return {
       session: upsertSystemEvent(
         removePendingRunFromSession(session, runId),
