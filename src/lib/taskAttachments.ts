@@ -14,6 +14,95 @@ const ARCHIVE_MEDIA_TYPES = new Set([
   "application/zstd",
 ]);
 
+const TEXT_MEDIA_TYPES = new Set([
+  "application/json",
+  "application/ld+json",
+  "application/javascript",
+  "application/x-javascript",
+  "application/typescript",
+  "application/xml",
+  "application/rss+xml",
+  "application/atom+xml",
+  "application/x-sh",
+  "application/x-shellscript",
+  "application/sql",
+  "application/graphql",
+  "application/yaml",
+  "application/x-yaml",
+  "application/toml",
+  "application/x-toml",
+]);
+
+const TEXT_FILE_EXTENSIONS = [
+  ".txt",
+  ".md",
+  ".markdown",
+  ".log",
+  ".csv",
+  ".tsv",
+  ".json",
+  ".jsonc",
+  ".yaml",
+  ".yml",
+  ".toml",
+  ".ini",
+  ".conf",
+  ".cfg",
+  ".env",
+  ".gitignore",
+  ".editorconfig",
+  ".npmrc",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".py",
+  ".rb",
+  ".go",
+  ".rs",
+  ".java",
+  ".kt",
+  ".swift",
+  ".c",
+  ".h",
+  ".cpp",
+  ".cxx",
+  ".cc",
+  ".hpp",
+  ".cs",
+  ".php",
+  ".sh",
+  ".bash",
+  ".zsh",
+  ".fish",
+  ".ps1",
+  ".xml",
+  ".html",
+  ".css",
+  ".scss",
+  ".less",
+  ".sql",
+  ".graphql",
+  ".gql",
+];
+
+const TEXT_FILE_NAMES = new Set([
+  "dockerfile",
+  "makefile",
+  "justfile",
+  "procfile",
+  "gemfile",
+  "rakefile",
+  "brewfile",
+  "podfile",
+  "readme",
+  "license",
+]);
+
 const AUDIO_FILE_EXTENSIONS = [
   ".wav",
   ".mp3",
@@ -34,6 +123,7 @@ const ARCHIVE_FILE_EXTENSIONS = [
   ".rar",
 ];
 
+export type TaskAttachmentViewKind = "text" | "image";
 export type TaskAttachmentKind = "text" | "image" | "audio" | "archive" | "binary";
 
 export function isBase64TaskAttachmentInput(input: TaskAttachmentUploadInput): input is TaskAttachmentInput {
@@ -81,22 +171,60 @@ export function formatTaskAttachmentSize(byteSize: number) {
   return `${rounded} ${units[unitIndex]}`;
 }
 
-export function getTaskAttachmentKind(mediaType: string, fileName?: string | null): TaskAttachmentKind {
-  if (mediaType.startsWith("text/") || mediaType === "application/json") {
-    return "text";
-  }
-  if (mediaType.startsWith("image/")) {
+function normalizeMediaType(mediaType: string) {
+  return mediaType.split(";")[0]?.trim().toLowerCase() ?? "";
+}
+
+function normalizeFileName(fileName?: string | null) {
+  return fileName?.split("/").pop()?.trim().toLowerCase() ?? "";
+}
+
+export function isTextTaskAttachmentMediaType(mediaType: string) {
+  const normalizedMediaType = normalizeMediaType(mediaType);
+  return normalizedMediaType.startsWith("text/")
+    || TEXT_MEDIA_TYPES.has(normalizedMediaType)
+    || normalizedMediaType.endsWith("+json")
+    || normalizedMediaType.endsWith("+xml")
+    || normalizedMediaType.endsWith("+yaml");
+}
+
+export function isTextTaskAttachmentFileName(fileName?: string | null) {
+  const normalizedFileName = normalizeFileName(fileName);
+  return TEXT_FILE_NAMES.has(normalizedFileName)
+    || TEXT_FILE_EXTENSIONS.some((extension) => normalizedFileName.endsWith(extension));
+}
+
+export function getTaskAttachmentViewKind(mediaType: string, fileName?: string | null): TaskAttachmentViewKind | null {
+  const normalizedMediaType = normalizeMediaType(mediaType);
+  if (normalizedMediaType.startsWith("image/")) {
     return "image";
   }
-  const normalizedFileName = fileName?.toLowerCase() ?? "";
+  if (isTextTaskAttachmentMediaType(normalizedMediaType) || isTextTaskAttachmentFileName(fileName)) {
+    return "text";
+  }
+  return null;
+}
+
+export function isTaskAttachmentViewable(mediaType: string, fileName?: string | null) {
+  return getTaskAttachmentViewKind(mediaType, fileName) !== null;
+}
+
+export function getTaskAttachmentKind(mediaType: string, fileName?: string | null): TaskAttachmentKind {
+  const viewKind = getTaskAttachmentViewKind(mediaType, fileName);
+  if (viewKind) {
+    return viewKind;
+  }
+
+  const normalizedMediaType = normalizeMediaType(mediaType);
+  const normalizedFileName = normalizeFileName(fileName);
   if (
-    mediaType.startsWith("audio/") ||
+    normalizedMediaType.startsWith("audio/") ||
     AUDIO_FILE_EXTENSIONS.some((extension) => normalizedFileName.endsWith(extension))
   ) {
     return "audio";
   }
   if (
-    ARCHIVE_MEDIA_TYPES.has(mediaType) ||
+    ARCHIVE_MEDIA_TYPES.has(normalizedMediaType) ||
     ARCHIVE_FILE_EXTENSIONS.some((extension) => normalizedFileName.endsWith(extension))
   ) {
     return "archive";

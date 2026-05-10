@@ -2115,6 +2115,14 @@ pub struct TaskAttachment {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TaskAttachmentContentPayload {
+    pub file_name: String,
+    pub media_type: String,
+    pub base64_data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskAttachmentInput {
     pub file_name: String,
     pub media_type: String,

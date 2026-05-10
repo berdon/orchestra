@@ -65,6 +65,7 @@ import type {
   SkillsCatalogDiagnostics,
   SourceControlSettings,
   TaskAttachment,
+  TaskAttachmentContent,
   TaskAttachmentUploadInput,
   TaskComment,
   TaskCommentDeleteImpact,
@@ -1397,6 +1398,17 @@ export function createRemoteApiOrchestraClientBinding(
           path: `/api/v1/tasks/${encodeURIComponent(taskId)}/attachments`,
           rawBody: formData,
         });
+      },
+      getAttachmentContent: async (attachmentId) => {
+        transport.assertCapability("tasks.getAttachmentContent", bootstrap.capabilities.tasks.attachments);
+        const response = await transport.requestBlob("tasks.getAttachmentContent", {
+          path: `/api/v1/task-attachments/${encodeURIComponent(attachmentId)}/content`,
+        });
+        return {
+          fileName: response.fileName ?? `attachment-${attachmentId}`,
+          mediaType: response.mediaType ?? "application/octet-stream",
+          blob: response.blob,
+        } satisfies TaskAttachmentContent;
       },
       downloadAttachment: async (attachmentId) => {
         transport.assertCapability("tasks.downloadAttachment", bootstrap.capabilities.tasks.attachments);

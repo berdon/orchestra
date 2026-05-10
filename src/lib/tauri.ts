@@ -69,6 +69,8 @@ import type {
   SessionStats,
   SessionStreamEnvelope,
   TaskAttachment,
+  TaskAttachmentContent,
+  TaskAttachmentContentPayload,
   TaskAttachmentUploadInput,
   TaskFileReference,
   TaskFileReferenceInput,
@@ -8627,6 +8629,30 @@ export async function addTaskAttachment(
 
   const normalizedInput = await normalizeTaskAttachmentUploadInput(input);
   return invoke<TaskAttachment>("add_task_attachment", { taskId, input: normalizedInput });
+}
+
+export async function getTaskAttachmentContent(
+  attachmentId: string,
+): Promise<TaskAttachmentContent> {
+  if (!isTauriAvailable()) {
+    const stored = getStoredMockAttachmentBytes()[attachmentId];
+    if (!stored) {
+      throw new Error(`Task attachment ${attachmentId} was not found`);
+    }
+
+    return {
+      fileName: stored.fileName,
+      mediaType: stored.mediaType,
+      blob: createDownloadBlob(stored.base64Data, stored.mediaType),
+    };
+  }
+
+  const payload = await invoke<TaskAttachmentContentPayload>("get_task_attachment_content", { attachmentId });
+  return {
+    fileName: payload.fileName,
+    mediaType: payload.mediaType,
+    blob: createDownloadBlob(payload.base64Data, payload.mediaType),
+  };
 }
 
 export async function downloadTaskAttachment(

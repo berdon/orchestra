@@ -1640,6 +1640,18 @@ export interface TaskAttachment {
   createdAt: string;
 }
 
+export interface TaskAttachmentContent {
+  fileName: string;
+  mediaType: string;
+  blob: Blob;
+}
+
+export interface TaskAttachmentContentPayload {
+  fileName: string;
+  mediaType: string;
+  base64Data: string;
+}
+
 export interface TaskAttachmentInput {
   fileName: string;
   mediaType: string;

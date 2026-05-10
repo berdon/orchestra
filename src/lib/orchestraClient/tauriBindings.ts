@@ -94,6 +94,7 @@ import {
   moveProjectNotesDirectory,
   updateProjectNote,
 } from "../projectNotes";
+import { createDownloadBlob } from "./browserDownloads";
 import { normalizeTaskAttachmentUploadInput } from "../taskAttachments";
 import type {
   AgentSkillLinks,
@@ -119,6 +120,8 @@ import type {
   SkillSummary,
   SkillsCatalogDiagnostics,
   TaskAttachment,
+  TaskAttachmentContent,
+  TaskAttachmentContentPayload,
   TaskAttachmentUploadInput,
   TaskBrowserSession,
   TaskComment,
@@ -407,6 +410,14 @@ export const tauriOrchestraClientServiceBindings: OrchestraClientServiceBindings
     addAttachment: async (taskId, input: TaskAttachmentUploadInput) => {
       const normalizedInput = await normalizeTaskAttachmentUploadInput(input);
       return invokeTauri<TaskAttachment>("add_task_attachment", { taskId, input: normalizedInput });
+    },
+    getAttachmentContent: async (attachmentId) => {
+      const payload = await invokeTauri<TaskAttachmentContentPayload>("get_task_attachment_content", { attachmentId });
+      return {
+        fileName: payload.fileName,
+        mediaType: payload.mediaType,
+        blob: createDownloadBlob(payload.base64Data, payload.mediaType),
+      } satisfies TaskAttachmentContent;
     },
     downloadAttachment: async (attachmentId) => {
       await invokeTauri<string | null>("download_task_attachment", { attachmentId });

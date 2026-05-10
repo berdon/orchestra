@@ -3,16 +3,18 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 use tauri::{AppHandle, Manager, State};
 
 use crate::{
     models::{
-        TaskAttachment, TaskAttachmentInput, TaskAttachmentManifest, TaskComment,
-        TaskCommentDeleteImpact, TaskCommentFileMentionCandidate, TaskCommentInput,
-        TaskCommentUpdateInput, TaskDependency, TaskDetail, TaskFileReference,
-        TaskFileReferenceInput, TaskPullRequestDetail, TaskRepository, TaskSummary, TaskTodo,
-        TaskTodoInput, TaskUpsertInput,
+        TaskAttachment, TaskAttachmentContentPayload, TaskAttachmentInput,
+        TaskAttachmentManifest, TaskComment, TaskCommentDeleteImpact,
+        TaskCommentFileMentionCandidate, TaskCommentInput, TaskCommentUpdateInput,
+        TaskDependency, TaskDetail, TaskFileReference, TaskFileReferenceInput,
+        TaskPullRequestDetail, TaskRepository, TaskSummary, TaskTodo, TaskTodoInput,
+        TaskUpsertInput,
     },
     services::{
         app_events, database, dispatcher, domain_events, pi_sessions, pi_setup, task_attachments,
@@ -1074,6 +1076,19 @@ pub fn add_task_attachment(
     }
     emit_task_change(&app, "task.attachment.added", [task_id]);
     Ok(attachment)
+}
+
+#[tauri::command]
+pub fn get_task_attachment_content(
+    attachment_id: String,
+) -> Result<TaskAttachmentContentPayload, String> {
+    let connection = database::open_connection()?;
+    let (attachment, bytes) = task_attachments::load_attachment_bytes(&connection, &attachment_id)?;
+    Ok(TaskAttachmentContentPayload {
+        file_name: attachment.file_name,
+        media_type: attachment.media_type,
+        base64_data: STANDARD.encode(bytes),
+    })
 }
 
 #[tauri::command]

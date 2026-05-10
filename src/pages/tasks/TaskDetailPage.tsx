@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 
-import type { AgentSummary, MailboxMessage, ProjectSummary, RepositoryRecord, RoleSummary, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
+import type { AgentSummary, MailboxMessage, ProjectSummary, RepositoryRecord, RoleSummary, TaskAttachment, TaskCommentInput, TaskDetail, TaskFileReference, TaskFileReferenceInput, TaskSummary, TaskTodo, TaskUpsertInput, WorkflowSummary } from "../../types";
 import { useTaskFileContent } from "../../lib/orchestraData/tasks";
 import { useExplanatoryTooltipProps } from "../../lib/tooltips";
 import { AgentReferenceLink, RoleReferenceLink, SessionReferenceLink, TaskReferenceLink, WorkerReferenceLink, type EntityReferenceLookup } from "../../components/entity-links";
 import { TaskActionMenu, type TaskActionMenuAction } from "../../components/TaskActionMenu";
 import { CommentableFileViewer } from "../../components/CommentableFileViewer";
+import { TaskAttachmentViewerModal } from "../../components/TaskAttachmentViewerModal";
 import { TaskBrowserPanel } from "../../components/TaskBrowserPanel";
 import { MarkdownContent } from "../../components/MarkdownContent";
 import { TaskEditorForm } from "./TaskEditorForm";
 import { TaskPullRequestTab } from "./TaskPullRequestTab";
 import { TaskConversationSection } from "./TaskConversationSection";
 import { getTaskTags } from "../../lib/taskListQuery";
-import { formatTaskAttachmentSize, getTaskAttachmentFallbackCopy, getTaskAttachmentKind } from "../../lib/taskAttachments";
+import { formatTaskAttachmentSize, getTaskAttachmentFallbackCopy, getTaskAttachmentKind, getTaskAttachmentViewKind } from "../../lib/taskAttachments";
+import { detectCodeLanguage } from "../../lib/syntaxHighlighting";
 import { getTaskOpenSessionTarget } from "../../lib/taskOpenSession";
 import { getEffectiveTaskDetailAssignmentStatus } from "./taskDetailActionState";
 import { buildTaskDetailHeaderActions } from "./taskDetailHeaderActions";
@@ -654,6 +656,7 @@ export function TaskDetailPage({
   const [mailDraft, setMailDraft] = useState("");
   const [mailInterrupt, setMailInterrupt] = useState(false);
   const [selectedFileReference, setSelectedFileReference] = useState<string | null>(null);
+  const [viewerAttachment, setViewerAttachment] = useState<TaskAttachment | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [loadingFileContent, setLoadingFileContent] = useState(false);
   const [defaultFileContent, setDefaultFileContent] = useState<string | null>(null);
@@ -729,6 +732,7 @@ export function TaskDetailPage({
     setShowDeleteConfirm(false);
     setShowCloseConfirm(false);
     setCloseReason("");
+    setViewerAttachment(null);
   }, [task.id, task.status]);
 
   useEffect(() => {
@@ -1047,52 +1051,6 @@ export function TaskDetailPage({
     }
   }
 
-  function detectLanguage(filename: string): string {
-    const ext = filename.split(".").pop()?.toLowerCase() || "";
-    const languageMap: Record<string, string> = {
-      js: "javascript",
-      jsx: "javascript",
-      ts: "typescript",
-      tsx: "typescript",
-      py: "python",
-      rb: "ruby",
-      go: "go",
-      rs: "rust",
-      java: "java",
-      kt: "kotlin",
-      swift: "swift",
-      c: "c",
-      cpp: "cpp",
-      h: "c",
-      hpp: "cpp",
-      cs: "csharp",
-      php: "php",
-      sh: "bash",
-      bash: "bash",
-      zsh: "bash",
-      ps1: "powershell",
-      json: "json",
-      yaml: "yaml",
-      yml: "yaml",
-      xml: "xml",
-      html: "html",
-      css: "css",
-      scss: "scss",
-      less: "less",
-      md: "markdown",
-      markdown: "markdown",
-      sql: "sql",
-      graphql: "graphql",
-      dockerfile: "dockerfile",
-      makefile: "makefile",
-      toml: "toml",
-      ini: "ini",
-      conf: "ini",
-      gitignore: "gitignore",
-      env: "bash",
-    };
-    return languageMap[ext] || "plaintext";
-  }
 
   const headerActionMenuActions = buildTaskDetailHeaderActions({
     task,
@@ -1222,7 +1180,7 @@ export function TaskDetailPage({
         comments={task.comments}
         content={content}
         fileReferences={task.fileReferences}
-        language={detectLanguage(reference.relativePath)}
+        language={detectCodeLanguage(reference.relativePath)}
         onAddComment={onAddComment}
         onCommentInterruptChange={handleTopLevelCommentInterruptChange}
         onDeleteComment={onDeleteComment}
@@ -1875,26 +1833,40 @@ export function TaskDetailPage({
               <div className="task-attachment-grid" data-role="task-attachments">
                 {task.attachments.map((attachment) => {
                   const kind = getTaskAttachmentKind(attachment.mediaType, attachment.fileName);
+                  const viewKind = getTaskAttachmentViewKind(attachment.mediaType, attachment.fileName);
                   const fallback = getTaskAttachmentFallbackCopy(kind);
                   const showImagePreview = kind === "image" && Boolean(attachment.imageDataUrl);
                   const showTextPreview = kind === "text" && Boolean(attachment.previewText);
+                  const isViewable = Boolean(viewKind);
 
                   return (
                     <article className="task-attachment-card" key={attachment.id}>
                       <div className="workflow-section__header">
                         <strong>{attachment.fileName}</strong>
                         <div className="button-row">
+                          {isViewable ? (
+                            <button className="secondary-button" data-attachment-id={attachment.id} data-role="open-task-attachment-viewer" data-view-kind={viewKind ?? undefined} type="button" onClick={() => setViewerAttachment(attachment)}>View</button>
+                          ) : null}
                           <button className="secondary-button" data-attachment-id={attachment.id} data-role="download-task-attachment" type="button" onClick={() => onDownloadAttachment(attachment.id)}>Download</button>
                           <button className="secondary-button secondary-button--danger" type="button" onClick={() => onRemoveAttachment(attachment.id)}>Remove</button>
                         </div>
                       </div>
                       <p className="muted-copy">{attachment.mediaType} · {formatTaskAttachmentSize(attachment.byteSize)}</p>
-                      {showImagePreview ? <img alt={attachment.fileName} className="task-attachment-card__image" src={attachment.imageDataUrl ?? undefined} /> : null}
-                      {showTextPreview ? <pre className="task-attachment-card__text">{attachment.previewText}</pre> : null}
+                      {showImagePreview ? (
+                        <button className="task-attachment-card__preview-button" data-role="open-task-attachment-viewer" data-view-kind={viewKind ?? undefined} type="button" onClick={() => setViewerAttachment(attachment)}>
+                          <img alt={attachment.fileName} className="task-attachment-card__image" src={attachment.imageDataUrl ?? undefined} />
+                        </button>
+                      ) : null}
+                      {showTextPreview ? (
+                        <button className="task-attachment-card__preview-button task-attachment-card__preview-button--text" data-role="open-task-attachment-viewer" data-view-kind={viewKind ?? undefined} type="button" onClick={() => setViewerAttachment(attachment)}>
+                          <span className="task-attachment-card__text">{attachment.previewText}</span>
+                        </button>
+                      ) : null}
                       {!showImagePreview && !showTextPreview ? (
                         <div className="task-attachment-card__fallback" data-attachment-kind={kind} data-role="task-attachment-fallback">
                           <strong>{fallback.label}</strong>
                           <p className="supporting-copy">{fallback.description}</p>
+                          {isViewable ? <p className="supporting-copy">Open the full-screen viewer to inspect this file.</p> : null}
                         </div>
                       ) : null}
                     </article>
@@ -2542,6 +2514,14 @@ export function TaskDetailPage({
         </div>
       ) : null}
       </div>
+
+      {viewerAttachment ? (
+        <TaskAttachmentViewerModal
+          attachment={viewerAttachment}
+          onClose={() => setViewerAttachment(null)}
+          onDownloadAttachment={onDownloadAttachment}
+        />
+      ) : null}
 
       {completionConfirmOutcome ? (
         <div className="quick-chat-overlay" data-role="task-completion-confirm-overlay" onClick={() => !pendingActionId && setCompletionConfirmOutcome(null)}>

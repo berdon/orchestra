@@ -3742,6 +3742,11 @@ test("task detail supports attachments, comments, recent activity, and review in
       buffer: Buffer.from(TINY_PNG_BASE64, "base64"),
     },
     {
+      name: "config.ts",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.from("export const answer = 42;\n"),
+    },
+    {
       name: "meeting.wav",
       mimeType: "audio/wav",
       buffer: Buffer.from("RIFF-WAVE"),
@@ -3757,10 +3762,33 @@ test("task detail supports attachments, comments, recent activity, and review in
   await expect(page.locator('[data-role="task-attachments"]')).toContainText("pixel.png");
   await expect(page.locator('[data-role="task-attachments"]')).toContainText("meeting.wav");
   await expect(page.locator('[data-role="task-attachments"]')).toContainText("bundle.zip");
+  await expect(page.locator('[data-role="task-attachments"]')).toContainText("config.ts");
   await expect(page.locator('.task-attachment-card__text')).toContainText("Attachment preview text");
   await expect(page.locator('.task-attachment-card__image')).toHaveCount(1);
   await expect(page.locator('[data-role="task-attachment-fallback"][data-attachment-kind="audio"]')).toContainText("Audio attachment");
   await expect(page.locator('[data-role="task-attachment-fallback"][data-attachment-kind="archive"]')).toContainText("Archive attachment");
+
+  await page.locator('.task-attachment-card').filter({ hasText: 'notes.txt' }).locator('[data-role="open-task-attachment-viewer"]').first().click();
+  await expect(page.locator('[data-role="task-attachment-viewer"]')).toContainText('notes.txt');
+  await expect(page.locator('[data-role="task-attachment-text-viewport"]')).toContainText('Attachment preview text');
+  await page.locator('[data-role="task-attachment-viewer-close"]').click();
+  await expect(page.locator('[data-role="task-attachment-viewer"]')).toHaveCount(0);
+
+  await page.locator('.task-attachment-card').filter({ hasText: 'config.ts' }).locator('[data-role="open-task-attachment-viewer"]').first().click();
+  await expect(page.locator('[data-role="task-attachment-viewer"]')).toContainText('config.ts');
+  await expect(page.locator('[data-role="task-attachment-text-viewport"] code.hljs')).toContainText('export const answer = 42;');
+  await page.locator('[data-role="task-attachment-viewer-close"]').click();
+  await expect(page.locator('[data-role="task-attachment-viewer"]')).toHaveCount(0);
+
+  await page.locator('.task-attachment-card').filter({ hasText: 'pixel.png' }).locator('[data-role="open-task-attachment-viewer"]').first().click();
+  await expect(page.locator('[data-role="task-attachment-image-viewport"]')).toBeVisible();
+  await expect(page.locator('[data-role="task-attachment-viewer-zoom-value"]')).toContainText('100%');
+  await page.locator('[data-role="task-attachment-viewer-zoom-in"]').click();
+  await expect(page.locator('[data-role="task-attachment-viewer-zoom-value"]')).not.toContainText('100%');
+  await page.locator('[data-role="task-attachment-viewer-fill"]').click();
+  await page.locator('[data-role="task-attachment-viewer-fit"]').click();
+  await page.locator('[data-role="task-attachment-viewer-close"]').click();
+  await expect(page.locator('[data-role="task-attachment-viewer"]')).toHaveCount(0);
 
   const downloadPromise = page.waitForEvent("download");
   await page
@@ -3789,6 +3817,7 @@ test("task detail supports attachments, comments, recent activity, and review in
   await expect(page.locator('[data-role="task-comments"]')).toContainText("Worker");
   await expect(page.locator('[data-role="task-comment-reply"]')).toContainText("I checked the task context and updated the plan.");
 
+  await page.locator('[data-role="task-history-limit"]').selectOption("10");
   const recentHistory = page.locator('.task-detail-summary__history-list');
   await expect(recentHistory).toContainText("Attachment added: bundle.zip");
   await expect(recentHistory).toContainText("Reviewer commented");

@@ -83,3 +83,17 @@ export function useTaskFileContent() {
     return orchestraClient.tasks.getFileContent(path);
   }, [orchestraClient]);
 }
+
+export function useTaskAttachmentContent() {
+  const orchestraClient = useOrchestraClient();
+
+  return useCallback(async (attachmentId: string) => {
+    if (!attachmentId) {
+      return null;
+    }
+    if (!orchestraClient.tasks.getAttachmentContent) {
+      throw new Error("Task attachment viewing is unavailable in this host.");
+    }
+    return orchestraClient.tasks.getAttachmentContent(attachmentId);
+  }, [orchestraClient]);
+}

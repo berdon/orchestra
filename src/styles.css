@@ -5224,6 +5224,20 @@ strong {
   cursor: pointer;
 }
 
+.task-attachment-card__preview-button {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.task-attachment-card__preview-button--text {
+  width: 100%;
+}
+
 .task-attachment-card__image {
   max-width: min(320px, 100%);
   border-radius: 12px;
@@ -5231,6 +5245,7 @@ strong {
 }
 
 .task-attachment-card__text {
+  display: block;
   margin: 0;
   padding: 12px;
   background: var(--bg-elevated);
@@ -6379,6 +6394,88 @@ strong {
   display: grid;
   gap: 12px;
   min-width: 0;
+}
+
+.task-attachment-viewer-overlay {
+  padding: 16px;
+  place-items: stretch;
+}
+
+.task-attachment-viewer {
+  width: min(100vw - 32px, 1400px);
+  height: min(100vh - 32px, 960px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  padding: 20px;
+  overflow: hidden;
+  border-radius: 20px;
+  background: var(--bg-elevated);
+}
+
+.task-attachment-viewer__header,
+.task-attachment-viewer__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.task-attachment-viewer__body {
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.task-attachment-viewer__image-viewport,
+.task-attachment-viewer__text-shell {
+  min-height: 0;
+  height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-elevated) 70%, black 30%);
+}
+
+.task-attachment-viewer__image-viewport {
+  position: relative;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+
+.task-attachment-viewer__image-viewport--dragging {
+  cursor: grabbing;
+}
+
+.task-attachment-viewer__image {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  max-width: none;
+  max-height: none;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+.task-attachment-viewer__text-shell {
+  overflow: auto;
+}
+
+.task-attachment-viewer__text {
+  margin: 0;
+  min-height: 100%;
+}
+
+.task-attachment-viewer__text--plain {
+  padding: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-attachment-viewer__mode-button--active {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .file-content-viewer {

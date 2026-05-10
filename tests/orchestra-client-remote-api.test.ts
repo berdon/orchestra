@@ -285,6 +285,36 @@ describe("remote api orchestra client", () => {
     });
   });
 
+  test("reads task attachment content through the remote binary route", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://orchestra.example.test/api/v1/task-attachments/task-attachment-1/content");
+      expect(init).toMatchObject({
+        method: "GET",
+        credentials: "same-origin",
+      });
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({
+          "Content-Disposition": 'attachment; filename="notes.txt"',
+          "Content-Type": "text/plain",
+        }),
+        blob: async () => new Blob(["downloaded attachment"], { type: "text/plain" }),
+        text: async () => "",
+      } satisfies Partial<Response> as Response;
+    });
+
+    const binding = createRemoteApiOrchestraClientBinding(createBootstrap("same_origin_cookie"), {
+      fetchImpl,
+    });
+
+    const content = await binding.client.tasks.getAttachmentContent?.("task-attachment-1");
+    expect(content).toBeDefined();
+    expect(content?.fileName).toBe("notes.txt");
+    expect(content?.mediaType).toBe("text/plain");
+    await expect(content!.blob.text()).resolves.toBe("downloaded attachment");
+  });
+
   test("downloads task attachments through the remote binary route", async () => {
     const anchor = {
       click: vi.fn(),
