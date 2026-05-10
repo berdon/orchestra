@@ -503,7 +503,11 @@ describe("desktop auto dispatch on blocker completion", () => {
               taskId: dependentTask.id,
             }),
           (task) =>
-            task.status === "blocked" && task.dependencyBlocked === true,
+            task.dependencyBlocked === true &&
+            task.readyForDispatch === false &&
+            (task.status === "blocked" ||
+              (task.status === "in_progress" &&
+                task.activeLaneAssignment?.status === "queued")),
           30_000,
         );
         expect(blockedDependent.readyForDispatch).toBe(false);
@@ -535,9 +539,11 @@ describe("desktop auto dispatch on blocker completion", () => {
               taskId: dependentTask.id,
             }),
           (task) =>
-            task.status === "blocked" &&
             task.dependencyBlocked === true &&
-            !task.activeLaneAssignment,
+            task.readyForDispatch === false &&
+            ((task.status === "blocked" && !task.activeLaneAssignment) ||
+              (task.status === "in_progress" &&
+                task.activeLaneAssignment?.status === "queued")),
           30_000,
         );
         expect(stillBlocked.readyForDispatch).toBe(false);

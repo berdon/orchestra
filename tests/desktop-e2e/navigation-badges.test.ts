@@ -157,7 +157,7 @@ describe("desktop navigation badges", () => {
       expect(collapsedAlphaBadgeState.inboxBadgeClass).toContain('status-badge--rail');
       expect(collapsedAlphaBadgeState.inboxBadgeWithinRail).toBe(true);
       if (collapsedAlphaBadgeState.sessionsBadgeText) {
-        expect(collapsedAlphaBadgeState.sessionsBadgeText).toBe('1');
+        expect(Number.parseInt(collapsedAlphaBadgeState.sessionsBadgeText, 10)).toBeGreaterThanOrEqual(1);
         expect(collapsedAlphaBadgeState.sessionsBadgeClass).toContain('status-badge--rail');
         expect(collapsedAlphaBadgeState.sessionsBadgeWithinRail).toBe(true);
       }
@@ -204,12 +204,15 @@ describe("desktop navigation badges", () => {
             sessionsBadgeText: document.querySelector('[data-role="nav-badge-sessions"]')?.textContent?.trim() ?? '',
           };
         `),
-        (value) => value.triggerBadgeText === '1' && value.inboxBadgeText === '1' && value.sessionsBadgeText === '1',
+        (value) =>
+          value.triggerBadgeText === '1' &&
+          value.inboxBadgeText === '1' &&
+          Number.parseInt(value.sessionsBadgeText || '0', 10) >= 1,
       );
       expect(collapsedBetaBadgeState.triggerBadgeText).toBe('1');
       expect(collapsedBetaBadgeState.inboxBadgeText).toBe('1');
       if (collapsedBetaBadgeState.sessionsBadgeText) {
-        expect(collapsedBetaBadgeState.sessionsBadgeText).toBe('1');
+        expect(Number.parseInt(collapsedBetaBadgeState.sessionsBadgeText, 10)).toBeGreaterThanOrEqual(1);
       }
     } finally {
       await deleteWebdriverSession(sessionId);

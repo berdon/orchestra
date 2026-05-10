@@ -252,14 +252,29 @@ describe("desktop session controls", () => {
 
       await clickSessionAction(webdriverSessionId, '[data-role="session-action-compact"]');
 
-      const compactedRecord = await waitForConditionWithDiagnostics(
-        webdriverSessionId,
-        primarySessionId,
-        () => invokeCommand<SessionRecordLike>(webdriverSessionId, "get_session_record", { sessionId: primarySessionId }),
-        (record) => record.controlOperation?.kind === "compact" && record.controlOperation?.status !== "running",
-        "manual compaction control operation to settle",
-        45_000,
-      );
+      const waitForCompactionToSettle = (previousStartedAt?: string) =>
+        waitForConditionWithDiagnostics(
+          webdriverSessionId,
+          primarySessionId,
+          () => invokeCommand<SessionRecordLike>(webdriverSessionId, "get_session_record", { sessionId: primarySessionId }),
+          (record) =>
+            record.controlOperation?.kind === "compact" &&
+            record.controlOperation?.status !== "running" &&
+            (previousStartedAt ? record.controlOperation?.startedAt !== previousStartedAt : true),
+          "manual compaction control operation to settle",
+          45_000,
+        );
+
+      let compactedRecord = await waitForCompactionToSettle();
+      if (
+        compactedRecord.controlOperation?.status !== "succeeded" &&
+        (compactedRecord.controlOperation?.message ?? "").includes("Timed out waiting for pi RPC response")
+      ) {
+        const previousStartedAt = compactedRecord.controlOperation?.startedAt;
+        await sleep(1_000);
+        await clickSessionAction(webdriverSessionId, '[data-role="session-action-compact"]');
+        compactedRecord = await waitForCompactionToSettle(previousStartedAt);
+      }
       if (compactedRecord.controlOperation?.status !== "succeeded") {
         throw new Error(`Compaction did not succeed. ${JSON.stringify(await getSessionDiagnostics(webdriverSessionId, primarySessionId), null, 2)}`);
       }

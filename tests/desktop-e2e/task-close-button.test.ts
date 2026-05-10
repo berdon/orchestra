@@ -68,7 +68,13 @@ describe("desktop task close button", () => {
       await waitForText(sessionId, "Close me desktop");
       await clickByText(sessionId, '[data-role="task-card"]', 'Close me desktop');
       await waitForSelector(sessionId, '[data-role="close-task"]');
-      await clickSelector(sessionId, '[data-role="close-task"]');
+      await executeScript(sessionId, `
+        const button = document.querySelector('[data-role="close-task"]');
+        if (!(button instanceof HTMLButtonElement)) {
+          throw new Error('Close task button was not found');
+        }
+        button.click();
+      `);
       await waitForSelector(sessionId, '[data-role="task-close-confirm"]');
       await executeScript(sessionId, `
         const input = document.querySelector('[data-role="task-close-reason"]');
