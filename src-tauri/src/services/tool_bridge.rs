@@ -2430,6 +2430,7 @@ fn invoke_bridge_command(
                 "tasks.transition",
             )?;
             let context = session_context_for_task_id(&task_id)?;
+            let app_handle = config.clone_app_handle();
             let mut writable = database::open_connection()?;
             let previous_assignment =
                 crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
@@ -2440,7 +2441,7 @@ fn invoke_bridge_command(
                 &task_id,
                 Some(summary),
                 notes,
-                None,
+                app_handle.as_ref(),
                 authorization,
             )?;
             let auto_dispatches =
@@ -2457,16 +2458,16 @@ fn invoke_bridge_command(
                     &task,
                 )
             {
-                if let Some(app) = config.clone_app_handle() {
+                if let Some(app) = app_handle.as_ref() {
                     live_sessions::schedule_session_retirement(
-                        app,
+                        app.clone(),
                         session_id,
                         Duration::from_millis(250),
                         "tool.complete_lane_as_success",
                     );
                 }
             }
-            if let Some(app) = config.clone_app_handle() {
+            if let Some(app) = app_handle.as_ref() {
                 let mut changed_task_ids = vec![task.id.clone()];
                 changed_task_ids.extend(
                     auto_dispatches
@@ -2507,6 +2508,7 @@ fn invoke_bridge_command(
                 "tasks.transition",
             )?;
             let context = session_context_for_task_id(&task_id)?;
+            let app_handle = config.clone_app_handle();
             let mut writable = database::open_connection()?;
             let previous_assignment =
                 crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
@@ -2599,6 +2601,7 @@ fn invoke_bridge_command(
                 "tasks.transition",
             )?;
             let context = session_context_for_task_id(&task_id)?;
+            let app_handle = config.clone_app_handle();
             let mut writable = database::open_connection()?;
             let previous_assignment =
                 crate::services::task_runtime::get_current_lane_assignment(&writable, &task_id)?;
@@ -3233,9 +3236,13 @@ fn require_bool(payload: &Value, key: &str) -> Result<bool, String> {
 mod tests {
     use super::*;
     use crate::{
-        models::{AgentUpsertInput, RoleUpsertInput, TaskUpsertInput},
+        models::{
+            AgentUpsertInput, RoleUpsertInput, TaskLaneAssignment, TaskUpsertInput,
+            WorkflowLaneInput, WorkflowUpsertInput,
+        },
         services::{
-            agents, database, database::initialize_database_at, policies, project_secrets, tasks,
+            agents, database, database::initialize_database_at, pi_sessions, policies,
+            project_secrets, task_runtime, tasks, workflows,
         },
     };
     use rusqlite::params;
@@ -3293,6 +3300,143 @@ mod tests {
             )
             .expect("default project should seed");
         connection
+    }
+
+    static TOOL_BRIDGE_TEST_APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+    #[ctor::ctor]
+    fn initialize_tool_bridge_test_app_handle() {
+        let tool_bridge =
+            crate::services::tool_bridge::dummy_tool_bridge_config("tool-bridge-tests-main-thread");
+        let app = tauri::Builder::default()
+            .manage(crate::state::AppState::new(tool_bridge.clone()))
+            .build(crate::tauri_context())
+            .expect("main-thread tool bridge test app should build");
+        let leaked_app = Box::leak(Box::new(app));
+        let app_handle = leaked_app.handle().clone();
+        tool_bridge.attach_app_handle(app_handle.clone());
+        let _ = TOOL_BRIDGE_TEST_APP_HANDLE.set(app_handle);
+    }
+
+    fn test_app_handle() -> tauri::AppHandle {
+        TOOL_BRIDGE_TEST_APP_HANDLE
+            .get()
+            .expect("main-thread tool bridge test app should exist")
+            .clone()
+    }
+
+    fn attached_bridge_config(label: &str) -> Arc<ToolBridgeConfig> {
+        let config = Arc::new(dummy_bridge_config(label));
+        config.attach_app_handle(test_app_handle());
+        config
+    }
+
+    fn open_runtime_bridge_connection() -> Connection {
+        let connection = database::open_connection().expect("database should open");
+        let now = crate::state::now_iso();
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO projects (id, slug, name, description, task_prefix, default_repository_id, created_at, updated_at) VALUES ('orchestra', 'orchestra', 'Orchestra', NULL, 'ORC', NULL, ?1, ?1)",
+                params![now.as_str()],
+            )
+            .expect("default project should seed");
+        connection
+    }
+
+    fn seed_active_bridge_transition_assignment(
+        connection: &mut Connection,
+        task_title: &str,
+        require_user_approval_on_success: bool,
+    ) -> (
+        crate::models::AgentDefinition,
+        crate::models::TaskDetail,
+        TaskLaneAssignment,
+    ) {
+        let context = pi_sessions::detect_session_context(Some("orchestra"))
+            .expect("session context should resolve");
+        fs::create_dir_all(&context.project_root).expect("project root should exist");
+        fs::create_dir_all(&context.session_dir).expect("session dir should exist");
+
+        let agent = agents::create_agent(
+            connection,
+            AgentUpsertInput {
+                name: format!("{task_title} Worker"),
+                description: None,
+                system_prompt: None,
+                provider: None,
+                model: None,
+                role_id: None,
+                scope: Some("global".into()),
+                project_id: None,
+                thinking_level: Some("medium".into()),
+                compaction_window: None,
+                policy_ids: Vec::new(),
+                direct_permissions: vec!["tasks.read".into(), "tasks.transition".into()],
+            },
+        )
+        .expect("agent should create");
+
+        let lane_id = format!("lane-implement-{}", Uuid::new_v4().simple());
+        let workflow = workflows::create_workflow(
+            connection,
+            WorkflowUpsertInput {
+                name: format!("{task_title} Workflow {}", Uuid::new_v4().simple()),
+                description: None,
+                lanes: vec![WorkflowLaneInput {
+                    id: Some(lane_id.clone()),
+                    key: "implement".into(),
+                    name: "Implement".into(),
+                    description: None,
+                    order: Some(0),
+                    assigned_entity_type: "agent".into(),
+                    assigned_entity_id: Some(agent.slug.clone()),
+                    entry_prompt_template: Some(
+                        "Keep working until Orchestra tells you otherwise.".into(),
+                    ),
+                    use_separate_worktree: false,
+                    require_user_approval_on_success,
+                    needs_work_target_lane_id: None,
+                    success_transition_type: "end".into(),
+                    success_target_lane_id: None,
+                    failure_transition_type: "end".into(),
+                    failure_target_lane_id: None,
+                }],
+            },
+        )
+        .expect("workflow should create");
+
+        let task = tasks::create_task(
+            connection,
+            Some("orchestra"),
+            TaskUpsertInput {
+                title: task_title.into(),
+                description: Some("Bridge transition regression task".into()),
+                task_type: "task".into(),
+                tags: Vec::new(),
+                status: "ready".into(),
+                priority: "P2".into(),
+                workflow_id: Some(workflow.id.clone()),
+                current_lane_id: Some(lane_id),
+                assignee_type: "unassigned".into(),
+                assignee_id: None,
+                repository_id: None,
+                repository_ids: Vec::new(),
+                parent_task_id: None,
+                whip_max_attempts: None,
+                archived: None,
+            },
+        )
+        .expect("task should create");
+
+        let assignment = task_runtime::dispatch_task_lane(
+            connection,
+            &context.project_root,
+            &context.session_dir,
+            &task.id,
+        )
+        .expect("task should dispatch");
+
+        (agent, task, assignment)
     }
 
     fn dummy_bridge_config(label: &str) -> ToolBridgeConfig {
@@ -5417,6 +5561,164 @@ mod tests {
 
             let diagnostics = bridge.diagnostics();
             assert!(diagnostics.recent_requests.len() >= 2);
+        });
+    }
+
+    #[test]
+    fn complete_lane_as_failure_false_keeps_the_lane_active_through_bridge() {
+        with_temp_home("bridge-transition-failure-false", || {
+            let mut connection = open_runtime_bridge_connection();
+            let (agent, task, assignment) = seed_active_bridge_transition_assignment(
+                &mut connection,
+                "Bridge failure false",
+                false,
+            );
+            connection
+                .execute(
+                    "UPDATE task_lane_assignments SET runtime_cwd = NULL WHERE id = ?1",
+                    params![assignment.id.as_str()],
+                )
+                .expect("assignment runtime should clear for bridge regression test");
+            let assignment = task_runtime::get_current_lane_assignment(&connection, &task.id)
+                .expect("assignment should reload")
+                .expect("assignment should remain active");
+            let config = attached_bridge_config("bridge-transition-failure-false");
+            let authorization = crate::models::AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: agent.id.clone(),
+            };
+
+            let response = invoke_bridge_command(
+                config.as_ref(),
+                &connection,
+                "complete_lane_as_failure",
+                Some(&authorization),
+                assignment.session_id.as_deref(),
+                json!({
+                    "taskId": task.id,
+                    "summary": "Finished this slice.",
+                    "actuallyFailed": false,
+                    "notes": "Keep going"
+                }),
+            )
+            .expect("bridge slice-complete failure should keep the lane active");
+
+            assert_eq!(
+                response.get("status").and_then(Value::as_str),
+                Some("in_progress")
+            );
+            let refreshed = tasks::get_task_context(&connection, &task.id)
+                .expect("task should refresh after bridge completion");
+            assert_eq!(refreshed.status, "in_progress");
+            assert_eq!(
+                refreshed
+                    .active_lane_assignment
+                    .as_ref()
+                    .map(|entry| entry.status.as_str()),
+                Some("active")
+            );
+        });
+    }
+
+    #[test]
+    fn request_user_intervention_false_keeps_the_lane_active_through_bridge() {
+        with_temp_home("bridge-transition-intervention-false", || {
+            let mut connection = open_runtime_bridge_connection();
+            let (agent, task, assignment) = seed_active_bridge_transition_assignment(
+                &mut connection,
+                "Bridge intervention false",
+                false,
+            );
+            connection
+                .execute(
+                    "UPDATE task_lane_assignments SET runtime_cwd = NULL WHERE id = ?1",
+                    params![assignment.id.as_str()],
+                )
+                .expect("assignment runtime should clear for bridge regression test");
+            let assignment = task_runtime::get_current_lane_assignment(&connection, &task.id)
+                .expect("assignment should reload")
+                .expect("assignment should remain active");
+            let config = attached_bridge_config("bridge-transition-intervention-false");
+            let authorization = crate::models::AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: agent.id.clone(),
+            };
+
+            let response = invoke_bridge_command(
+                config.as_ref(),
+                &connection,
+                "request_user_intervention",
+                Some(&authorization),
+                assignment.session_id.as_deref(),
+                json!({
+                    "taskId": task.id,
+                    "summary": "Finished this slice.",
+                    "actuallyBlocked": false,
+                    "notes": "Keep going"
+                }),
+            )
+            .expect("bridge slice-complete intervention should keep the lane active");
+
+            assert_eq!(
+                response.get("status").and_then(Value::as_str),
+                Some("in_progress")
+            );
+            let refreshed = tasks::get_task_context(&connection, &task.id)
+                .expect("task should refresh after bridge intervention");
+            assert_eq!(refreshed.status, "in_progress");
+            assert_eq!(
+                refreshed
+                    .active_lane_assignment
+                    .as_ref()
+                    .map(|entry| entry.status.as_str()),
+                Some("active")
+            );
+        });
+    }
+
+    #[test]
+    fn complete_lane_as_success_still_routes_user_approval_through_bridge() {
+        with_temp_home("bridge-transition-success-review", || {
+            let mut connection = open_runtime_bridge_connection();
+            let (agent, task, assignment) = seed_active_bridge_transition_assignment(
+                &mut connection,
+                "Bridge success review",
+                true,
+            );
+            let config = attached_bridge_config("bridge-transition-success-review");
+            let authorization = crate::models::AuthorizationContext {
+                actor_type: "agent".into(),
+                actor_id: agent.id.clone(),
+            };
+
+            let response = invoke_bridge_command(
+                config.as_ref(),
+                &connection,
+                "complete_lane_as_success",
+                Some(&authorization),
+                assignment.session_id.as_deref(),
+                json!({
+                    "taskId": task.id,
+                    "summary": "Ready for review.",
+                    "notes": "handoff to user"
+                }),
+            )
+            .expect("bridge success completion should still pause for approval");
+
+            assert_eq!(
+                response.get("status").and_then(Value::as_str),
+                Some("in_review")
+            );
+            let refreshed = tasks::get_task_context(&connection, &task.id)
+                .expect("task should refresh after bridge success");
+            assert_eq!(refreshed.status, "in_review");
+            assert_eq!(
+                refreshed
+                    .active_lane_assignment
+                    .as_ref()
+                    .map(|entry| entry.status.as_str()),
+                Some("awaiting_user_approval")
+            );
         });
     }
 
